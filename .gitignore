@@ -1,0 +1,19 @@
+# Artefactos de compilación
+/build/
+/bin/
+*.o
+*.dcb
+
+# Estado de la GUI (ImGui) y proyectos/escenas locales
+imgui.ini
+/project/
+/pruebas/
+/Scenes/
+/Scripts/
+*.scene
+*.scene.*
+*.zones
+main.prg
+
+# Sistema
+.DS_Store

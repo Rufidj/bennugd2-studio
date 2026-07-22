@@ -330,8 +330,17 @@ int main(int, char**) {
     void* prev_ent_model = nullptr;        // modelo que muestra prev_ent ahora
     float pv_yaw = 2.4f, pv_pitch = 0.2f, pv_dist = 4.0f;  // orbita del preview
     float pv_cx = 0, pv_cy = 0, pv_cz = 0;                 // centro del modelo (encuadre)
-    std::string game_out; bool open_game_popup = false;   // salida de compilar el juego
+    // ---- Consola (panel acoplado bajo el viewport, no un popup modal) ----
+    std::string game_out;                 // texto acumulado de la consola
+    bool console_scroll = false;          // pedir auto-scroll al final
+    bool console_focus  = false;          // traerla al frente al compilar/ejecutar
     bool last_compile_ok = false;
+    FILE* run_log = nullptr;              // log del juego en ejecucion (bgdi), se lee por frames
+    std::string run_log_path;
+    auto console_add = [&](const std::string& s) {   // anadir texto y auto-scroll
+        game_out += s; console_scroll = true;
+        if (game_out.size() > 400000) game_out.erase(0, game_out.size() - 300000);  // no crecer sin fin
+    };
     std::string script_obj = "barril_01";  // objeto cuyo script se edita (placeholder)
     // ---- herramienta activa (toolbar con iconos) ----
     enum Tool { T_SELECT, T_MOVE, T_ROTATE, T_SCALE, T_PLACE, T_RAISE, T_LOWER, T_SMOOTH, T_FLATTEN, T_PAINT,
@@ -954,17 +963,26 @@ int main(int, char**) {
         std::string env = "PATH=\"" + bindir + ":$PATH\" LD_LIBRARY_PATH=\"" + bindir + ":$LD_LIBRARY_PATH\" ";
         std::string proj = project_dir;
         std::string cmd = "cd \"" + proj + "\" && " + env + "\"" + BGDC_PATH + "\" main.prg 2>&1";
-        game_out.clear(); FILE* p = popen(cmd.c_str(), "r");
+        console_add("\n----- compilando main.prg -----\n");
+        console_focus = true;
+        std::string out; FILE* p = popen(cmd.c_str(), "r");
         int rc = -1;
-        if (p) { char b[512]; size_t n; while ((n = fread(b,1,sizeof(b)-1,p))>0){ b[n]=0; game_out += b; } rc = pclose(p); }
+        if (p) { char b[512]; size_t n; while ((n = fread(b,1,sizeof(b)-1,p))>0){ b[n]=0; out += b; } rc = pclose(p); }
+        console_add(out);
         last_compile_ok = (rc == 0);
-        game_out += (rc == 0) ? "\n\n[OK] Juego compilado -> project/main.dcb"
-                              : "\n\n[FALLO] revisa los errores de arriba.";
-        open_game_popup = true;
+        console_add((rc == 0) ? "[OK] Juego compilado -> main.dcb\n"
+                              : "[FALLO] revisa los errores de arriba.\n");
         if (rc == 0 && run) {
+            // La salida del juego (say, errores en ejecucion) va a un log que la
+            // consola va leyendo por frames, en vez de perderse en /dev/null.
+            if (run_log) { fclose(run_log); run_log = nullptr; }
+            run_log_path = proj + "/__run.log";
             std::string bgdi = bindir + "/bgdi";
-            std::string rcmd = "cd \"" + proj + "\" && " + env + "\"" + bgdi + "\" main.dcb >/dev/null 2>&1 &";
-            system(rcmd.c_str());
+            std::string rcmd = "cd \"" + proj + "\" && " + env + "\"" + bgdi +
+                               "\" main.dcb > \"" + run_log_path + "\" 2>&1 &";
+            if (system(rcmd.c_str()) == -1) console_add("[ERROR] no pude lanzar bgdi\n");
+            console_add("----- ejecutando (salida del juego) -----\n");
+            run_log = fopen(run_log_path.c_str(), "r");   // puede no existir aun; se reintenta
         }
     };
 
@@ -1084,7 +1102,14 @@ int main(int, char**) {
                 FILE* f = fopen(pp.c_str(), "w");
                 if (f) {
                     fputs("// Generado por el editor para el PLAY en vivo (no editar).\n", f);
-                    fputs("import \"libmod_misc\"; import \"libmod_input\"; import \"libmod_3d\";\n\n", f);
+                    // Mismos imports que el juego real y que el boton "Compilar" del
+                    // editor de scripts, para que un script que compila alli compile
+                    // tambien aqui. libmod_gfx se importa por el LENGUAJE (write,
+                    // sprites...): no abre ventana, eso solo lo hace set_mode, que este
+                    // main no llama. Su dibujado 2D no se ve en el preview porque los
+                    // handler hooks de los modulos no se ejecutan en modo embebido.
+                    fputs("import \"libmod_gfx\"; import \"libmod_misc\"; "
+                          "import \"libmod_input\"; import \"libmod_3d\";\n\n", f);
                     for (auto& c : comps) {          // el codigo de cada componente
                         FILE* s = fopen((scripts_dir + "/" + c.first + ".prg").c_str(), "r");
                         if (!s) continue;
@@ -1111,8 +1136,9 @@ int main(int, char**) {
                             status = "Play con scripts (" + std::to_string(comps.size()) + " objetos)";
                         else status = "Play: el interprete no arranco (ver consola)";
                     } else {
-                        game_out = out + "\n\n[FALLO] Los scripts no compilan; el Play corre solo lo integrado.";
-                        open_game_popup = true;
+                        console_add("\n----- compilando los scripts del Play -----\n" + out +
+                                    "[FALLO] Los scripts no compilan; el Play corre solo lo integrado.\n");
+                        console_focus = true;
                     }
                 }
             }
@@ -1438,14 +1464,14 @@ int main(int, char**) {
             create_project(p); projNewDlg.ClearSelected();
         }
 
-        // ---- popup con la salida de compilar el juego ----
-        if (open_game_popup) { ImGui::OpenPopup("Compilar juego"); open_game_popup = false; }
-        if (ImGui::BeginPopupModal("Compilar juego", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::BeginChild("gout", ImVec2(720, 320), true, ImGuiWindowFlags_HorizontalScrollbar);
-            ImGui::TextUnformatted(game_out.c_str());
-            ImGui::EndChild();
-            if (ImGui::Button("Cerrar", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
+        // ---- leer lo que va soltando el juego en ejecucion (bgdi) ----
+        if (run_log || !run_log_path.empty()) {
+            if (!run_log) run_log = fopen(run_log_path.c_str(), "r");  // aun no existia al lanzarlo
+            if (run_log) {
+                char b[1024]; size_t n;
+                while ((n = fread(b, 1, sizeof(b) - 1, run_log)) > 0) { b[n] = 0; console_add(b); }
+                clearerr(run_log);   // seguir leyendo cuando el juego escriba mas
+            }
         }
 
         // Dockspace a pantalla completa: los paneles se acoplan alrededor.
@@ -1466,7 +1492,12 @@ int main(int, char**) {
             ImGui::DockBuilderDockWindow("Jerarquia", lbottom);
             ImGui::DockBuilderDockWindow("Entorno",   lbottom);
             ImGui::DockBuilderDockWindow("Inspector", right);
+            ImGuiID bottom;
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.26f, &bottom, &center);
             ImGui::DockBuilderDockWindow("Escena",    center);
+            // OJO: el nombre tiene que coincidir EXACTAMENTE con el del Begin(),
+            // icono incluido, o DockBuilder no encuentra la ventana y queda suelta.
+            ImGui::DockBuilderDockWindow(ICON_FA_TERMINAL "  Consola", bottom);
             ImGui::DockBuilderFinish(ds);
         }
 
@@ -1689,6 +1720,25 @@ int main(int, char**) {
         }
         ImGui::End();
         ImGui::PopStyleVar();
+
+        // --- Panel: Consola (salida de bgdc al compilar y del juego al ejecutar) ---
+        if (console_focus) { ImGui::SetNextWindowFocus(); console_focus = false; }
+        ImGui::Begin(ICON_FA_TERMINAL "  Consola");
+        if (ImGui::SmallButton("Limpiar")) game_out.clear();
+        ImGui::SameLine();
+        bool running_game = (run_log != nullptr);
+        if (running_game) ImGui::TextColored(ImVec4(0.4f,1,0.5f,1), "  juego en ejecucion");
+        else if (!game_out.empty())
+            ImGui::TextColored(last_compile_ok ? ImVec4(0.4f,1,0.5f,1) : ImVec4(1,0.45f,0.4f,1),
+                               last_compile_ok ? "  ultima compilacion: OK" : "  ultima compilacion: FALLO");
+        ImGui::Separator();
+        ImGui::BeginChild("consola_txt", ImVec2(0,0), false, ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0,1));
+        ImGui::TextUnformatted(game_out.c_str());
+        ImGui::PopStyleVar();
+        if (console_scroll) { ImGui::SetScrollHereY(1.0f); console_scroll = false; }
+        ImGui::EndChild();
+        ImGui::End();
 
         // --- Panel: Assets (modelos del proyecto: <proyecto>/Assets) ---
         ImGui::Begin("Assets");

@@ -455,6 +455,7 @@ int g3d_model_spawn(int scene_id, void *model_ptr, float x, float y, float z,
     void **key_met = (void **)calloc(model->mesh_count, sizeof(void *));
     void **key_rgh = (void **)calloc(model->mesh_count, sizeof(void *));
     int *key_mat = (int *)calloc(model->mesh_count, sizeof(int));
+    unsigned char *key_out = (unsigned char *)calloc(model->mesh_count, 1);
     int key_count = 0;
 
     for (uint32_t j = 0; j < model->mesh_count; j++) {
@@ -462,11 +463,15 @@ int g3d_model_spawn(int scene_id, void *model_ptr, float x, float y, float z,
         void *nrm = model->mesh_normal ? model->mesh_normal[j] : NULL;
         void *met = model->mesh_metallic ? model->mesh_metallic[j] : NULL;
         void *rgh = model->mesh_roughness ? model->mesh_roughness[j] : NULL;
+        /* contorno toon: entra en la clave para no fusionarse con otros
+           materiales sin textura (ver libmod_3d.c) */
+        unsigned char outl = model->mesh_outline ? model->mesh_outline[j] : 0;
 
         int mat = -1;
         for (int k = 0; k < key_count; k++) {
             if (key_alb[k] == alb && key_nrm[k] == nrm &&
-                key_met[k] == met && key_rgh[k] == rgh) { mat = key_mat[k]; break; }
+                key_met[k] == met && key_rgh[k] == rgh &&
+                (!key_out || key_out[k] == outl)) { mat = key_mat[k]; break; }
         }
         if (mat < 0) {
             mat = g3d_material_impl_create();
@@ -476,11 +481,13 @@ int g3d_model_spawn(int scene_id, void *model_ptr, float x, float y, float z,
                 m->albedo_texture_id = alb ? 0 : -1;
                 m->roughness = 0.9f;
                 m->metallic = 0.0f;
+                m->outline = outl;
                 if (nrm) g3d_material_impl_set_map(mat, 1, nrm);
                 if (met) g3d_material_impl_set_map(mat, 2, met);
                 if (rgh) g3d_material_impl_set_map(mat, 3, rgh);
             }
             if (mat >= 0) {
+                if (key_out) key_out[key_count] = outl;
                 key_alb[key_count] = alb; key_nrm[key_count] = nrm;
                 key_met[key_count] = met; key_rgh[key_count] = rgh;
                 key_mat[key_count] = mat; key_count++;
@@ -497,6 +504,6 @@ int g3d_model_spawn(int scene_id, void *model_ptr, float x, float y, float z,
         g3d_entity_impl_set_scale(ent, s, s, s);
         g3d_entity_impl_set_parent(ent, root);
     }
-    free(key_alb); free(key_nrm); free(key_met); free(key_rgh); free(key_mat);
+    free(key_alb); free(key_nrm); free(key_met); free(key_rgh); free(key_mat); free(key_out);
     return root;
 }

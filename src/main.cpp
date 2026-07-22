@@ -19,6 +19,7 @@ extern "C" int  script_host_instance_count(void);
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 #include <algorithm>
 #include <filesystem>
 namespace fs = std::filesystem;
@@ -383,6 +384,7 @@ int main(int, char**) {
     std::vector<SObj> objects;
     int obj_sel = -1;
     std::map<std::string, void*> model_cache;
+    std::set<void*> posed_static;   // modelos sin esqueleto ya colocados (pose t=0)
     auto load_model = [&](const std::string& file) -> void* {
         auto it = model_cache.find(file);
         if (it != model_cache.end()) return it->second;
@@ -591,7 +593,7 @@ int main(int, char**) {
         paints.clear();
         for (auto& fpng : scan_textures(tex_dir)) paints.push_back({ fpng, nullptr });
         paint_sel = paints.empty() ? -1 : 0;
-        model_cache.clear();
+        model_cache.clear(); posed_static.clear();
         // vacia la escena actual
         for (auto& o : objects) g3d_entity_impl_set_position(o.entity, 0, -99999, 0);
         objects.clear(); obj_sel = -1;
@@ -735,6 +737,13 @@ int main(int, char**) {
             fprintf(f, "    m = %s(\"Assets/%s\"); e = g3d_model_spawn(scene, m, %.3f, %.3f, %.3f, 0.0, %.3f);",
                     loader, o.asset.c_str(), o.x, o.y, o.z, o.ry * 57.29578f);
             fprintf(f, " g3d_entity_set_scale(e, %.3f, %.3f, %.3f);\n", o.scale, o.scale, o.scale);
+            // Modelos sin esqueleto con piezas atadas a nodos animados: hay que
+            // posarlos UNA vez o esas piezas no se colocan y no se ven (igual que
+            // en el editor). No se animan por frame para que no se descoloquen.
+            { void* mm = load_model(o.asset);
+              if (mm && g3d_model_animation_count(mm) > 0 && !g3d_model_is_skinned(mm) &&
+                  (int)i != player_idx)
+                  fputs("    g3d_model_animate_all(m, 0.0, 0);\n", f); }
             if ((int)i == cam_follow) fputs("    follow_ent = e;   // camara sigue a este objeto\n", f);
             if ((int)i == player_idx) fputs("    pplayer = e; pmodel = m;   // el jugador\n", f);
             // capturar la entidad de los objetos enganchados a un hueso
@@ -2081,11 +2090,17 @@ int main(int, char**) {
                     if (show_anim && kv.second == anim_model) continue;
                     // el modelo del jugador lo anima el emulador durante el Play
                     if (playing && kv.second == sim_player_model) continue;
-                    // SOLO los modelos con esqueleto: esos se colapsan si no se
-                    // animan. Los que no lo tienen no lo necesitan y animarlos los
-                    // rompe (muchos modelos traen animaciones que mueven y escalan
-                    // sus nodos, y se descolocan solos: piezas hundidas, deformes).
-                    if (!g3d_model_is_skinned(kv.second)) continue;
+                    if (!g3d_model_is_skinned(kv.second)) {
+                        // Modelo SIN esqueleto. No hay que reproducirle la animacion
+                        // cada frame (le mueve y escala las piezas y acaba deforme o
+                        // bajo el suelo), pero sus submallas atadas a nodos animados
+                        // se colocan con node_global, que SOLO calcula la animacion:
+                        // sin ella no se dibujan. Asi que se posa UNA vez en t=0 y
+                        // se deja quieto.
+                        if (posed_static.insert(kv.second).second)
+                            g3d_model_animate_all(kv.second, 0.0f, 0);
+                        continue;
+                    }
                     g3d_model_animate_all(kv.second, atime, 1);
                 }
         }

@@ -32,7 +32,21 @@ renderiza contra el mismo contexto OpenGL: lo que ves en el editor es lo que cor
 
 ## Compilar
 
-Requiere el repo de **libmod_3d** como hermano (`../libmod_3d`), SDL2, SDL2_image y OpenGL.
+**Requisitos:** SDL2, SDL2_image, OpenGL, CMake ≥ 3.10 y un **BennuGD2 ya compilado**
+(con el módulo `libmod_3d`), porque el editor enlaza contra sus librerías.
+
+La disposición esperada es la normal del repo de BennuGD2:
+
+```
+BennuGD2/
+├── core/                     cabeceras y runtime (bgdrtm)
+├── build/<plataforma>/bin/   binarios ya compilados (libmod_3d, libbgdrtm, bgdc…)
+└── modules/
+    ├── libmod_3d/            el módulo 3D
+    └── editor3d/             ESTE proyecto
+```
+
+Con esa estructura, **no hay que configurar nada**:
 
 ```sh
 cmake -S . -B build
@@ -40,8 +54,26 @@ cmake --build build -j4
 ./bin/editor3d
 ```
 
-El editor compila el *core* de libmod_3d directamente (todos los `libmod_3d_*.c`
-excepto `libmod_3d.c`, que es la capa de enlace con BennuGD2).
+CMake localiza BennuGD2 solo (dos niveles por encima) y detecta la carpeta de
+binarios de tu plataforma. Si lo tienes en otro sitio, indícalo:
+
+```sh
+cmake -S . -B build -DBGD_ROOT=/ruta/a/BennuGD2
+# o, si hace falta, por partes:
+cmake -S . -B build -DBGD_BIN=/ruta/a/BennuGD2/build/linux-gnu/bin \
+                    -DLIBMOD3D=/ruta/a/libmod_3d
+```
+
+Si falta algo, CMake avisa con un mensaje claro indicando dónde ha buscado.
+
+> **Nota:** el editor **enlaza** `libmod_3d` en vez de compilar su *core*, y añade el
+> directorio de binarios al `RPATH` (con `--disable-new-dtags`). Esto es
+> imprescindible: el intérprete de BennuGD2 carga los módulos con
+> `dlopen("libmod_xxx.so")` sin ruta, así ambos comparten **una sola instancia** del
+> motor y funciona sin depender de `LD_LIBRARY_PATH` (por ejemplo, al abrir el
+> editor con doble clic desde el escritorio).
+
+Por ahora el build está probado en **Linux**.
 
 ## Dependencias vendorizadas
 

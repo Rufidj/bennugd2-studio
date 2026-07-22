@@ -8,19 +8,79 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/bin)
 find_package(SDL2 REQUIRED)
 find_package(OpenGL REQUIRED)
 
-set(LIBMOD3D ${CMAKE_CURRENT_SOURCE_DIR}/../libmod_3d)
+# =============================================================================
+#  Localizacion de BennuGD2 y libmod_3d  (NADA de rutas absolutas: esto tiene
+#  que compilar en la maquina de cualquiera)
+# =============================================================================
+# Por defecto se asume la disposicion normal del repo:
+#     BennuGD2/modules/editor3d   <- este proyecto
+#     BennuGD2/modules/libmod_3d  <- el modulo 3D
+#     BennuGD2/build/<plat>/bin   <- binarios de BennuGD2 ya compilados
+# Todo se puede sobreescribir desde la linea de comandos, por ejemplo:
+#     cmake -S . -B build -DBGD_ROOT=/ruta/a/BennuGD2
+#     cmake -S . -B build -DBGD_BIN=/ruta/a/binarios -DLIBMOD3D=/ruta/a/libmod_3d
 
-# ---- Motor: se ENLAZA libmod_3d.so (NO se compila el core estaticamente) ----
+get_filename_component(_DEF_BGD_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+set(BGD_ROOT "${_DEF_BGD_ROOT}" CACHE PATH "Raiz del repositorio BennuGD2")
+
+get_filename_component(_DEF_LIBMOD3D "${CMAKE_CURRENT_SOURCE_DIR}/../libmod_3d" ABSOLUTE)
+set(LIBMOD3D "${_DEF_LIBMOD3D}" CACHE PATH "Fuentes del modulo libmod_3d")
+
+set(BGD_CORE "${BGD_ROOT}/core")
+
+# Directorio de binarios de BennuGD2: el nombre de la carpeta de build depende
+# de la plataforma (linux-gnu, etc.), asi que se busca el que tenga el modulo.
+if(NOT BGD_BIN)
+    file(GLOB _BGD_BIN_CANDIDATES "${BGD_ROOT}/build/*/bin" "${BGD_ROOT}/bin")
+    foreach(_c ${_BGD_BIN_CANDIDATES})
+        if(EXISTS "${_c}/libmod_3d${CMAKE_SHARED_LIBRARY_SUFFIX}")
+            set(BGD_BIN "${_c}")
+            break()
+        endif()
+    endforeach()
+endif()
+set(BGD_BIN "${BGD_BIN}" CACHE PATH "Directorio con libmod_3d/libbgdrtm ya compilados")
+
+# Dependencias precompiladas que acompanan a BennuGD2 (SDL2_gpu, etc.).
+# Se toma la carpeta de la MISMA plataforma que los binarios (build/<plat>/bin
+# -> dependencies/<plat>), para no meter en el rpath las de otras plataformas.
+if(NOT BGD_DEPS AND BGD_BIN)
+    get_filename_component(_BGD_PLAT_DIR "${BGD_BIN}" DIRECTORY)
+    get_filename_component(_BGD_PLAT "${_BGD_PLAT_DIR}" NAME)
+    if(IS_DIRECTORY "${BGD_ROOT}/dependencies/${_BGD_PLAT}")
+        set(BGD_DEPS "${BGD_ROOT}/dependencies/${_BGD_PLAT}")
+    endif()
+endif()
+
+# ---- Comprobaciones con mensajes utiles en vez de errores cripticos ----
+if(NOT BGD_BIN OR NOT EXISTS "${BGD_BIN}/libmod_3d${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    message(FATAL_ERROR
+        "No encuentro libmod_3d compilado.\n"
+        "  Busque en: ${BGD_ROOT}/build/*/bin\n"
+        "Compila primero BennuGD2 (con el modulo libmod_3d), o indica la ruta:\n"
+        "  cmake -S . -B build -DBGD_BIN=/ruta/a/BennuGD2/build/<plat>/bin")
+endif()
+if(NOT EXISTS "${BGD_CORE}/include/instance.h")
+    message(FATAL_ERROR
+        "No encuentro las cabeceras del runtime de BennuGD2 en ${BGD_CORE}/include.\n"
+        "Indica la raiz del repo:  cmake -S . -B build -DBGD_ROOT=/ruta/a/BennuGD2")
+endif()
+if(NOT EXISTS "${LIBMOD3D}/libmod_3d_zone.h")
+    message(FATAL_ERROR
+        "No encuentro las fuentes de libmod_3d en ${LIBMOD3D}.\n"
+        "Indica la ruta:  cmake -S . -B build -DLIBMOD3D=/ruta/a/libmod_3d")
+endif()
+
+# ---- Motor: se ENLAZA libmod_3d (NO se compila el core estaticamente) ----
 # Clave para el Play con scripts: el interprete de BennuGD2 (bgdrtm) carga ese
-# mismo .so con dlopen, y en Linux un .so ya cargado se comparte -> editor y
-# scripts ven UNA sola instancia del motor (mismas escenas/entidades/registros).
-# Antes se compilaba el core aparte y eran DOS mundos separados.
-set(BGD_ROOT /home/ruben/BennuGD2)
-set(BGD_CORE ${BGD_ROOT}/core)
-set(BGD_BIN  ${BGD_ROOT}/build/linux-gnu/bin)
-set(BGD_DEPS ${BGD_ROOT}/dependencies/linux-gnu)
-set(LIBMOD3D_SO ${BGD_BIN}/libmod_3d.so)
-set(LIBBGDRTM_SO ${BGD_BIN}/libbgdrtm.so)   # interprete BennuGD2 embebido
+# mismo .so con dlopen, y un .so ya cargado se comparte -> editor y scripts ven
+# UNA sola instancia del motor (mismas escenas/entidades/registros).
+set(LIBMOD3D_SO  "${BGD_BIN}/libmod_3d${CMAKE_SHARED_LIBRARY_SUFFIX}")
+set(LIBBGDRTM_SO "${BGD_BIN}/libbgdrtm${CMAKE_SHARED_LIBRARY_SUFFIX}")   # interprete embebido
+
+message(STATUS "BennuGD2  : ${BGD_ROOT}")
+message(STATUS "  binarios: ${BGD_BIN}")
+message(STATUS "  libmod_3d: ${LIBMOD3D}")
 
 # ---- Dear ImGui (vendored, docking) + SDL2/OpenGL3 backends ----
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
@@ -53,7 +113,7 @@ target_compile_definitions(editor3d PRIVATE
     PROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/project"   # carpeta de proyecto (Assets/Scenes/Scripts)
     FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"        # fuente de iconos (Font Awesome)
     SCRIPT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/objeto.prg"
-    BGDC_PATH="/home/ruben/BennuGD2/build/linux-gnu/bin/bgdc"
+    BGDC_PATH="${BGD_BIN}/bgdc"      # compilador BennuGD2 (se resuelve arriba)
 )
 
 target_include_directories(editor3d PRIVATE

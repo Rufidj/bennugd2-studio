@@ -79,6 +79,7 @@ extern "C" {
     void  g3d_fbx_set_recenter(int enabled);
     void  g3d_model_animate_all(void *model, float time, int loop);
     int   g3d_model_animation_count(void *model);
+    int   g3d_model_is_skinned(void *model);
     void  g3d_model_animate(void *model, int anim, float time, int loop);
     float g3d_model_animation_duration(void *model, int anim);
     const char *g3d_model_animation_name(void *model, int i);
@@ -2080,6 +2081,11 @@ int main(int, char**) {
                     if (show_anim && kv.second == anim_model) continue;
                     // el modelo del jugador lo anima el emulador durante el Play
                     if (playing && kv.second == sim_player_model) continue;
+                    // SOLO los modelos con esqueleto: esos se colapsan si no se
+                    // animan. Los que no lo tienen no lo necesitan y animarlos los
+                    // rompe (muchos modelos traen animaciones que mueven y escalan
+                    // sus nodos, y se descolocan solos: piezas hundidas, deformes).
+                    if (!g3d_model_is_skinned(kv.second)) continue;
                     g3d_model_animate_all(kv.second, atime, 1);
                 }
         }

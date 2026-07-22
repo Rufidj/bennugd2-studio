@@ -10,11 +10,17 @@ find_package(OpenGL REQUIRED)
 
 set(LIBMOD3D ${CMAKE_CURRENT_SOURCE_DIR}/../libmod_3d)
 
-# ---- Engine CORE (todos los libmod_3d_*.c menos libmod_3d.c = capa BennuGD2) ----
-# libmod_3d.c NO casa con "libmod_3d_*.c" (no lleva '_'), asi que el glob ya lo
-# excluye. Jolt (.cpp) queda fuera: sin USE_JOLT usa la fisica interna.
-file(GLOB ENGINE_CORE ${LIBMOD3D}/libmod_3d_*.c)
-list(APPEND ENGINE_CORE ${LIBMOD3D}/ufbx.c)
+# ---- Motor: se ENLAZA libmod_3d.so (NO se compila el core estaticamente) ----
+# Clave para el Play con scripts: el interprete de BennuGD2 (bgdrtm) carga ese
+# mismo .so con dlopen, y en Linux un .so ya cargado se comparte -> editor y
+# scripts ven UNA sola instancia del motor (mismas escenas/entidades/registros).
+# Antes se compilaba el core aparte y eran DOS mundos separados.
+set(BGD_ROOT /home/ruben/BennuGD2)
+set(BGD_CORE ${BGD_ROOT}/core)
+set(BGD_BIN  ${BGD_ROOT}/build/linux-gnu/bin)
+set(BGD_DEPS ${BGD_ROOT}/dependencies/linux-gnu)
+set(LIBMOD3D_SO ${BGD_BIN}/libmod_3d.so)
+set(LIBBGDRTM_SO ${BGD_BIN}/libbgdrtm.so)   # interprete BennuGD2 embebido
 
 # ---- Dear ImGui (vendored, docking) + SDL2/OpenGL3 backends ----
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
@@ -36,7 +42,7 @@ add_executable(editor3d
     src/main.cpp
     src/engine_bridge.c
     src/embed_x11.cpp
-    ${ENGINE_CORE}
+    src/script_host.c        # embebe el interprete BennuGD2 (bgdrtm) para el Play
     ${IMGUI_SRC}
 )
 
@@ -54,15 +60,26 @@ target_include_directories(editor3d PRIVATE
     ${IMGUI_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/fonts
     ${LIBMOD3D}
+    ${BGD_CORE}/include      # cabeceras del runtime BennuGD2 (instance.h, i_procdef.h...)
+    ${BGD_CORE}/bgdrtm       # bgdrtm.h
     ${SDL2_INCLUDE_DIRS}
     /usr/include            # para los #include "SDL2/SDL_image.h" del motor
 )
 
 target_link_libraries(editor3d
+    ${LIBMOD3D_SO}          # motor compartido (arrastra bgdrtm/bggfx: base para el Play con scripts)
+    ${LIBBGDRTM_SO}         # interprete BennuGD2 (dcb_load / instance_go_frame)
     ${SDL2_LIBRARIES}
     SDL2_image
     ${OPENGL_LIBRARIES}
     ${X11_LIBRARIES}
     ${CMAKE_DL_LIBS}
     m
+)
+
+# En runtime hay que encontrar libmod_3d.so y sus dependencias (bgdrtm, bggfx,
+# sdlhandler, SDL2_gpu) sin depender de LD_LIBRARY_PATH.
+set_target_properties(editor3d PROPERTIES
+    BUILD_RPATH   "${BGD_BIN};${BGD_DEPS}"
+    INSTALL_RPATH "${BGD_BIN};${BGD_DEPS}"
 )

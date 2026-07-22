@@ -10,6 +10,13 @@
 #include <cmath>
 
 // --- embebido de la ventana del juego (embed_x11.cpp, solo Linux/X11) ---
+// ---- interprete BennuGD2 embebido (src/script_host.c) para el Play con scripts ----
+extern "C" int  script_host_start(const char* dcb_path, const char* workdir);
+extern "C" int  script_host_frame(void);
+extern "C" void script_host_stop(void);
+extern "C" int  script_host_running(void);
+extern "C" int  script_host_instance_count(void);
+
 extern "C" int  game_embed_start(const char* shell_cmd, unsigned long parent, int x, int y, int w, int h);
 extern "C" void game_embed_move(int x, int y, int w, int h);
 extern "C" void game_embed_stop(void);
@@ -81,6 +88,34 @@ extern "C" {
     float g3d_model_animation_duration(void *model, int anim);
     const char *g3d_model_animation_name(void *model, int i);
     int   g3d_model_bounds(void *model, float *out_min, float *out_max);
+    int   g3d_model_node_find(void *model, const char *name);
+    float g3d_model_node_axis(void *model, int node, int comp);
+    // ---- fisica / personaje / colision (para el PLAY en vivo dentro del editor) ----
+    int   g3d_char_create(float x, float y, float z, float radius, float height);
+    void  g3d_char_clear_all(void);
+    void  g3d_char_move(int id, float vx, float vz);
+    void  g3d_char_jump(int id, float speed);
+    void  g3d_char_set_water(int id, int in_water, float surface_y);
+    void  g3d_char_update(int id, float dt);
+    void  g3d_char_set_position(int id, float x, float y, float z);
+    void  g3d_char_set_tuning(int id, float step, float slope_deg);
+    float g3d_char_x(int id); float g3d_char_y(int id); float g3d_char_z(int id);
+    int   g3d_char_grounded(int id);
+    int   g3d_rigidbody_create(float x, float y, float z, float hx, float hy, float hz, float mass);
+    int   g3d_rigidbody_create_sphere(float x, float y, float z, float radius, float mass);
+    int   g3d_rigidbody_create_capsule(float x, float y, float z, float radius, float half_h, float mass);
+    int   g3d_rigidbody_create_cylinder(float x, float y, float z, float radius, float half_h, float mass);
+    void  g3d_rigidbody_clear(void);
+    void  g3d_rigidbody_step(float dt);
+    void  g3d_rigidbody_set_bounce(int id, float restitution, float friction);
+    void  g3d_rigidbody_apply_impulse(int id, float ix, float iy, float iz);
+    float g3d_rigidbody_y(int id);
+    float g3d_rigidbody_render_x(int id); float g3d_rigidbody_render_y(int id); float g3d_rigidbody_render_z(int id);
+    float g3d_rigidbody_angle_x(int id); float g3d_rigidbody_angle_y(int id); float g3d_rigidbody_angle_z(int id);
+    int   g3d_collider_add_box(float minx, float miny, float minz, float maxx, float maxy, float maxz);
+    void  g3d_collider_clear(void);
+    void  g3d_physics_set_gravity(float g);
+    int   g3d_scene_set_terrain_collider(void *mesh);
     void  g3d_zone_init(int side, float world_size);
     void  g3d_zone_paint(float wx, float wz, float radius, int layer, int on);
     int   g3d_zone_blocked(float wx, float wz, int layer);
@@ -321,6 +356,10 @@ int main(int, char**) {
     std::string assets_dir = project_dir + "/Assets";
     std::vector<std::string> assets = scan_assets(assets_dir);
     int asset_sel = -1;   // asset "armado" para colocar (-1 = modo seleccion)
+    int drag_asset = -1;  // asset que se esta arrastrando (drag&drop desde Assets)
+    int drag_ent   = -1;  // entidad "fantasma" que sigue el cursor mientras arrastras
+    int last_obj_sel = -1;// para centrar la camara al cambiar de seleccion
+    bool place_on_water = true;  // colocar sobre la superficie del agua (Alt = al fondo)
     printf("Proyecto: %s  (%zu assets)\n", project_dir.c_str(), assets.size());
 
     // ---- objetos colocados en la escena (nivel) ----
@@ -956,6 +995,240 @@ int main(int, char**) {
     float vcam_target[3] = { 0.0f, 2.0f, 0.0f };   // pivote de la camara del viewport (se mueve con WASD)
     int vp_w = 1280, vp_h = 720;      // tamano de la ventana de viewport (px)
     bool vp_hovered = false;
+
+    // Punto de colocacion bajo el raton (sx,sy en pixeles del viewport):
+    // sobre agua -> superficie del agua (para que floten); Alt o sin place_on_water
+    // -> terreno/fondo del lago. Devuelve false si no acierta nada.
+    auto place_point = [&](float sx, float sy, float* hit) -> bool {
+        bool want_water = water_on && place_on_water && !ImGui::GetIO().KeyAlt;
+        if (want_water &&
+            g3d_editor_ray_plane(sx, sy, (float)vp.w, (float)vp.h, water_level, hit)) {
+            float th = terrain ? g3d_editor_terrain_height(terrain, hit[0], hit[2]) : 1e9f;
+            if (th < water_level) return true;   // hay agua ahi -> colocar en la superficie
+        }
+        if (terrain && g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit))
+            return true;                          // sobre el terreno (o fondo del lago)
+        return g3d_editor_ray_plane(sx, sy, (float)vp.w, (float)vp.h, 0.0f, hit) != 0;
+    };
+
+    // ================= PLAY EN VIVO (emulador integrado, sin BennuGD2) =================
+    // Reproduce dentro del editor la MISMA logica que genera el juego (jugador, fisica,
+    // flotacion, zonas, camaras, enganche a huesos). No ejecuta los scripts propios.
+    bool playing = false;
+    // Play/Stop se PIDEN desde la UI y se ejecutan al principio del frame siguiente,
+    // FUERA del frame de ImGui: play_start hace popen(fork) y carga modulos que
+    // reinicializan SDL; hacerlo en mitad del frame se lleva por delante el contexto GL.
+    int  play_req = 0;   // 0=nada 1=arrancar 2=parar
+    struct SimBody { int ent, bid, buoy; float half, mass, bk, prevy; };
+    std::vector<SimBody> sim_bodies;
+    struct SimAttach { int ent, node; float ox, oy, oz, sc, yaw; };
+    std::vector<SimAttach> sim_attach;
+    int sim_pch = -1, sim_player_ent = -1, sim_player_idx = -1;
+    void* sim_player_model = nullptr;
+    float sim_facing = 0, sim_t = 0, sim_pprevx = 0, sim_pprevz = 0;
+    std::vector<std::array<float,5>> play_snap;   // x,y,z,ry,scale de cada objeto
+    float play_cam_snap[6] = {0,0,0,0,0,0};
+
+    auto play_start = [&]() {
+        play_snap.clear();
+        for (auto& o : objects) play_snap.push_back({ o.x, o.y, o.z, o.ry, o.scale });
+        play_cam_snap[0]=vcam_target[0]; play_cam_snap[1]=vcam_target[1]; play_cam_snap[2]=vcam_target[2];
+        play_cam_snap[3]=cam_yaw; play_cam_snap[4]=cam_pitch; play_cam_snap[5]=cam_dist;
+        g3d_char_clear_all(); g3d_rigidbody_clear(); g3d_collider_clear();
+        sim_bodies.clear(); sim_attach.clear();
+        sim_pch=-1; sim_player_ent=-1; sim_player_idx=-1; sim_player_model=nullptr; sim_facing=0; sim_t=0;
+        if (terrain) g3d_scene_set_terrain_collider(terrain);
+        for (int i=0;i<(int)objects.size();i++) if (objects[i].is_player){ sim_player_idx=i; break; }
+        for (int i=0;i<(int)objects.size();i++){
+            auto& o = objects[i];
+            if (o.phys==5){ float hx=o.csize>0.05f?o.csize:0.5f;
+                g3d_collider_add_box(o.x-hx,o.y-5.0f,o.z-hx, o.x+hx,o.y+30.0f,o.z+hx);
+                g3d_entity_impl_set_scale(o.entity,0.0001f,0.0001f,0.0001f); continue; }
+            if (i==sim_player_idx){
+                sim_player_ent=o.entity; sim_player_model=load_model(o.asset);
+                sim_pch=g3d_char_create(o.x,o.y,o.z,o.char_radius,o.char_height);
+                g3d_char_set_tuning(sim_pch,0.8f,46.0f); continue; }
+            if (o.phys>=1 && o.phys<=4){
+                float c=o.csize>0.05f?o.csize:0.5f; float by0=o.y+c; int bid;
+                if(o.phys==1) bid=g3d_rigidbody_create(o.x,by0,o.z,c,c,c,o.mass);
+                else if(o.phys==2) bid=g3d_rigidbody_create_sphere(o.x,by0,o.z,c,o.mass);
+                else if(o.phys==3) bid=g3d_rigidbody_create_capsule(o.x,by0,o.z,c,c,o.mass);
+                else bid=g3d_rigidbody_create_cylinder(o.x,by0,o.z,c,c,o.mass);
+                g3d_rigidbody_set_bounce(bid,o.bounce,o.friction);
+                int buoy=(water_on&&o.buoyant&&o.mass>0.0f)?1:0; float bk=0.0f;
+                if(buoy){ float de=o.density>0.05f?o.density:0.05f; bk=24.0f*o.mass/(2.0f*c*de); }
+                sim_bodies.push_back({ o.entity, bid, buoy, c, o.mass, bk, by0 });
+            }
+        }
+        if (sim_player_idx>=0 && sim_player_model)
+            for (int i=0;i<(int)objects.size();i++){
+                auto& a=objects[i];
+                if (a.attach_to==sim_player_idx && i!=sim_player_idx){
+                    int node=g3d_model_node_find(sim_player_model, a.attach_bone.c_str());
+                    sim_attach.push_back({ a.entity, node, a.att_off[0],a.att_off[1],a.att_off[2], a.att_scale, a.att_yaw });
+                }
+            }
+
+        // ---- SCRIPTS PROPIOS: compilar y arrancar el interprete BennuGD2 real ----
+        // Genera un main "de Play" que NO recrea el mundo (ya existe en el editor) ni
+        // abre ventana (sin set_mode): solo lanza el PROCESS de cada objeto pasandole
+        // el handle de entidad QUE YA EXISTE. Como editor e interprete comparten la
+        // misma libmod_3d.so, los scripts mueven las entidades reales del editor.
+        {
+            std::vector<std::pair<std::string,int>> comps;   // (nombre, entidad)
+            for (auto& o : objects) {
+                FILE* s = fopen((scripts_dir + "/" + o.name + ".prg").c_str(), "r");
+                if (s) { fclose(s); comps.push_back({ o.name, o.entity }); }
+            }
+            if (!comps.empty()) {
+                std::string pp = project_dir + "/__play.prg";
+                FILE* f = fopen(pp.c_str(), "w");
+                if (f) {
+                    fputs("// Generado por el editor para el PLAY en vivo (no editar).\n", f);
+                    fputs("import \"libmod_misc\"; import \"libmod_input\"; import \"libmod_3d\";\n\n", f);
+                    for (auto& c : comps) {          // el codigo de cada componente
+                        FILE* s = fopen((scripts_dir + "/" + c.first + ".prg").c_str(), "r");
+                        if (!s) continue;
+                        fprintf(f, "// ---- componente: %s ----\n", c.first.c_str());
+                        char buf[1024]; size_t n;
+                        while ((n = fread(buf, 1, sizeof(buf), s)) > 0) fwrite(buf, 1, n, f);
+                        fputs("\n", f); fclose(s);
+                    }
+                    fputs("\nPROCESS main()\nBEGIN\n", f);
+                    for (auto& c : comps)            // lanzar sobre la entidad YA existente
+                        fprintf(f, "    %s(%d);\n", c.first.c_str(), c.second);
+                    fputs("    LOOP FRAME; END\nEND\n", f);
+                    fclose(f);
+
+                    std::string bindir = std::string(BGDC_PATH); bindir = bindir.substr(0, bindir.rfind('/'));
+                    std::string cmd = "cd \"" + project_dir + "\" && PATH=\"" + bindir + ":$PATH\" "
+                                      "LD_LIBRARY_PATH=\"" + bindir + ":$LD_LIBRARY_PATH\" \"" +
+                                      BGDC_PATH + "\" __play.prg 2>&1";
+                    std::string out; FILE* p = popen(cmd.c_str(), "r");
+                    int rc = -1;
+                    if (p) { char b[512]; size_t n; while ((n=fread(b,1,sizeof(b)-1,p))>0){ b[n]=0; out += b; } rc = pclose(p); }
+                    if (rc == 0) {
+                        if (script_host_start((project_dir + "/__play.dcb").c_str(), project_dir.c_str()))
+                            status = "Play con scripts (" + std::to_string(comps.size()) + " objetos)";
+                        else status = "Play: el interprete no arranco (ver consola)";
+                    } else {
+                        game_out = out + "\n\n[FALLO] Los scripts no compilan; el Play corre solo lo integrado.";
+                        open_game_popup = true;
+                    }
+                }
+            }
+        }
+        playing=true;
+    };
+    auto play_stop = [&]() {
+        if (script_host_running()) script_host_stop();   // parar los scripts primero
+        g3d_char_clear_all(); g3d_rigidbody_clear(); g3d_collider_clear();
+        sim_bodies.clear(); sim_attach.clear(); sim_pch=-1;
+        for (size_t i=0;i<objects.size() && i<play_snap.size();i++){
+            auto& o=objects[i]; auto& s=play_snap[i];
+            o.x=s[0]; o.y=s[1]; o.z=s[2]; o.ry=s[3]; o.scale=s[4];
+            g3d_entity_impl_set_position(o.entity,o.x,o.y,o.z);
+            g3d_entity_impl_set_rotation(o.entity,0,o.ry,0);
+            g3d_entity_impl_set_scale(o.entity,o.scale,o.scale,o.scale);
+        }
+        vcam_target[0]=play_cam_snap[0]; vcam_target[1]=play_cam_snap[1]; vcam_target[2]=play_cam_snap[2];
+        cam_yaw=play_cam_snap[3]; cam_pitch=play_cam_snap[4]; cam_dist=play_cam_snap[5];
+        playing=false;
+    };
+    // avanza un frame del juego emulado y coloca la camara del juego
+    auto play_update = [&](float dt) {
+        if (dt<=0.0f) dt=1.0f/60.0f; if (dt>0.05f) dt=0.05f;
+        ImGuiIO& io = ImGui::GetIO();
+        // --- SCRIPTS del usuario: avanzar UN frame del interprete BennuGD2 real ---
+        if (script_host_running()) {
+            script_host_frame();
+            if (getenv("EDITOR_AUTOPLAY")) {   // diagnostico: instancias vivas por frame
+                static int dbgf = 0;
+                if ((dbgf++ % 20) == 0) { fprintf(stderr, "[diag] frame=%d instancias=%d\n", dbgf, script_host_instance_count()); fflush(stderr); }
+            }
+        }
+        // --- fisica (cuerpos rigidos) ---
+        g3d_rigidbody_step(dt);
+        for (auto& b : sim_bodies){
+            g3d_entity_impl_set_position(b.ent, g3d_rigidbody_render_x(b.bid), g3d_rigidbody_render_y(b.bid), g3d_rigidbody_render_z(b.bid));
+            g3d_entity_impl_set_rotation(b.ent, g3d_rigidbody_angle_x(b.bid), g3d_rigidbody_angle_y(b.bid), g3d_rigidbody_angle_z(b.bid));
+            if (water_on && b.buoy){
+                float by=g3d_rigidbody_y(b.bid); float vy=(by-b.prevy)/dt;
+                float sub=water_level-(by-b.half);
+                if (sub>0.0f) g3d_rigidbody_apply_impulse(b.bid,0.0f,(b.bk*sub - vy*b.mass*3.0f)*dt,0.0f);
+                b.prevy=by;
+            }
+        }
+        // --- jugador ---
+        float px=0,py=0,pz=0; float wl=0; int inw=0;
+        if (sim_pch>=0 && sim_player_idx>=0 && sim_player_idx<(int)objects.size()){
+            auto& p=objects[sim_player_idx];
+            sim_pprevx=g3d_char_x(sim_pch); sim_pprevz=g3d_char_z(sim_pch);
+            float wx=0,wz=0;
+            if (!io.WantTextInput){
+                if (ImGui::IsKeyDown(ImGuiKey_W)) wz+=1.0f;
+                if (ImGui::IsKeyDown(ImGuiKey_S)) wz-=1.0f;
+                if (ImGui::IsKeyDown(ImGuiKey_D)) wx+=1.0f;
+                if (ImGui::IsKeyDown(ImGuiKey_A)) wx-=1.0f;
+            }
+            float spd = (io.KeyShift ? p.run_speed : p.walk_speed);
+            wl=sqrtf(wx*wx+wz*wz);
+            if (wl>0.001f){ wx=wx/wl*spd; wz=wz/wl*spd; sim_facing=atan2f(wx,wz); }
+            g3d_char_move(sim_pch,wx,wz);
+            if (!io.WantTextInput && ImGui::IsKeyDown(ImGuiKey_Space)) g3d_char_jump(sim_pch,p.jump_force);
+            g3d_char_update(sim_pch,dt);
+            px=g3d_char_x(sim_pch); py=g3d_char_y(sim_pch); pz=g3d_char_z(sim_pch);
+            if (water_on && p.buoyant){ if (py<water_level-1.2f) inw=1; g3d_char_set_water(sim_pch,inw,water_level); }
+            if (p.zone_layer>=0 && g3d_zone_blocked(px,pz,p.zone_layer)){
+                g3d_char_set_position(sim_pch,sim_pprevx,py,sim_pprevz); px=sim_pprevx; pz=sim_pprevz;
+            }
+            g3d_entity_impl_set_position(sim_player_ent,px,py,pz);
+            g3d_entity_impl_set_rotation(sim_player_ent,0.0f,sim_facing,0.0f);
+            // animacion por estado
+            if (sim_player_model && g3d_model_animation_count(sim_player_model)>0){
+                sim_t+=dt; int gnd=g3d_char_grounded(sim_pch); int clip;
+                if (inw && p.anim_swim>=0) clip=p.anim_swim;
+                else if (gnd==0) clip=p.anim_jump;
+                else if (wl>0.001f) clip=(io.KeyShift? p.anim_run : p.anim_walk);
+                else clip=p.anim_idle;
+                g3d_model_animate(sim_player_model, clip, sim_t, 1);
+            }
+            // enganches a huesos
+            for (auto& a : sim_attach){
+                if (a.node<0 || !sim_player_model) continue;
+                float nx=g3d_model_node_axis(sim_player_model,a.node,0)*p.scale + a.ox;
+                float ny=g3d_model_node_axis(sim_player_model,a.node,1)*p.scale + a.oy;
+                float nz=g3d_model_node_axis(sim_player_model,a.node,2)*p.scale + a.oz;
+                float c=cosf(sim_facing), s=sinf(sim_facing);
+                float wx2=nx*c+nz*s, wz2=-nx*s+nz*c;
+                g3d_entity_impl_set_position(a.ent, px+wx2, py+ny, pz+wz2);
+                g3d_entity_impl_set_rotation(a.ent, 0.0f, sim_facing + a.yaw*0.0174533f, 0.0f);
+                g3d_entity_impl_set_scale(a.ent, a.sc, a.sc, a.sc);
+            }
+        }
+        // --- camara del juego ---
+        float tx=0,ty=0,tz=0; bool follow=false;
+        if (cam_mode!=0 && cam_follow>=0 && cam_follow<(int)objects.size()){
+            if (cam_follow==sim_player_idx && sim_pch>=0){ tx=px; ty=py; tz=pz; }
+            else { tx=objects[cam_follow].x; ty=objects[cam_follow].y; tz=objects[cam_follow].z; }
+            follow=true;
+        }
+        if (!follow){
+            g3d_camera_set_position(cam,cam_pos[0],cam_pos[1],cam_pos[2]);
+            g3d_camera_look_at(cam,cam_look[0],cam_look[1],cam_look[2],0.0f,1.0f,0.0f);
+        } else if (cam_mode==1){
+            g3d_camera_set_position(cam,tx,ty+cam_height,tz-gcam_dist);
+            g3d_camera_look_at(cam,tx,ty+1.0f,tz,0.0f,1.0f,0.0f);
+        } else if (cam_mode==2){
+            g3d_camera_set_position(cam,tx,ty+cam_height,tz);
+            g3d_camera_look_at(cam,tx,ty+cam_height,tz+10.0f,0.0f,1.0f,0.0f);
+        } else {
+            g3d_camera_set_position(cam,tx,ty+gcam_dist,tz+0.5f);
+            g3d_camera_look_at(cam,tx,ty,tz,0.0f,1.0f,0.0f);
+        }
+    };
+
+    Uint32 last_ticks = SDL_GetTicks();
     bool running = true;
     while (running) {
         SDL_Event ev;
@@ -967,6 +1240,32 @@ int main(int, char**) {
         }
         SDL_GL_GetDrawableSize(window, &fbw, &fbh);
 
+        Uint32 now_ticks = SDL_GetTicks();
+        float frame_dt = (now_ticks - last_ticks) / 1000.0f; last_ticks = now_ticks;
+
+        // Atender Play/Stop pedidos desde la UI, AQUI (fuera del frame de ImGui).
+        if (play_req == 1) { play_req = 0; play_start(); }
+        else if (play_req == 2) { play_req = 0; play_stop(); }
+
+        // DEPURACION: EDITOR_AUTOPLAY=1 lanza Play solo (para reproducir fallos sin GUI)
+        { static int ap = 0;
+          if (getenv("EDITOR_AUTOPLAY")) {
+              ap++;
+              if (ap == 10) {
+                  const char* prj = getenv("EDITOR_AUTOPLAY_PROJECT");
+                  if (prj) { fprintf(stderr, "[autoplay] -> open_project(%s)\n", prj); fflush(stderr); open_project(prj); }
+                  else { fprintf(stderr, "[autoplay] -> load_scene(%s)\n", scene_path.c_str()); fflush(stderr); load_scene(scene_path); }
+              }
+              if (ap == 30) { fprintf(stderr, "[autoplay] -> play_start() #1 objetos=%d\n", (int)objects.size()); fflush(stderr); play_start(); }
+              if (ap == 90) { fprintf(stderr, "[autoplay] -> play_stop() #1\n"); fflush(stderr); play_stop(); }
+              if (ap == 110) { fprintf(stderr, "[autoplay] -> play_start() #2 (reinicio del runtime)\n"); fflush(stderr); play_start(); }
+              if (ap == 170) { fprintf(stderr, "[autoplay] -> play_stop() #2\n"); fflush(stderr); play_stop(); }
+              if (ap == 200) running = false;
+          } }
+
+        if (playing) {
+            play_update(frame_dt);   // PLAY: emula el juego y coloca la camara del juego
+        } else {
         // ---- camara del viewport: orbita (raton) + vuelo WASD (con boton derecho) ----
         // Como en Unreal/Unity: manten el BOTON DERECHO sobre el viewport y muevete
         // con WASD (adelante/izq/atras/der), E/Q (subir/bajar). El raton rota la vista.
@@ -997,11 +1296,21 @@ int main(int, char**) {
             if (ImGui::IsKeyDown(ImGuiKey_E)) vcam_target[1]+=sp;
             if (ImGui::IsKeyDown(ImGuiKey_Q)) vcam_target[1]-=sp;
         }
+        // al seleccionar un objeto, centrar el pivote de la camara en el
+        if (obj_sel != last_obj_sel) {
+            last_obj_sel = obj_sel;
+            if (obj_sel >= 0 && obj_sel < (int)objects.size()) {
+                vcam_target[0] = objects[obj_sel].x;
+                vcam_target[1] = objects[obj_sel].y;
+                vcam_target[2] = objects[obj_sel].z;
+            }
+        }
         float cx = vcam_target[0] + sinf(cam_yaw) * cosf(cam_pitch) * cam_dist;
         float cy = vcam_target[1] + sinf(cam_pitch) * cam_dist + 1.0f;
         float cz = vcam_target[2] + cosf(cam_yaw) * cosf(cam_pitch) * cam_dist;
         g3d_camera_set_position(cam, cx, cy, cz);
         g3d_camera_look_at(cam, vcam_target[0], vcam_target[1], vcam_target[2], 0.0f, 1.0f, 0.0f);
+        }   // fin modo edicion (durante Play manda play_update)
 
         // ---- construir la UI (dockspace + paneles) ----
         ImGui_ImplOpenGL3_NewFrame();
@@ -1009,8 +1318,10 @@ int main(int, char**) {
         ImGui::NewFrame();
         ImGuizmo::BeginFrame();
 
-        // atajos (no al escribir texto, ni mientras vuelas con el boton derecho -> WASD)
-        if (!ImGui::GetIO().WantTextInput && !ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+        // Esc durante el Play = parar
+        if (playing && ImGui::IsKeyPressed(ImGuiKey_Escape)) play_req = 2;
+        // atajos de herramienta (no al escribir texto, ni volando con boton derecho, ni en Play)
+        if (!playing && !ImGui::GetIO().WantTextInput && !ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
             if (ImGui::IsKeyPressed(ImGuiKey_Q)) tool = T_SELECT;
             if (ImGui::IsKeyPressed(ImGuiKey_W)) tool = T_MOVE;
             if (ImGui::IsKeyPressed(ImGuiKey_E)) tool = T_ROTATE;
@@ -1079,6 +1390,20 @@ int main(int, char**) {
             toolBtn(ICON_FA_CIRCLE_NOTCH,        T_HOLE,    "Terreno: agujero (para bocas de cueva)");
             ImGui::SameLine(0, 12); ImGui::TextDisabled("|"); ImGui::SameLine(0, 12);
             toolBtn(ICON_FA_DRAW_POLYGON,        T_ZONE,    "Pintar ZONAS de barrera (por donde no pasan ciertos objetos)");
+
+            // ---- PLAY / STOP: emular el juego dentro del editor ----
+            ImGui::SameLine(0, 24);
+            if (!playing) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.65f, 0.25f, 1.0f));
+                if (ImGui::Button(ICON_FA_PLAY " Play")) play_req = 1;
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Prueba el juego dentro del editor (WASD/raton). No corre los scripts propios.");
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.2f, 0.2f, 1.0f));
+                if (ImGui::Button(ICON_FA_STOP " Stop")) play_req = 2;
+                ImGui::PopStyleColor();
+                ImGui::SameLine(); ImGui::TextColored(ImVec4(0.3f,1,0.4f,1), "  \xe2\x96\xb6 EN JUEGO");
+            }
 
             if (!status.empty()) {
                 ImGui::SameLine(ImGui::GetWindowWidth() - 320);
@@ -1152,6 +1477,50 @@ int main(int, char**) {
         vp_hovered = ImGui::IsItemHovered();
         ImVec2 img_min = ImGui::GetItemRectMin();
 
+        // ---- ARRASTRAR Y SOLTAR: colocar un asset arrastrado desde el panel Assets ----
+        // Mientras arrastras, un "fantasma" del modelo sigue el cursor por el nivel;
+        // al soltar se queda colocado ahi y queda seleccionado.
+        if (!playing && ImGui::BeginDragDropTarget()) {
+            const ImGuiPayload* pl = ImGui::AcceptDragDropPayload(
+                "ASSET_IDX", ImGuiDragDropFlags_AcceptBeforeDelivery);
+            if (pl && pl->Data) {
+                int idx = *(const int*)pl->Data;
+                ImVec2 mp = ImGui::GetIO().MousePos;
+                float sx = mp.x - img_min.x, sy = mp.y - img_min.y;
+                float hit[3];
+                int ok = place_point(sx, sy, hit);
+                if (ok && idx >= 0 && idx < (int)assets.size()) {
+                    void* m = load_model(assets[idx]);
+                    if (m) {
+                        if (drag_ent < 0 || drag_asset != idx) {
+                            if (drag_ent >= 0) g3d_entity_impl_set_position(drag_ent, 0, -99999, 0);
+                            drag_ent = g3d_model_spawn(scene, m, hit[0], hit[1], hit[2], 0.0f, 0.0f);
+                            drag_asset = idx;
+                        }
+                        g3d_entity_impl_set_position(drag_ent, hit[0], hit[1], hit[2]);
+                        if (pl->IsDelivery()) {           // soltado -> objeto real
+                            SObj o; o.asset = assets[idx];
+                            o.name = assets[idx].substr(0, assets[idx].find('.')) +
+                                     "_" + std::to_string((int)objects.size());
+                            o.entity = drag_ent;
+                            o.x = hit[0]; o.y = hit[1]; o.z = hit[2]; o.ry = 0; o.scale = 1;
+                            objects.push_back(o); obj_sel = (int)objects.size() - 1;
+                            drag_ent = -1; drag_asset = -1;
+                        }
+                    }
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+        // si el arrastre termino fuera del viewport, retirar el fantasma
+        if (drag_ent >= 0) {
+            const ImGuiPayload* cur = ImGui::GetDragDropPayload();
+            if (!cur || !cur->IsDataType("ASSET_IDX")) {
+                g3d_entity_impl_set_position(drag_ent, 0, -99999, 0);
+                drag_ent = -1; drag_asset = -1;
+            }
+        }
+
         // ---- Play embebido: coloca/actualiza la ventana del juego sobre el viewport ----
         if (play_requested || game_embed_active()) {
             ImVec2 vpos = ImGui::GetMainViewport()->Pos;
@@ -1164,7 +1533,7 @@ int main(int, char**) {
         ImGuizmo::SetOrthographic(false);
         ImGuizmo::SetDrawlist();
         ImGuizmo::SetRect(img_min.x, img_min.y, avail.x, avail.y);
-        bool gizmo_tool = (tool == T_MOVE || tool == T_ROTATE || tool == T_SCALE);
+        bool gizmo_tool = !playing && (tool == T_MOVE || tool == T_ROTATE || tool == T_SCALE);
         if (gizmo_tool && obj_sel >= 0 && obj_sel < (int)objects.size()) {
             SObj& o = objects[obj_sel];
             float view[16], proj[16], model[16];
@@ -1256,7 +1625,7 @@ int main(int, char**) {
         }
 
         // ---- interaccion del viewport segun la herramienta ----
-        if (vp_hovered && !ImGuizmo::IsOver()) {
+        if (!playing && vp_hovered && !ImGuizmo::IsOver()) {
             ImVec2 mp = ImGui::GetIO().MousePos;
             float sx = mp.x - img_min.x, sy = mp.y - img_min.y;
             float hit[3];
@@ -1296,9 +1665,8 @@ int main(int, char**) {
                         g3d_zone_paint(hit[0], hit[2], brush_r, zone_layer, zone_erase ? 0 : 1);
                 }
             } else if (!terr_tool && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                // punto: sobre el terreno; si falla, plano y=0
-                int ok = (terrain && g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit));
-                if (!ok) ok = g3d_editor_ray_plane(sx, sy, (float)vp.w, (float)vp.h, 0.0f, hit);
+                // punto: sobre agua->superficie, si no sobre el terreno/fondo
+                int ok = place_point(sx, sy, hit);
                 if (ok) {
                     if (tool == T_PLACE && asset_sel >= 0) {          // COLOCAR
                         void* m = load_model(assets[asset_sel]);
@@ -1334,12 +1702,20 @@ int main(int, char**) {
             ImGui::TextColored(ImVec4(0.5f,0.8f,1,1), "COLOCAR: clic en la escena");
             ImGui::SameLine(); if (ImGui::SmallButton("x")) asset_sel = -1;
         } else ImGui::TextDisabled("clic en un asset para colocar");
-        ImGui::TextDisabled("Doble clic = ver animaciones");
+        ImGui::TextDisabled("Arrastra a la escena para colocar - doble clic = animaciones");
+        ImGui::BeginDisabled(!water_on);
+        ImGui::Checkbox("Colocar sobre el agua", &place_on_water);
+        ImGui::EndDisabled();
+        if (water_on) ImGui::TextDisabled("(manten Alt para ponerlo en el fondo)");
         ImGui::BeginChild("lista_assets");
         for (int i = 0; i < (int)assets.size(); i++) {
-            if (ImGui::Selectable(assets[i].c_str(), asset_sel == i)) {
-                if (asset_sel == i) asset_sel = -1;
-                else { asset_sel = i; tool = T_PLACE; }   // arma colocar
+            if (ImGui::Selectable(assets[i].c_str(), asset_sel == i))
+                asset_sel = (asset_sel == i) ? -1 : i;    // solo resalta (colocar = arrastrar)
+            // ORIGEN de arrastre: lleva el asset al viewport
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                ImGui::SetDragDropPayload("ASSET_IDX", &i, sizeof(int));
+                ImGui::Text(ICON_FA_CUBE " %s", assets[i].c_str());
+                ImGui::EndDragDropSource();
             }
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                 open_anim_preview(assets[i]);             // visor de animaciones
@@ -1693,12 +2069,13 @@ int main(int, char**) {
 
         ImGui::Render();
 
-        // aplicar transformaciones de los objetos colocados
-        for (auto& o : objects) {
-            g3d_entity_impl_set_position(o.entity, o.x, o.y, o.z);
-            g3d_entity_impl_set_rotation(o.entity, 0.0f, o.ry, 0.0f);
-            g3d_entity_impl_set_scale(o.entity, o.scale, o.scale, o.scale);
-        }
+        // aplicar transformaciones de los objetos colocados (en Play manda el emulador)
+        if (!playing)
+            for (auto& o : objects) {
+                g3d_entity_impl_set_position(o.entity, o.x, o.y, o.z);
+                g3d_entity_impl_set_rotation(o.entity, 0.0f, o.ry, 0.0f);
+                g3d_entity_impl_set_scale(o.entity, o.scale, o.scale, o.scale);
+            }
 
         // ---- agua (mar/lago global) ----
         g3d_editor_water_update(water_on ? 1 : 0, water_level, 4000.0f,
@@ -1714,6 +2091,8 @@ int main(int, char**) {
                 if (kv.second && g3d_model_animation_count(kv.second) > 0) {
                     // el modelo del visor lo anima el visor (con su clip elegido)
                     if (show_anim && kv.second == anim_model) continue;
+                    // el modelo del jugador lo anima el emulador durante el Play
+                    if (playing && kv.second == sim_player_model) continue;
                     g3d_model_animate_all(kv.second, atime, 1);
                 }
         }

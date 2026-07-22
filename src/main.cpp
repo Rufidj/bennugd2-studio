@@ -9,12 +9,6 @@
 #include <cstdio>
 #include <cmath>
 
-// ---- interprete BennuGD2 embebido (src/script_host.c) para el Play con scripts ----
-extern "C" int  script_host_start(const char* dcb_path, const char* workdir);
-extern "C" int  script_host_frame(void);
-extern "C" void script_host_stop(void);
-extern "C" int  script_host_running(void);
-extern "C" int  script_host_instance_count(void);
 
 #include <string>
 #include <vector>
@@ -1086,67 +1080,9 @@ int main(int, char**) {
                 }
             }
 
-        // ---- SCRIPTS PROPIOS: compilar y arrancar el interprete BennuGD2 real ----
-        // Genera un main "de Play" que NO recrea el mundo (ya existe en el editor) ni
-        // abre ventana (sin set_mode): solo lanza el PROCESS de cada objeto pasandole
-        // el handle de entidad QUE YA EXISTE. Como editor e interprete comparten la
-        // misma libmod_3d.so, los scripts mueven las entidades reales del editor.
-        {
-            std::vector<std::pair<std::string,int>> comps;   // (nombre, entidad)
-            for (auto& o : objects) {
-                FILE* s = fopen((scripts_dir + "/" + o.name + ".prg").c_str(), "r");
-                if (s) { fclose(s); comps.push_back({ o.name, o.entity }); }
-            }
-            if (!comps.empty()) {
-                std::string pp = project_dir + "/__play.prg";
-                FILE* f = fopen(pp.c_str(), "w");
-                if (f) {
-                    fputs("// Generado por el editor para el PLAY en vivo (no editar).\n", f);
-                    // Mismos imports que el juego real y que el boton "Compilar" del
-                    // editor de scripts, para que un script que compila alli compile
-                    // tambien aqui. libmod_gfx se importa por el LENGUAJE (write,
-                    // sprites...): no abre ventana, eso solo lo hace set_mode, que este
-                    // main no llama. Su dibujado 2D no se ve en el preview porque los
-                    // handler hooks de los modulos no se ejecutan en modo embebido.
-                    fputs("import \"libmod_gfx\"; import \"libmod_misc\"; "
-                          "import \"libmod_input\"; import \"libmod_3d\";\n\n", f);
-                    for (auto& c : comps) {          // el codigo de cada componente
-                        FILE* s = fopen((scripts_dir + "/" + c.first + ".prg").c_str(), "r");
-                        if (!s) continue;
-                        fprintf(f, "// ---- componente: %s ----\n", c.first.c_str());
-                        char buf[1024]; size_t n;
-                        while ((n = fread(buf, 1, sizeof(buf), s)) > 0) fwrite(buf, 1, n, f);
-                        fputs("\n", f); fclose(s);
-                    }
-                    fputs("\nPROCESS main()\nBEGIN\n", f);
-                    for (auto& c : comps)            // lanzar sobre la entidad YA existente
-                        fprintf(f, "    %s(%d);\n", c.first.c_str(), c.second);
-                    fputs("    LOOP FRAME; END\nEND\n", f);
-                    fclose(f);
-
-                    std::string bindir = std::string(BGDC_PATH); bindir = bindir.substr(0, bindir.rfind('/'));
-                    std::string cmd = "cd \"" + project_dir + "\" && PATH=\"" + bindir + ":$PATH\" "
-                                      "LD_LIBRARY_PATH=\"" + bindir + ":$LD_LIBRARY_PATH\" \"" +
-                                      BGDC_PATH + "\" __play.prg 2>&1";
-                    std::string out; FILE* p = popen(cmd.c_str(), "r");
-                    int rc = -1;
-                    if (p) { char b[512]; size_t n; while ((n=fread(b,1,sizeof(b)-1,p))>0){ b[n]=0; out += b; } rc = pclose(p); }
-                    if (rc == 0) {
-                        if (script_host_start((project_dir + "/__play.dcb").c_str(), project_dir.c_str()))
-                            status = "Play con scripts (" + std::to_string(comps.size()) + " objetos)";
-                        else status = "Play: el interprete no arranco (ver consola)";
-                    } else {
-                        console_add("\n----- compilando los scripts del Play -----\n" + out +
-                                    "[FALLO] Los scripts no compilan; el Play corre solo lo integrado.\n");
-                        console_focus = true;
-                    }
-                }
-            }
-        }
         playing=true;
     };
     auto play_stop = [&]() {
-        if (script_host_running()) script_host_stop();   // parar los scripts primero
         g3d_char_clear_all(); g3d_rigidbody_clear(); g3d_collider_clear();
         sim_bodies.clear(); sim_attach.clear(); sim_pch=-1;
         for (size_t i=0;i<objects.size() && i<play_snap.size();i++){
@@ -1223,19 +1159,6 @@ int main(int, char**) {
                 g3d_entity_impl_set_scale(a.ent, a.sc, a.sc, a.sc);
             }
         }
-        // --- SCRIPTS del usuario: LOS ULTIMOS, para que MANDEN ---
-        // Se ejecutan despues de la fisica, el jugador y los enganches: si un script
-        // fija la posicion/rotacion de su objeto, su valor es el que queda (sobrescribe
-        // al comportamiento integrado). Un script vacio no altera nada, asi que anadir
-        // un script a un objeto no rompe su fisica ni su control de jugador.
-        if (script_host_running()) {
-            script_host_frame();
-            if (getenv("EDITOR_AUTOPLAY")) {   // diagnostico: instancias vivas por frame
-                static int dbgf = 0;
-                if ((dbgf++ % 20) == 0) { fprintf(stderr, "[diag] frame=%d instancias=%d\n", dbgf, script_host_instance_count()); fflush(stderr); }
-            }
-        }
-
         // --- camara del juego (despues de todo, para seguir la posicion final) ---
         float tx=0,ty=0,tz=0; bool follow=false;
         if (cam_mode!=0 && cam_follow>=0 && cam_follow<(int)objects.size()){
@@ -1421,18 +1344,29 @@ int main(int, char**) {
             ImGui::SameLine(0, 12); ImGui::TextDisabled("|"); ImGui::SameLine(0, 12);
             toolBtn(ICON_FA_DRAW_POLYGON,        T_ZONE,    "Pintar ZONAS de barrera (por donde no pasan ciertos objetos)");
 
-            // ---- PLAY / STOP: emular el juego dentro del editor ----
+            // ---- PLAY: compila el juego y lo ejecuta en su propia ventana ----
+            // Es un proceso BennuGD2 normal, con todos sus hooks: fidelidad total
+            // (2D, FPS, input, scripts) y si el juego falla no se lleva al editor.
             ImGui::SameLine(0, 24);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.65f, 0.25f, 1.0f));
+            if (ImGui::Button(ICON_FA_PLAY " Play")) generate_game(true);
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Compila el juego y lo ejecuta en su ventana.\nLa salida sale en la Consola.");
+
+            // ---- Vista previa rapida DENTRO del viewport (sin compilar) ----
+            ImGui::SameLine(0, 8);
             if (!playing) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.65f, 0.25f, 1.0f));
-                if (ImGui::Button(ICON_FA_PLAY " Play")) play_req = 1;
-                ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Prueba el juego dentro del editor (WASD/raton). No corre los scripts propios.");
+                if (ImGui::Button(ICON_FA_EYE " Vista previa")) play_req = 1;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Previsualiza aqui mismo, al instante y sin compilar:\n"
+                                      "fisica, jugador (WASD), camaras y zonas.\n"
+                                      "Es una aproximacion: NO ejecuta tus scripts.");
             } else {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.2f, 0.2f, 1.0f));
-                if (ImGui::Button(ICON_FA_STOP " Stop")) play_req = 2;
+                if (ImGui::Button(ICON_FA_STOP " Parar")) play_req = 2;
                 ImGui::PopStyleColor();
-                ImGui::SameLine(); ImGui::TextColored(ImVec4(0.3f,1,0.4f,1), "  \xe2\x96\xb6 EN JUEGO");
+                ImGui::SameLine(); ImGui::TextColored(ImVec4(0.3f,1,0.4f,1), "  vista previa");
             }
 
             if (!status.empty()) {

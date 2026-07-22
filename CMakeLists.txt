@@ -26,8 +26,6 @@ set(BGD_ROOT "${_DEF_BGD_ROOT}" CACHE PATH "Raiz del repositorio BennuGD2")
 get_filename_component(_DEF_LIBMOD3D "${CMAKE_CURRENT_SOURCE_DIR}/../libmod_3d" ABSOLUTE)
 set(LIBMOD3D "${_DEF_LIBMOD3D}" CACHE PATH "Fuentes del modulo libmod_3d")
 
-set(BGD_CORE "${BGD_ROOT}/core")
-
 # Directorio de binarios de BennuGD2: el nombre de la carpeta de build depende
 # de la plataforma (linux-gnu, etc.), asi que se busca el que tenga el modulo.
 if(NOT BGD_BIN)
@@ -60,11 +58,6 @@ if(NOT BGD_BIN OR NOT EXISTS "${BGD_BIN}/libmod_3d${CMAKE_SHARED_LIBRARY_SUFFIX}
         "Compila primero BennuGD2 (con el modulo libmod_3d), o indica la ruta:\n"
         "  cmake -S . -B build -DBGD_BIN=/ruta/a/BennuGD2/build/<plat>/bin")
 endif()
-if(NOT EXISTS "${BGD_CORE}/include/instance.h")
-    message(FATAL_ERROR
-        "No encuentro las cabeceras del runtime de BennuGD2 en ${BGD_CORE}/include.\n"
-        "Indica la raiz del repo:  cmake -S . -B build -DBGD_ROOT=/ruta/a/BennuGD2")
-endif()
 if(NOT EXISTS "${LIBMOD3D}/libmod_3d_zone.h")
     message(FATAL_ERROR
         "No encuentro las fuentes de libmod_3d en ${LIBMOD3D}.\n"
@@ -72,11 +65,9 @@ if(NOT EXISTS "${LIBMOD3D}/libmod_3d_zone.h")
 endif()
 
 # ---- Motor: se ENLAZA libmod_3d (NO se compila el core estaticamente) ----
-# Clave para el Play con scripts: el interprete de BennuGD2 (bgdrtm) carga ese
-# mismo .so con dlopen, y un .so ya cargado se comparte -> editor y scripts ven
-# UNA sola instancia del motor (mismas escenas/entidades/registros).
+# Asi el editor usa exactamente el mismo motor que el juego, sin duplicar su
+# estado ni su codigo.
 set(LIBMOD3D_SO  "${BGD_BIN}/libmod_3d${CMAKE_SHARED_LIBRARY_SUFFIX}")
-set(LIBBGDRTM_SO "${BGD_BIN}/libbgdrtm${CMAKE_SHARED_LIBRARY_SUFFIX}")   # interprete embebido
 
 message(STATUS "BennuGD2  : ${BGD_ROOT}")
 message(STATUS "  binarios: ${BGD_BIN}")
@@ -99,7 +90,6 @@ set(IMGUI_SRC
 add_executable(editor3d
     src/main.cpp
     src/engine_bridge.c
-    src/script_host.c        # embebe el interprete BennuGD2 (bgdrtm) para el Play
     ${IMGUI_SRC}
 )
 
@@ -117,15 +107,12 @@ target_include_directories(editor3d PRIVATE
     ${IMGUI_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/fonts
     ${LIBMOD3D}
-    ${BGD_CORE}/include      # cabeceras del runtime BennuGD2 (instance.h, i_procdef.h...)
-    ${BGD_CORE}/bgdrtm       # bgdrtm.h
     ${SDL2_INCLUDE_DIRS}
     /usr/include            # para los #include "SDL2/SDL_image.h" del motor
 )
 
 target_link_libraries(editor3d
-    ${LIBMOD3D_SO}          # motor compartido (arrastra bgdrtm/bggfx: base para el Play con scripts)
-    ${LIBBGDRTM_SO}         # interprete BennuGD2 (dcb_load / instance_go_frame)
+    ${LIBMOD3D_SO}          # el motor (arrastra bgdrtm/bggfx como dependencias suyas)
     ${SDL2_LIBRARIES}
     SDL2_image
     ${OPENGL_LIBRARIES}
@@ -140,10 +127,8 @@ set_target_properties(editor3d PROPERTIES
     INSTALL_RPATH "${BGD_BIN};${BGD_DEPS}"
 )
 
-# --disable-new-dtags => rpath como DT_RPATH y no DT_RUNPATH. IMPRESCINDIBLE:
-# bgdrtm carga los modulos con dlopen("libmod_xxx.so") a secas, y el DT_RUNPATH
-# del ejecutable NO se consulta en los dlopen que hace otra libreria (y libbgdrtm
-# no tiene rpath propio). Con DT_RUNPATH solo funcionaba si LD_LIBRARY_PATH
-# venia puesto en el entorno: por consola si, pero al abrir el editor con doble
-# clic no, y al pulsar Play fallaba la carga del modulo y se cerraba la app.
+# --disable-new-dtags => rpath como DT_RPATH y no DT_RUNPATH. El DT_RUNPATH del
+# ejecutable NO se consulta en los dlopen que hace otra libreria, asi que con
+# RUNPATH la carga de librerias solo funcionaba si LD_LIBRARY_PATH venia puesto
+# en el entorno: por consola si, pero al abrir el editor con doble clic no.
 target_link_options(editor3d PRIVATE "-Wl,--disable-new-dtags")

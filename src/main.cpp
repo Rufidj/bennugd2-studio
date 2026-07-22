@@ -100,7 +100,9 @@ extern "C" {
     void  g3d_rigidbody_step(float dt);
     void  g3d_rigidbody_set_bounce(int id, float restitution, float friction);
     void  g3d_rigidbody_apply_impulse(int id, float ix, float iy, float iz);
+    float g3d_rigidbody_x(int id);
     float g3d_rigidbody_y(int id);
+    float g3d_rigidbody_z(int id);
     float g3d_rigidbody_render_x(int id); float g3d_rigidbody_render_y(int id); float g3d_rigidbody_render_z(int id);
     float g3d_rigidbody_angle_x(int id); float g3d_rigidbody_angle_y(int id); float g3d_rigidbody_angle_z(int id);
     int   g3d_collider_add_box(float minx, float miny, float minz, float maxx, float maxy, float maxz);
@@ -572,7 +574,7 @@ int main(int, char**) {
                 "// cuerpo y se coloca el modelo donde la fisica lo haya llevado.\n"
                 "PROCESS " + o.name + "(int id)\n"
                 "PRIVATE\n"
-                "    int cuerpo; int moja; float by; float vy; float sub; float dt; float ript;\n"
+                "    int cuerpo; int moja; float by; float vy; float sub; float prevy; float dt; float ript;\n"
                 "END\n"
                 "BEGIN\n"
                 "    dt = 1.0 / 60.0;\n";
@@ -589,28 +591,40 @@ int main(int, char**) {
                      o.bounce, o.friction);
             s += b;
 
-            if (water_on && o.buoyant && o.mass > 0.0f) {
-                float de = o.density > 0.05f ? o.density : 0.05f;
-                float bk = 24.0f * o.mass / (2.0f * c * de);
+            // Agua: el chapuzon y la estela son por CONTACTO, flote o no. Un barril
+            // que rueda al agua y se hunde tambien salpica. La flotacion es aparte.
+            if (water_on) {
+                float bk = 0.0f;
+                bool flota = (o.buoyant && o.mass > 0.0f);
+                if (flota) { float de = o.density > 0.05f ? o.density : 0.05f;
+                             bk = 24.0f * o.mass / (2.0f * c * de); }
                 snprintf(b, sizeof(b),
-                    "        // ---------- FLOTACION (empuje de Arquimedes) ----------\n"
+                    "        // ---------- CONTACTO CON EL AGUA ----------\n"
                     "        by = g3d_rigidbody_y(cuerpo);\n"
-                    "        vy = (by - sub) / dt; sub = by;          // velocidad vertical aprox.\n"
-                    "        by = %.3f - (g3d_rigidbody_y(cuerpo) - %.3f);   // cuanto esta sumergido\n"
-                    "        IF (by > 0.0)\n"
-                    "            g3d_rigidbody_apply_impulse(cuerpo, 0.0, (%.4f * by - vy * %.3f * 3.0) * dt, 0.0);\n"
-                    "            IF (moja == 0) g3d_water_splash(g3d_rigidbody_x(cuerpo), %.3f, g3d_rigidbody_z(cuerpo), 1.0); END\n"
+                    "        IF (by - %.3f < %.3f)\n"
+                    "            IF (moja == 0)\n"
+                    "                g3d_water_splash(g3d_rigidbody_x(cuerpo), %.3f, g3d_rigidbody_z(cuerpo), 1.0);\n"
+                    "            END\n"
                     "            moja = 1;\n"
                     "            ript = ript + dt;\n"
                     "            IF (ript > 0.15)\n"
                     "                g3d_water_ripple(g3d_rigidbody_x(cuerpo), g3d_rigidbody_z(cuerpo), 0.4);\n"
                     "                ript = 0.0;\n"
-                    "            END\n"
-                    "        ELSE\n"
-                    "            moja = 0;\n"
-                    "        END\n\n",
-                    water_level, c, bk, o.mass, water_level);
+                    "            END\n",
+                    c, water_level, water_level);
                 s += b;
+                if (flota) {
+                    snprintf(b, sizeof(b),
+                        "            // ---------- FLOTACION (empuje de Arquimedes) ----------\n"
+                        "            vy = (by - prevy) / dt;\n"
+                        "            sub = %.3f - (by - %.3f);\n"
+                        "            IF (sub > 0.0)\n"
+                        "                g3d_rigidbody_apply_impulse(cuerpo, 0.0, (%.4f * sub - vy * %.3f * 3.0) * dt, 0.0);\n"
+                        "            END\n",
+                        water_level, c, bk, o.mass);
+                    s += b;
+                }
+                s += "        ELSE\n            moja = 0;\n        END\n        prevy = by;\n\n";
             }
             s += "        // colocar el modelo donde lo haya llevado la fisica\n"
                  "        g3d_entity_set_position(id, g3d_rigidbody_render_x(cuerpo),\n"
@@ -1214,18 +1228,23 @@ int main(int, char**) {
         for (auto& b : sim_bodies){
             g3d_entity_impl_set_position(b.ent, g3d_rigidbody_render_x(b.bid), g3d_rigidbody_render_y(b.bid), g3d_rigidbody_render_z(b.bid));
             g3d_entity_impl_set_rotation(b.ent, g3d_rigidbody_angle_x(b.bid), g3d_rigidbody_angle_y(b.bid), g3d_rigidbody_angle_z(b.bid));
-            if (water_on && b.buoy){
-                float by=g3d_rigidbody_y(b.bid); float vy=(by-b.prevy)/dt;
-                float sub=water_level-(by-b.half);
-                if (sub>0.0f) {
-                    g3d_rigidbody_apply_impulse(b.bid,0.0f,(b.bk*sub - vy*b.mass*3.0f)*dt,0.0f);
-                    if (!b.wet) { g3d_water_splash(g3d_rigidbody_render_x(b.bid), water_level,
-                                                   g3d_rigidbody_render_z(b.bid), 1.0f); b.wet = 1; }
+            // Agua: chapuzon y estela por CONTACTO (flote o no); la flotacion aparte.
+            if (water_on) {
+                float by = g3d_rigidbody_y(b.bid);
+                if (by - b.half < water_level) {
+                    if (!b.wet) { g3d_water_splash(g3d_rigidbody_x(b.bid), water_level,
+                                                   g3d_rigidbody_z(b.bid), 1.0f); b.wet = 1; }
                     b.ript += dt;
-                    if (b.ript > 0.15f) { g3d_water_ripple(g3d_rigidbody_render_x(b.bid),
-                                                           g3d_rigidbody_render_z(b.bid), 0.4f); b.ript = 0.0f; }
+                    if (b.ript > 0.15f) { g3d_water_ripple(g3d_rigidbody_x(b.bid),
+                                                           g3d_rigidbody_z(b.bid), 0.4f); b.ript = 0.0f; }
+                    if (b.buoy) {
+                        float vy = (by - b.prevy) / dt;
+                        float sub = water_level - (by - b.half);
+                        if (sub > 0.0f)
+                            g3d_rigidbody_apply_impulse(b.bid, 0.0f, (b.bk*sub - vy*b.mass*3.0f)*dt, 0.0f);
+                    }
                 } else b.wet = 0;
-                b.prevy=by;
+                b.prevy = by;
             }
         }
         // --- jugador ---

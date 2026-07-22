@@ -100,6 +100,8 @@ extern "C" {
     void  g3d_rigidbody_step(float dt);
     void  g3d_rigidbody_set_bounce(int id, float restitution, float friction);
     void  g3d_rigidbody_set_damping(int id, float lin, float ang);   // resistencia del medio (agua)
+    void  g3d_rigidbody_apply_angular_impulse(int id, float ax, float ay, float az);
+    void  g3d_rigidbody_set_upright(int id, float strength);   // lo que flota se endereza
     void  g3d_rigidbody_apply_impulse(int id, float ix, float iy, float iz);
     float g3d_rigidbody_x(int id);
     float g3d_rigidbody_y(int id);
@@ -591,9 +593,19 @@ int main(int, char**) {
             else if (o.phys == 2) snprintf(b, sizeof(b), mk, o.x, by0, o.z, c, o.mass);
             else                  snprintf(b, sizeof(b), mk, o.x, by0, o.z, c, c, o.mass);
             s += b;
-            snprintf(b, sizeof(b), "    g3d_rigidbody_set_bounce(cuerpo, %.3f, %.3f);   // rebote, friccion\n\n    LOOP\n",
+            snprintf(b, sizeof(b), "    g3d_rigidbody_set_bounce(cuerpo, %.3f, %.3f);   // rebote, friccion\n",
                      o.bounce, o.friction);
             s += b;
+            if (water_on && o.buoyant && o.mass > 0.0f) {
+                // Lo que flota se endereza solo: el empuje se aplica en el centro y
+                // por si mismo no endereza nada, asi que sin esto el objeto se queda
+                // inclinado con la postura en la que cayo al agua.
+                snprintf(b, sizeof(b),
+                         "    g3d_rigidbody_set_upright(cuerpo, %.3f);   // se endereza al flotar\n",
+                         o.mass * 20.0f);
+                s += b;
+            }
+            s += "\n    LOOP\n";
 
             // Agua: el chapuzon y la estela son por CONTACTO, flote o no. Un barril
             // que rueda al agua y se hunde tambien salpica. La flotacion es aparte.
@@ -1256,7 +1268,9 @@ int main(int, char**) {
                 else bid=g3d_rigidbody_create_cylinder(o.x,by0,o.z,c,c,o.mass);
                 g3d_rigidbody_set_bounce(bid,o.bounce,o.friction);
                 int buoy=(water_on&&o.buoyant&&o.mass>0.0f)?1:0; float bk=0.0f;
-                if(buoy){ float de=o.density>0.05f?o.density:0.05f; bk=24.0f*o.mass/(2.0f*c*de); }
+                if(buoy){ float de=o.density>0.05f?o.density:0.05f; bk=24.0f*o.mass/(2.0f*c*de);
+                          // el empuje va al centro y no endereza: sin esto se queda ladeado
+                          g3d_rigidbody_set_upright(bid, o.mass*20.0f); }
                 sim_bodies.push_back({ o.entity, bid, buoy, 0, c, o.mass, bk, o.x, by0, o.z, 0.0f });
             }
         }

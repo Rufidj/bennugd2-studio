@@ -520,7 +520,7 @@ int main(int, char**) {
                     "            IF (moja == 0) g3d_water_splash(px, %.3f, pz, 1.0); END   // chapuzon al entrar\n"
                     "            moja = 1;\n"
                     "            ript = ript + dt;\n"
-                    "            IF (ript > 0.12 AND (wl > 0.001 OR inw))\n"
+                    "            IF (ript > 0.12 AND wl > 0.001)\n"
                     "                g3d_water_ripple(px, pz, 0.6);   // estela mientras se mueve\n"
                     "                ript = 0.0;\n"
                     "            END\n"
@@ -574,7 +574,8 @@ int main(int, char**) {
                 "// cuerpo y se coloca el modelo donde la fisica lo haya llevado.\n"
                 "PROCESS " + o.name + "(int id)\n"
                 "PRIVATE\n"
-                "    int cuerpo; int moja; float by; float vy; float sub; float prevy; float dt; float ript;\n"
+                "    int cuerpo; int moja; float bx; float by; float bz; float vy; float sub; float mov;\n"
+                "    float prevx; float prevy; float prevz; float dt; float ript;\n"
                 "END\n"
                 "BEGIN\n"
                 "    dt = 1.0 / 60.0;\n";
@@ -600,18 +601,25 @@ int main(int, char**) {
                              bk = 24.0f * o.mass / (2.0f * c * de); }
                 snprintf(b, sizeof(b),
                     "        // ---------- CONTACTO CON EL AGUA ----------\n"
-                    "        by = g3d_rigidbody_y(cuerpo);\n"
+                    "        bx = g3d_rigidbody_x(cuerpo); by = g3d_rigidbody_y(cuerpo);\n"
+                    "        bz = g3d_rigidbody_z(cuerpo);\n"
                     "        IF (by - %.3f < %.3f)\n"
                     "            IF (moja == 0)\n"
-                    "                g3d_water_splash(g3d_rigidbody_x(cuerpo), %.3f, g3d_rigidbody_z(cuerpo), 1.0);\n"
+                    "                g3d_water_splash(bx, %.3f, bz, 1.0);   // chapuzon al entrar\n"
                     "            END\n"
                     "            moja = 1;\n"
-                    "            ript = ript + dt;\n"
-                    "            IF (ript > 0.15)\n"
-                    "                g3d_water_ripple(g3d_rigidbody_x(cuerpo), g3d_rigidbody_z(cuerpo), 0.4);\n"
-                    "                ript = 0.0;\n"
+                    "            // Solo agita el agua mientras SE MUEVE y esta cerca de la\n"
+                    "            // superficie: si se hunde y se queda quieto en el fondo, las\n"
+                    "            // ondas paran. Si flota, el oleaje lo mece y siguen.\n"
+                    "            mov = (bx-prevx)*(bx-prevx) + (by-prevy)*(by-prevy) + (bz-prevz)*(bz-prevz);\n"
+                    "            IF (mov > 0.0004 AND by + %.3f > %.3f)\n"
+                    "                ript = ript + dt;\n"
+                    "                IF (ript > 0.15)\n"
+                    "                    g3d_water_ripple(bx, bz, 0.4);\n"
+                    "                    ript = 0.0;\n"
+                    "                END\n"
                     "            END\n",
-                    c, water_level, water_level);
+                    c, water_level, water_level, c, water_level - 1.0f);
                 s += b;
                 if (flota) {
                     snprintf(b, sizeof(b),
@@ -624,7 +632,8 @@ int main(int, char**) {
                         water_level, c, bk, o.mass);
                     s += b;
                 }
-                s += "        ELSE\n            moja = 0;\n        END\n        prevy = by;\n\n";
+                s += "        ELSE\n            moja = 0;\n        END\n"
+                     "        prevx = bx; prevy = by; prevz = bz;\n\n";
             }
             s += "        // colocar el modelo donde lo haya llevado la fisica\n"
                  "        g3d_entity_set_position(id, g3d_rigidbody_render_x(cuerpo),\n"
@@ -1152,7 +1161,7 @@ int main(int, char**) {
     // FUERA del frame de ImGui: play_start hace popen(fork) y carga modulos que
     // reinicializan SDL; hacerlo en mitad del frame se lleva por delante el contexto GL.
     int  play_req = 0;   // 0=nada 1=arrancar 2=parar
-    struct SimBody { int ent, bid, buoy, wet; float half, mass, bk, prevy, ript; };
+    struct SimBody { int ent, bid, buoy, wet; float half, mass, bk, prevx, prevy, prevz, ript; };
     std::vector<SimBody> sim_bodies;
     struct SimAttach { int ent, node; float ox, oy, oz, sc, yaw; };
     std::vector<SimAttach> sim_attach;
@@ -1191,7 +1200,7 @@ int main(int, char**) {
                 g3d_rigidbody_set_bounce(bid,o.bounce,o.friction);
                 int buoy=(water_on&&o.buoyant&&o.mass>0.0f)?1:0; float bk=0.0f;
                 if(buoy){ float de=o.density>0.05f?o.density:0.05f; bk=24.0f*o.mass/(2.0f*c*de); }
-                sim_bodies.push_back({ o.entity, bid, buoy, 0, c, o.mass, bk, by0, 0.0f });
+                sim_bodies.push_back({ o.entity, bid, buoy, 0, c, o.mass, bk, o.x, by0, o.z, 0.0f });
             }
         }
         if (sim_player_idx>=0 && sim_player_model)
@@ -1230,13 +1239,16 @@ int main(int, char**) {
             g3d_entity_impl_set_rotation(b.ent, g3d_rigidbody_angle_x(b.bid), g3d_rigidbody_angle_y(b.bid), g3d_rigidbody_angle_z(b.bid));
             // Agua: chapuzon y estela por CONTACTO (flote o no); la flotacion aparte.
             if (water_on) {
-                float by = g3d_rigidbody_y(b.bid);
+                float bx = g3d_rigidbody_x(b.bid), by = g3d_rigidbody_y(b.bid), bz = g3d_rigidbody_z(b.bid);
                 if (by - b.half < water_level) {
-                    if (!b.wet) { g3d_water_splash(g3d_rigidbody_x(b.bid), water_level,
-                                                   g3d_rigidbody_z(b.bid), 1.0f); b.wet = 1; }
-                    b.ript += dt;
-                    if (b.ript > 0.15f) { g3d_water_ripple(g3d_rigidbody_x(b.bid),
-                                                           g3d_rigidbody_z(b.bid), 0.4f); b.ript = 0.0f; }
+                    if (!b.wet) { g3d_water_splash(bx, water_level, bz, 1.0f); b.wet = 1; }
+                    // solo agita el agua mientras SE MUEVE cerca de la superficie:
+                    // hundido y en reposo, las ondas paran; flotando, el oleaje lo mece
+                    float dx=bx-b.prevx, dy=by-b.prevy, dz=bz-b.prevz;
+                    if (dx*dx+dy*dy+dz*dz > 0.0004f && by + b.half > water_level - 1.0f) {
+                        b.ript += dt;
+                        if (b.ript > 0.15f) { g3d_water_ripple(bx, bz, 0.4f); b.ript = 0.0f; }
+                    }
                     if (b.buoy) {
                         float vy = (by - b.prevy) / dt;
                         float sub = water_level - (by - b.half);
@@ -1244,7 +1256,7 @@ int main(int, char**) {
                             g3d_rigidbody_apply_impulse(b.bid, 0.0f, (b.bk*sub - vy*b.mass*3.0f)*dt, 0.0f);
                     }
                 } else b.wet = 0;
-                b.prevy = by;
+                b.prevx = bx; b.prevy = by; b.prevz = bz;
             }
         }
         // --- jugador ---

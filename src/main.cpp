@@ -439,6 +439,105 @@ int main(int, char**) {
     std::string status;
 
     // carga el script de un objeto en el editor (o una plantilla si no existe)
+    // Plantilla del script de un JUGADOR: trae los controles DENTRO, para que sean
+    // tuyos y los puedas cambiar (teclas, doble salto, dash...). El editor solo la
+    // crea la primera vez; a partir de ahi el fichero es tuyo y no se toca.
+    // Recibe la entidad y el modelo, que es lo que necesita para moverse y animar.
+    auto player_script_template = [&](const SObj& o) -> std::string {
+        char b[4096];
+        std::string s =
+            "// ===== JUGADOR '" + o.name + "' =====\n"
+            "// Creado por el editor con los controles dentro: a partir de aqui es TUYO.\n"
+            "// Cambia las teclas, la velocidad o anade lo que quieras (doble salto, dash...).\n"
+            "//   id     = la entidad de este objeto en la escena\n"
+            "//   modelo = su modelo, necesario para las animaciones\n"
+            "PROCESS " + o.name + "(int id, int modelo)\n"
+            "PRIVATE\n"
+            "    int ch; int gnd; int inw;\n"
+            "    float wx; float wz; float wl; float spd; float t; float facing;\n"
+            "    float px; float py; float pz; float prevx; float prevz; float dt;\n"
+            "END\n"
+            "BEGIN\n"
+            "    dt = 1.0 / 60.0;\n";
+        snprintf(b, sizeof(b),
+            "    // capsula de colision del personaje (x, y, z, radio, altura)\n"
+            "    ch = g3d_char_create(%.3f, %.3f, %.3f, %.3f, %.3f);\n"
+            "    g3d_char_set_tuning(ch, 0.8, 46.0);\n"
+            "    facing = 0.0; t = 0.0;\n\n"
+            "    LOOP\n"
+            "        prevx = g3d_char_x(ch); prevz = g3d_char_z(ch);\n\n"
+            "        // ---------- CONTROLES ----------\n"
+            "        wx = 0.0; wz = 0.0;\n"
+            "        IF (key(_W)) wz = wz + 1.0; END\n"
+            "        IF (key(_S)) wz = wz - 1.0; END\n"
+            "        IF (key(_D)) wx = wx + 1.0; END\n"
+            "        IF (key(_A)) wx = wx - 1.0; END\n"
+            "        spd = %.3f;\n"
+            "        IF (key(_L_SHIFT) OR key(_R_SHIFT)) spd = %.3f; END\n\n"
+            "        wl = sqrt(wx * wx + wz * wz);\n"
+            "        IF (wl > 0.001)\n"
+            "            wx = wx / wl * spd; wz = wz / wl * spd;\n"
+            "            facing = atan2(wx, wz);       // mira hacia donde anda\n"
+            "        END\n"
+            "        g3d_char_move(ch, wx, wz);\n"
+            "        IF (key(_SPACE)) g3d_char_jump(ch, %.3f); END\n"
+            "        g3d_char_update(ch, dt);\n\n"
+            "        px = g3d_char_x(ch); py = g3d_char_y(ch); pz = g3d_char_z(ch);\n",
+            o.x, o.y, o.z, o.char_radius, o.char_height, o.walk_speed, o.run_speed, o.jump_force);
+        s += b;
+
+        if (water_on && o.buoyant) {          // nado
+            snprintf(b, sizeof(b),
+                "\n        // ---------- AGUA: flota y nada ----------\n"
+                "        inw = 0;\n"
+                "        IF (py < %.3f) inw = 1; END\n"
+                "        g3d_char_set_water(ch, inw, %.3f);\n",
+                water_level - 1.2f, water_level);
+            s += b;
+        }
+        if (o.zone_layer >= 0) {              // zonas de barrera
+            snprintf(b, sizeof(b),
+                "\n        // ---------- ZONAS: no puede entrar en la capa %d ----------\n"
+                "        IF (g3d_zone_blocked(px, pz, %d))\n"
+                "            g3d_char_set_position(ch, prevx, py, prevz);\n"
+                "            px = prevx; pz = prevz;\n"
+                "        END\n", o.zone_layer + 1, o.zone_layer);
+            s += b;
+        }
+
+        s += "\n        g3d_entity_set_position(id, px, py, pz);\n"
+             "        g3d_entity_set_rotation(id, 0.0, facing, 0.0);\n";
+
+        void* mm = load_model(o.asset);
+        if (mm && g3d_model_animation_count(mm) > 0) {
+            snprintf(b, sizeof(b),
+                "\n        // ---------- ANIMACION segun lo que este haciendo ----------\n"
+                "        t = t + dt; gnd = g3d_char_grounded(ch);\n"
+                "%s"
+                "        IF (gnd == 0)\n"
+                "            g3d_model_animate(modelo, %d, t, 1);          // saltando\n"
+                "        ELSE\n"
+                "            IF (wl > 0.001)\n"
+                "                IF (key(_L_SHIFT) OR key(_R_SHIFT)) g3d_model_animate(modelo, %d, t, 1);   // corriendo\n"
+                "                ELSE g3d_model_animate(modelo, %d, t, 1); END                              // andando\n"
+                "            ELSE\n"
+                "                g3d_model_animate(modelo, %d, t, 1);      // quieto\n"
+                "            END\n"
+                "        END\n%s",
+                (water_on && o.buoyant && o.anim_swim >= 0) ? "        IF (inw == 0)\n" : "",
+                o.anim_jump, o.anim_run, o.anim_walk, o.anim_idle,
+                (water_on && o.buoyant && o.anim_swim >= 0) ? "        END\n" : "");
+            s += b;
+            if (water_on && o.buoyant && o.anim_swim >= 0) {
+                snprintf(b, sizeof(b),
+                    "        IF (inw) g3d_model_animate(modelo, %d, t, 1); END   // nadando\n", o.anim_swim);
+                s += b;
+            }
+        }
+        s += "\n        FRAME;\n    END\nEND\n";
+        return s;
+    };
+
     auto open_object_script = [&](const std::string& objname) {
         script_obj = objname;
         show_script = true; focus_script = true;
@@ -450,16 +549,23 @@ int main(int, char**) {
             fclose(f);
             script.SetText(t);
         } else {
-            script.SetText(
-                "// Componente del objeto '" + objname + "'.\n"
-                "// Es un PROCESS BennuGD2 que el juego instancia sobre el objeto.\n"
-                "PROCESS " + objname + "(int id)\n"
-                "BEGIN\n"
-                "    LOOP\n"
-                "        // ... logica del objeto ...\n"
-                "        FRAME;\n"
-                "    END\n"
-                "END\n");
+            // Si el objeto es el jugador, se crea con los controles ya dentro.
+            const SObj* po = nullptr;
+            for (auto& o : objects) if (o.name == objname && o.is_player) { po = &o; break; }
+            if (po) {
+                script.SetText(player_script_template(*po));
+            } else {
+                script.SetText(
+                    "// Componente del objeto '" + objname + "'.\n"
+                    "// Es un PROCESS BennuGD2 que el juego instancia sobre el objeto.\n"
+                    "PROCESS " + objname + "(int id)\n"
+                    "BEGIN\n"
+                    "    LOOP\n"
+                    "        // ... logica del objeto ...\n"
+                    "        FRAME;\n"
+                    "    END\n"
+                    "END\n");
+            }
         }
     };
     // Guardar la escena: una linea OBJECT por objeto (fuente de verdad del juego).
@@ -664,6 +770,29 @@ int main(int, char**) {
         fputs("// ===== Juego generado por el editor BennuGD2 =====\n", f);
         fputs("import \"libmod_gfx\"; import \"libmod_misc\"; import \"libmod_input\"; import \"libmod_3d\";\n\n", f);
         fputs("GLOBAL int scene; int camera; int light; END\n\n", f);
+        // ---- localizar el jugador y los objetos enganchados a su esqueleto ----
+        int player_idx = -1;
+        for (size_t i = 0; i < objects.size(); i++)
+            if (objects[i].is_player) { player_idx = (int)i; break; }
+        // enganches validos = objetos con attach_to == el jugador (arma en la mano)
+        std::vector<int> attach_list;
+        for (size_t i = 0; i < objects.size(); i++)
+            if (objects[i].attach_to == player_idx && player_idx >= 0 && (int)i != player_idx)
+                attach_list.push_back((int)i);
+
+        // El script del jugador debe EXISTIR antes de concatenar los componentes:
+        // si no, el main llamaria a un PROCESS que no esta en el fichero.
+        if (player_idx >= 0) {
+            auto& p = objects[player_idx];
+            std::string psp = scripts_dir + "/" + p.name + ".prg";
+            FILE* t = fopen(psp.c_str(), "r");
+            if (!t) {
+                FILE* w = fopen(psp.c_str(), "w");
+                if (w) { std::string tx = player_script_template(p); fwrite(tx.data(), 1, tx.size(), w); fclose(w);
+                         console_add("Creado Scripts/" + p.name + ".prg con los controles del jugador\n"); }
+            } else fclose(t);
+        }
+
         // componentes (scripts de cada objeto)
         for (auto& o : objects) {
             std::string sp = scripts_dir + "/" + o.name + ".prg";
@@ -719,16 +848,6 @@ int main(int, char**) {
                         paints[water_tex_sel].file.c_str());
             fputs("    g3d_water_set_enabled(1);\n", f);
         }
-        // ---- localizar el jugador y los objetos enganchados a su esqueleto ----
-        int player_idx = -1;
-        for (size_t i = 0; i < objects.size(); i++)
-            if (objects[i].is_player) { player_idx = (int)i; break; }
-        // enganches validos = objetos con attach_to == el jugador (arma en la mano)
-        std::vector<int> attach_list;
-        for (size_t i = 0; i < objects.size(); i++)
-            if (objects[i].attach_to == player_idx && player_idx >= 0 && (int)i != player_idx)
-                attach_list.push_back((int)i);
-
         // objetos + sus componentes (+ cuerpos fisicos Jolt)
         fputs("    dt = 1.0 / 60.0; nb = 0;\n", f);
         int pj = 0;   // indice de cuerpo fisico (literal)
@@ -787,17 +906,18 @@ int main(int, char**) {
                 pj++;
             }
             std::string sp = scripts_dir + "/" + o.name + ".prg";
-            FILE* s = fopen(sp.c_str(), "r");
-            if (s) { fclose(s); fprintf(f, "    %s(e);\n", o.name.c_str()); }
+            // El jugador lleva sus controles en SU script: si aun no existe, se crea
+            // con la plantilla para que el juego salga jugable a la primera.
+            if ((int)i == player_idx) {   // su script ya se aseguro mas arriba
+                fprintf(f, "    %s(e, m);   // jugador: entidad + modelo (para animar)\n", o.name.c_str());
+            } else {
+                FILE* s = fopen(sp.c_str(), "r");
+                if (s) { fclose(s); fprintf(f, "    %s(e);\n", o.name.c_str()); }
+            }
         }
         fprintf(f, "    nb = %d;   // numero de cuerpos fisicos\n", pj);
-        // ---- jugador: crear el char controller + resolver los huesos de enganche ----
+        // ---- huesos de enganche (el jugador se crea a si mismo en SU script) ----
         if (player_idx >= 0) {
-            auto& p = objects[player_idx];
-            fprintf(f, "    pch = g3d_char_create(%.3f, %.3f, %.3f, %.3f, %.3f);\n",
-                    p.x, p.y, p.z, p.char_radius, p.char_height);
-            fputs("    g3d_char_set_tuning(pch, 0.8, 46.0);\n", f);
-            fputs("    pt = 0.0; pfacing = 0.0;\n", f);
             for (size_t k = 0; k < attach_list.size(); k++)
                 fprintf(f, "    atn[%d] = g3d_model_node_find(pmodel, \"%s\");\n",
                         (int)k, objects[attach_list[k]].attach_bone.c_str());
@@ -857,72 +977,13 @@ int main(int, char**) {
             fputs(b, f);
         }
         fputs("        END\n", f);
-        // ---- JUGADOR: entrada WASD + salto + animacion (char controller) ----
-        if (player_idx >= 0) {
+        // ---- objetos enganchados a un hueso del jugador (arma en la mano) ----
+        // El jugador lo mueve SU script; aqui solo leemos donde ha quedado su
+        // entidad para colgarle el arma del hueso.
+        if (player_idx >= 0 && !attach_list.empty()) {
             auto& p = objects[player_idx];
-            void* pm = load_model(p.asset);
-            int pnan = pm ? g3d_model_animation_count(pm) : 0;
-            char b[2048];
-            snprintf(b, sizeof(b),
-                "        pprevx = g3d_char_x(pch); pprevz = g3d_char_z(pch);\n"
-                "        pwx = 0.0; pwz = 0.0;\n"
-                "        IF (key(_W)) pwz = pwz + 1.0; END\n"
-                "        IF (key(_S)) pwz = pwz - 1.0; END\n"
-                "        IF (key(_D)) pwx = pwx + 1.0; END\n"
-                "        IF (key(_A)) pwx = pwx - 1.0; END\n"
-                "        pspd = %.3f; IF (key(_L_SHIFT) OR key(_R_SHIFT)) pspd = %.3f; END\n"
-                "        pwl = sqrt(pwx * pwx + pwz * pwz);\n"
-                "        IF (pwl > 0.001)\n"
-                "            pwx = pwx / pwl * pspd; pwz = pwz / pwl * pspd;\n"
-                "            pfacing = atan2(pwx, pwz);\n"
-                "        END\n"
-                "        g3d_char_move(pch, pwx, pwz);\n"
-                "        IF (key(_SPACE)) g3d_char_jump(pch, %.3f); END\n"
-                "        g3d_char_update(pch, dt);\n"
-                "        px = g3d_char_x(pch); py = g3d_char_y(pch); pz = g3d_char_z(pch);\n",
-                p.walk_speed, p.run_speed, p.jump_force);
-            fputs(b, f);
-            // ---- ZONAS: si el jugador entra en una capa que lo bloquea, revertir ----
-            if (p.zone_layer >= 0) {
-                char z[512];
-                snprintf(z, sizeof(z),
-                    "        IF (g3d_zone_blocked(px, pz, %d))\n"
-                    "            g3d_char_set_position(pch, pprevx, py, pprevz);\n"
-                    "            px = pprevx; pz = pprevz;\n"
-                    "        END\n", p.zone_layer);
-                fputs(z, f);
-            }
-            fputs("        g3d_entity_set_position(pplayer, px, py, pz);\n", f);
-            fputs("        g3d_entity_set_rotation(pplayer, 0.0, pfacing, 0.0);\n", f);
-            fputs("        pt = pt + dt; pgnd = g3d_char_grounded(pch);\n", f);
-            // ---- AGUA: si el jugador es flotante, activa el nado del char controller ----
-            // (sin esto, un jugador sobre agua se hunde y camina por el fondo).
-            bool pswim = water_on && p.buoyant;
-            fputs("        pinw = 0;\n", f);
-            if (pswim) {
-                fprintf(f, "        IF (py < %.3f) pinw = 1; END\n", water_level - 1.2f);
-                fprintf(f, "        g3d_char_set_water(pch, pinw, %.3f);\n", water_level);
-            }
-            if (pnan > 0) {   // animacion: nadar / saltar / correr / andar / reposo
-                if (pswim && p.anim_swim >= 0)
-                    fprintf(f, "        IF (pinw)\n            g3d_model_animate(pmodel, %d, pt, 1);\n        ELSE\n",
-                            p.anim_swim);
-                snprintf(b, sizeof(b),
-                    "        IF (pgnd == 0)\n"
-                    "            g3d_model_animate(pmodel, %d, pt, 1);\n"
-                    "        ELSE\n"
-                    "            IF (pwl > 0.001)\n"
-                    "                IF (key(_L_SHIFT) OR key(_R_SHIFT)) g3d_model_animate(pmodel, %d, pt, 1);\n"
-                    "                ELSE g3d_model_animate(pmodel, %d, pt, 1); END\n"
-                    "            ELSE\n"
-                    "                g3d_model_animate(pmodel, %d, pt, 1);\n"
-                    "            END\n"
-                    "        END\n",
-                    p.anim_jump, p.anim_run, p.anim_walk, p.anim_idle);
-                fputs(b, f);
-                if (pswim && p.anim_swim >= 0) fputs("        END\n", f);
-            }
-            // ---- objetos enganchados a un hueso del jugador (arma en la mano) ----
+            fputs("        g3d_entity_get_position(pplayer, &px, &py, &pz);\n", f);
+            fputs("        g3d_entity_get_rotation(pplayer, &tx, &pfacing, &tz);\n", f);
             for (size_t k = 0; k < attach_list.size(); k++) {
                 auto& a = objects[attach_list[k]];
                 float s = a.att_scale;
@@ -1208,6 +1269,10 @@ int main(int, char**) {
                   const char* prj = getenv("EDITOR_AUTOPLAY_PROJECT");
                   if (prj) { fprintf(stderr, "[autoplay] -> open_project(%s)\n", prj); fflush(stderr); open_project(prj); }
                   else { fprintf(stderr, "[autoplay] -> load_scene(%s)\n", scene_path.c_str()); fflush(stderr); load_scene(scene_path); }
+              }
+              if (ap == 25 && getenv("EDITOR_AUTOGEN")) {   // solo generar+compilar y salir
+                  fprintf(stderr, "[autogen] -> generate_game()\n"); fflush(stderr);
+                  generate_game(false); running = false;
               }
               if (ap == 30) { fprintf(stderr, "[autoplay] -> play_start() #1 objetos=%d\n", (int)objects.size()); fflush(stderr); play_start(); }
               if (ap == 90) { fprintf(stderr, "[autoplay] -> play_stop() #1\n"); fflush(stderr); play_stop(); }

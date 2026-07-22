@@ -96,12 +96,9 @@ set(IMGUI_SRC
     ${IMGUI_DIR}/ImGuizmo.cpp          # gizmos de mover/rotar/escalar
 )
 
-find_package(X11)
-
 add_executable(editor3d
     src/main.cpp
     src/engine_bridge.c
-    src/embed_x11.cpp
     src/script_host.c        # embebe el interprete BennuGD2 (bgdrtm) para el Play
     ${IMGUI_SRC}
 )
@@ -132,7 +129,6 @@ target_link_libraries(editor3d
     ${SDL2_LIBRARIES}
     SDL2_image
     ${OPENGL_LIBRARIES}
-    ${X11_LIBRARIES}
     ${CMAKE_DL_LIBS}
     m
 )

@@ -9,7 +9,6 @@
 #include <cstdio>
 #include <cmath>
 
-// --- embebido de la ventana del juego (embed_x11.cpp, solo Linux/X11) ---
 // ---- interprete BennuGD2 embebido (src/script_host.c) para el Play con scripts ----
 extern "C" int  script_host_start(const char* dcb_path, const char* workdir);
 extern "C" int  script_host_frame(void);
@@ -17,10 +16,6 @@ extern "C" void script_host_stop(void);
 extern "C" int  script_host_running(void);
 extern "C" int  script_host_instance_count(void);
 
-extern "C" int  game_embed_start(const char* shell_cmd, unsigned long parent, int x, int y, int w, int h);
-extern "C" void game_embed_move(int x, int y, int w, int h);
-extern "C" void game_embed_stop(void);
-extern "C" int  game_embed_active(void);
 #include <string>
 #include <vector>
 #include <map>
@@ -215,11 +210,6 @@ int main(int, char**) {
     SDL_GL_SetSwapInterval(1);
     printf("GL_VERSION = %s\n", (const char*)glGetString(GL_VERSION));
 
-    // ventana X11 del editor (para embeber el juego dentro con XReparentWindow)
-    unsigned long editor_x11 = 0;
-    { SDL_SysWMinfo wm; SDL_VERSION(&wm.version);
-      if (SDL_GetWindowWMInfo(window, &wm) && wm.subsystem == SDL_SYSWM_X11)
-          editor_x11 = (unsigned long)wm.info.x11.window; }
 
     // ---- Motor 3D ----
     int fbw, fbh; SDL_GL_GetDrawableSize(window, &fbw, &fbh);
@@ -340,7 +330,6 @@ int main(int, char**) {
     float pv_cx = 0, pv_cy = 0, pv_cz = 0;                 // centro del modelo (encuadre)
     std::string game_out; bool open_game_popup = false;   // salida de compilar el juego
     bool last_compile_ok = false;
-    bool play_requested = false; std::string play_cmd;    // Play embebido (X11)
     std::string script_obj = "barril_01";  // objeto cuyo script se edita (placeholder)
     // ---- herramienta activa (toolbar con iconos) ----
     enum Tool { T_SELECT, T_MOVE, T_ROTATE, T_SCALE, T_PLACE, T_RAISE, T_LOWER, T_SMOOTH, T_FLATTEN, T_PAINT,
@@ -1526,13 +1515,6 @@ int main(int, char**) {
             }
         }
 
-        // ---- Play embebido: coloca/actualiza la ventana del juego sobre el viewport ----
-        if (play_requested || game_embed_active()) {
-            ImVec2 vpos = ImGui::GetMainViewport()->Pos;
-            int gx = (int)(img_min.x - vpos.x), gy = (int)(img_min.y - vpos.y);
-            if (play_requested) { game_embed_start(play_cmd.c_str(), editor_x11, gx, gy, vp.w, vp.h); play_requested = false; }
-            else game_embed_move(gx, gy, vp.w, vp.h);
-        }
 
         // ---- GIZMO (solo con Mover/Rotar/Escalar y un objeto seleccionado) ----
         ImGuizmo::SetOrthographic(false);
@@ -2141,7 +2123,6 @@ int main(int, char**) {
         SDL_GL_SwapWindow(window);
     }
 
-    game_embed_stop();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();

@@ -69,6 +69,41 @@ endif()
 # estado ni su codigo.
 set(LIBMOD3D_SO  "${BGD_BIN}/libmod_3d${CMAKE_SHARED_LIBRARY_SUFFIX}")
 
+# ---- El libmod_3d encontrado, ¿es el que necesita el editor? ----
+# El editor usa una API de libmod_3d que NO existe en el modulo original de
+# BennuGD2 (zonas, carga de relieve, colisionador de terreno, consultas de
+# modelo...). Si se compila contra otro libmod_3d, el enlazado puede pasar pero
+# el editor muere al arrancar con "undefined symbol: g3d_zone_load" o similar.
+# Mejor detectarlo aqui y decir exactamente que falta y por que.
+find_program(NM_EXECUTABLE nm)
+if(NM_EXECUTABLE)
+    execute_process(COMMAND ${NM_EXECUTABLE} -D --defined-only "${LIBMOD3D_SO}"
+                    OUTPUT_VARIABLE _LM3D_SYMS ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+    set(_LM3D_MISSING "")
+    foreach(_s g3d_zone_load g3d_zone_paint g3d_terrain_load
+               g3d_scene_set_terrain_collider g3d_model_is_skinned
+               g3d_model_node_find g3d_model_bounds g3d_model_animation_name)
+        string(FIND "${_LM3D_SYMS}" " ${_s}" _pos)
+        if(_pos EQUAL -1)
+            list(APPEND _LM3D_MISSING ${_s})
+        endif()
+    endforeach()
+    if(_LM3D_MISSING)
+        string(REPLACE ";" "\n    " _LM3D_MISSING_TXT "${_LM3D_MISSING}")
+        message(FATAL_ERROR
+            "El libmod_3d encontrado no trae la API que necesita el editor.\n"
+            "  Fichero: ${LIBMOD3D_SO}\n"
+            "  Le faltan estas funciones:\n    ${_LM3D_MISSING_TXT}\n"
+            "\n"
+            "El editor necesita la version de libmod_3d con la API de edicion:\n"
+            "  https://github.com/Rufidj/libmod_3d\n"
+            "Clonala en BennuGD2/modules/libmod_3d, recompila BennuGD2 para que\n"
+            "regenere libmod_3d, y vuelve a configurar el editor.\n"
+            "Si tienes varias compilaciones de BennuGD2, comprueba que apunta a la\n"
+            "correcta con -DBGD_BIN=/ruta/a/build/<plataforma>/bin")
+    endif()
+endif()
+
 message(STATUS "BennuGD2  : ${BGD_ROOT}")
 message(STATUS "  binarios: ${BGD_BIN}")
 message(STATUS "  libmod_3d: ${LIBMOD3D}")

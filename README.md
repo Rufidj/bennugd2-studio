@@ -32,8 +32,23 @@ renderiza contra el mismo contexto OpenGL: lo que ves en el editor es lo que cor
 
 ## Compilar
 
-**Requisitos:** SDL2, SDL2_image, OpenGL, CMake ≥ 3.10 y un **BennuGD2 ya compilado**
-(con el módulo `libmod_3d`), porque el editor enlaza contra sus librerías.
+**Requisitos:** SDL2, SDL2_image, OpenGL, CMake ≥ 3.10 y un **BennuGD2 ya compilado**,
+porque el editor enlaza contra sus librerías.
+
+> ### ⚠️ Necesita ESTE `libmod_3d`
+> El editor usa una API de edición (zonas pintadas, carga de relieve, colisionador de
+> terreno, consultas de modelo…) que **no está en el `libmod_3d` original de BennuGD2**.
+> Hay que usar **[Rufidj/libmod_3d](https://github.com/Rufidj/libmod_3d)**:
+>
+> ```sh
+> cd BennuGD2/modules
+> git clone https://github.com/Rufidj/libmod_3d.git   # sustituye al modulo original
+> # recompila BennuGD2 para regenerar libmod_3d
+> ```
+>
+> Si no, el editor compilaría pero moriría al arrancar con
+> `undefined symbol: g3d_zone_load`. Para evitarlo, **CMake lo comprueba al configurar**
+> y te dice exactamente qué funciones faltan y qué hacer.
 
 La disposición esperada es la normal del repo de BennuGD2:
 

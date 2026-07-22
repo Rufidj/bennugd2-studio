@@ -28,14 +28,36 @@ set(LIBMOD3D "${_DEF_LIBMOD3D}" CACHE PATH "Fuentes del modulo libmod_3d")
 
 # Directorio de binarios de BennuGD2: el nombre de la carpeta de build depende
 # de la plataforma (linux-gnu, etc.), asi que se busca el que tenga el modulo.
+find_program(NM_EXECUTABLE nm)
 if(NOT BGD_BIN)
     file(GLOB _BGD_BIN_CANDIDATES "${BGD_ROOT}/build/*/bin" "${BGD_ROOT}/bin")
+    # Puede haber varias compilaciones de BennuGD2 (y copias instaladas antiguas).
+    # Se prefiere la que traiga la API del editor; si ninguna la trae, se coge la
+    # primera que exista y mas abajo salta el aviso explicando que le falta.
+    set(_BGD_BIN_FALLBACK "")
     foreach(_c ${_BGD_BIN_CANDIDATES})
-        if(EXISTS "${_c}/libmod_3d${CMAKE_SHARED_LIBRARY_SUFFIX}")
-            set(BGD_BIN "${_c}")
-            break()
+        set(_cand "${_c}/libmod_3d${CMAKE_SHARED_LIBRARY_SUFFIX}")
+        if(EXISTS "${_cand}")
+            if(NOT _BGD_BIN_FALLBACK)
+                set(_BGD_BIN_FALLBACK "${_c}")
+            endif()
+            if(NM_EXECUTABLE)
+                execute_process(COMMAND ${NM_EXECUTABLE} -D --defined-only "${_cand}"
+                                OUTPUT_VARIABLE _s ERROR_QUIET)
+                string(FIND "${_s}" " g3d_zone_load" _p)
+                if(NOT _p EQUAL -1)
+                    set(BGD_BIN "${_c}")   # esta si sirve
+                    break()
+                endif()
+            else()
+                set(BGD_BIN "${_c}")
+                break()
+            endif()
         endif()
     endforeach()
+    if(NOT BGD_BIN)
+        set(BGD_BIN "${_BGD_BIN_FALLBACK}")
+    endif()
 endif()
 set(BGD_BIN "${BGD_BIN}" CACHE PATH "Directorio con libmod_3d/libbgdrtm ya compilados")
 
@@ -75,7 +97,6 @@ set(LIBMOD3D_SO  "${BGD_BIN}/libmod_3d${CMAKE_SHARED_LIBRARY_SUFFIX}")
 # modelo...). Si se compila contra otro libmod_3d, el enlazado puede pasar pero
 # el editor muere al arrancar con "undefined symbol: g3d_zone_load" o similar.
 # Mejor detectarlo aqui y decir exactamente que falta y por que.
-find_program(NM_EXECUTABLE nm)
 if(NM_EXECUTABLE)
     execute_process(COMMAND ${NM_EXECUTABLE} -D --defined-only "${LIBMOD3D_SO}"
                     OUTPUT_VARIABLE _LM3D_SYMS ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)

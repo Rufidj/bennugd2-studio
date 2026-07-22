@@ -1139,14 +1139,6 @@ int main(int, char**) {
     auto play_update = [&](float dt) {
         if (dt<=0.0f) dt=1.0f/60.0f; if (dt>0.05f) dt=0.05f;
         ImGuiIO& io = ImGui::GetIO();
-        // --- SCRIPTS del usuario: avanzar UN frame del interprete BennuGD2 real ---
-        if (script_host_running()) {
-            script_host_frame();
-            if (getenv("EDITOR_AUTOPLAY")) {   // diagnostico: instancias vivas por frame
-                static int dbgf = 0;
-                if ((dbgf++ % 20) == 0) { fprintf(stderr, "[diag] frame=%d instancias=%d\n", dbgf, script_host_instance_count()); fflush(stderr); }
-            }
-        }
         // --- fisica (cuerpos rigidos) ---
         g3d_rigidbody_step(dt);
         for (auto& b : sim_bodies){
@@ -1206,7 +1198,20 @@ int main(int, char**) {
                 g3d_entity_impl_set_scale(a.ent, a.sc, a.sc, a.sc);
             }
         }
-        // --- camara del juego ---
+        // --- SCRIPTS del usuario: LOS ULTIMOS, para que MANDEN ---
+        // Se ejecutan despues de la fisica, el jugador y los enganches: si un script
+        // fija la posicion/rotacion de su objeto, su valor es el que queda (sobrescribe
+        // al comportamiento integrado). Un script vacio no altera nada, asi que anadir
+        // un script a un objeto no rompe su fisica ni su control de jugador.
+        if (script_host_running()) {
+            script_host_frame();
+            if (getenv("EDITOR_AUTOPLAY")) {   // diagnostico: instancias vivas por frame
+                static int dbgf = 0;
+                if ((dbgf++ % 20) == 0) { fprintf(stderr, "[diag] frame=%d instancias=%d\n", dbgf, script_host_instance_count()); fflush(stderr); }
+            }
+        }
+
+        // --- camara del juego (despues de todo, para seguir la posicion final) ---
         float tx=0,ty=0,tz=0; bool follow=false;
         if (cam_mode!=0 && cam_follow>=0 && cam_follow<(int)objects.size()){
             if (cam_follow==sim_player_idx && sim_pch>=0){ tx=px; ty=py; tz=pz; }

@@ -99,6 +99,7 @@ extern "C" {
     void  g3d_rigidbody_clear(void);
     void  g3d_rigidbody_step(float dt);
     void  g3d_rigidbody_set_bounce(int id, float restitution, float friction);
+    void  g3d_rigidbody_set_damping(int id, float lin, float ang);   // resistencia del medio (agua)
     void  g3d_rigidbody_apply_impulse(int id, float ix, float iy, float iz);
     float g3d_rigidbody_x(int id);
     float g3d_rigidbody_y(int id);
@@ -317,6 +318,8 @@ int main(int, char**) {
         "END\n");
 
     bool show_script = false;              // el editor de script se abre a pantalla completa
+    bool ask_regen = false;                // pedir confirmacion para regenerar un script
+    std::string regen_obj;                 // objeto cuyo script se va a regenerar
     bool focus_script = false;             // dar foco al abrirlo (una vez)
     // ---- visor de animaciones (doble clic en un asset/objeto) ----
     bool  show_anim = false;               // ventana del visor abierta
@@ -606,6 +609,9 @@ int main(int, char**) {
                     "        IF (by - %.3f < %.3f)\n"
                     "            IF (moja == 0)\n"
                     "                g3d_water_splash(bx, %.3f, bz, 1.0);   // chapuzon al entrar\n"
+                    "                // El agua frena. Sin esto, un objeto que flota conserva su\n"
+                    "                // velocidad para siempre y cruza el lago patinando como una tabla.\n"
+                    "                g3d_rigidbody_set_damping(cuerpo, 2.5, 3.0);\n"
                     "            END\n"
                     "            moja = 1;\n"
                     "            // Solo agita el agua mientras SE MUEVE y esta cerca de la\n"
@@ -632,7 +638,10 @@ int main(int, char**) {
                         water_level, c, bk, o.mass);
                     s += b;
                 }
-                s += "        ELSE\n            moja = 0;\n        END\n"
+                s += "        ELSE\n"
+                     "            // al salir del agua se recupera la resistencia del aire\n"
+                     "            IF (moja == 1) g3d_rigidbody_set_damping(cuerpo, 0.05, 0.05); END\n"
+                     "            moja = 0;\n        END\n"
                      "        prevx = bx; prevy = by; prevz = bz;\n\n";
             }
             s += "        // colocar el modelo donde lo haya llevado la fisica\n"
@@ -658,6 +667,51 @@ int main(int, char**) {
                "END\n";
     };
 
+
+    // ---- Scripts generados: marca para saber si los has tocado ----
+    // Los que escribe el editor llevan una primera linea con un hash del resto.
+    // Si al releerlo el hash cuadra, el script sigue siendo palabra por palabra el
+    // que genero el editor: se puede rehacer sin que pierdas nada. Si no cuadra (o
+    // no hay marca) es codigo tuyo y no se toca sin que lo pidas expresamente.
+    const char* SCRIPT_MARK = "// [editor:generado ";
+    auto script_hash = [](const std::string& body) -> unsigned {
+        unsigned h = 2166136261u;                       // FNV-1a
+        for (unsigned char c : body) { h ^= c; h *= 16777619u; }
+        return h;
+    };
+    auto script_read = [&](const std::string& objname) -> std::string {
+        std::string sp = scripts_dir + "/" + objname + ".prg";
+        FILE* f = fopen(sp.c_str(), "r");
+        if (!f) return std::string();
+        std::string t; char buf[1024]; size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), f)) > 0) t.append(buf, n);
+        fclose(f);
+        return t;
+    };
+    // ¿Existe y sigue tal cual lo dejo el editor?
+    auto script_untouched = [&](const std::string& objname) -> bool {
+        std::string t = script_read(objname);
+        if (t.compare(0, strlen(SCRIPT_MARK), SCRIPT_MARK) != 0) return false;
+        size_t nl = t.find('\n');
+        if (nl == std::string::npos) return false;
+        unsigned marcado = 0;
+        if (sscanf(t.c_str() + strlen(SCRIPT_MARK), "%x", &marcado) != 1) return false;
+        return script_hash(t.substr(nl + 1)) == marcado;
+    };
+    auto script_write_generated = [&](const SObj& o) -> bool {
+        std::string body = object_script_template(o);
+        char mark[128];
+        snprintf(mark, sizeof(mark),
+                 "%s%08x] lo mantiene el editor: si lo editas a mano, deja de tocarlo\n",
+                 SCRIPT_MARK, script_hash(body));
+        std::string sp = scripts_dir + "/" + o.name + ".prg";
+        FILE* f = fopen(sp.c_str(), "w");
+        if (!f) return false;
+        fputs(mark, f);
+        fwrite(body.data(), 1, body.size(), f);
+        fclose(f);
+        return true;
+    };
 
     auto open_object_script = [&](const std::string& objname) {
         script_obj = objname;
@@ -893,20 +947,23 @@ int main(int, char**) {
         // El comportamiento vive en el script del objeto, asi que los que lo
         // necesiten (jugador o cuerpo fisico) deben TENER script antes de
         // concatenar los componentes: si no, el main llamaria a un PROCESS que no
-        // esta en el fichero. Solo se crea si falta; si ya existe, es tuyo.
+        // esta en el fichero.
+        // Se crea si falta. Si ya existe pero sigue siendo el que genero el editor
+        // (nadie lo ha tocado), se rehace con los valores actuales del Inspector:
+        // sin esto, cambiar la masa o la densidad de un objeto no se notaba en el
+        // juego, porque su fisica vive en el script y el script no se rehacia nunca.
+        // En cuanto lo editas a mano, la marca deja de cuadrar y ya no se toca.
         for (auto& o : objects) {
             bool necesita = o.is_player || (o.phys >= 1 && o.phys <= 4);
             if (!necesita) continue;
             std::string psp = scripts_dir + "/" + o.name + ".prg";
             FILE* t = fopen(psp.c_str(), "r");
-            if (t) { fclose(t); continue; }
-            FILE* w = fopen(psp.c_str(), "w");
-            if (w) {
-                std::string tx = object_script_template(o);
-                fwrite(tx.data(), 1, tx.size(), w); fclose(w);
-                console_add("Creado Scripts/" + o.name + ".prg (" +
+            bool existe = (t != nullptr);
+            if (t) fclose(t);
+            if (existe && !script_untouched(o.name)) continue;   // es tuyo
+            if (script_write_generated(o))
+                console_add((existe ? "Actualizado Scripts/" : "Creado Scripts/") + o.name + ".prg (" +
                             (o.is_player ? "controles del jugador" : "cuerpo fisico") + ")\n");
-            }
         }
 
         // componentes (scripts de cada objeto)
@@ -1241,7 +1298,11 @@ int main(int, char**) {
             if (water_on) {
                 float bx = g3d_rigidbody_x(b.bid), by = g3d_rigidbody_y(b.bid), bz = g3d_rigidbody_z(b.bid);
                 if (by - b.half < water_level) {
-                    if (!b.wet) { g3d_water_splash(bx, water_level, bz, 1.0f); b.wet = 1; }
+                    if (!b.wet) {
+                        g3d_water_splash(bx, water_level, bz, 1.0f); b.wet = 1;
+                        // el agua frena: si no, lo que flota patina por el lago sin parar
+                        g3d_rigidbody_set_damping(b.bid, 2.5f, 3.0f);
+                    }
                     // solo agita el agua mientras SE MUEVE cerca de la superficie:
                     // hundido y en reposo, las ondas paran; flotando, el oleaje lo mece
                     float dx=bx-b.prevx, dy=by-b.prevy, dz=bz-b.prevz;
@@ -1255,7 +1316,10 @@ int main(int, char**) {
                         if (sub > 0.0f)
                             g3d_rigidbody_apply_impulse(b.bid, 0.0f, (b.bk*sub - vy*b.mass*3.0f)*dt, 0.0f);
                     }
-                } else b.wet = 0;
+                } else {
+                    if (b.wet) g3d_rigidbody_set_damping(b.bid, 0.05f, 0.05f);   // fuera del agua
+                    b.wet = 0;
+                }
                 b.prevx = bx; b.prevy = by; b.prevz = bz;
             }
         }
@@ -2008,6 +2072,21 @@ int main(int, char**) {
                 ImGui::TextDisabled("Scripts/%s.prg", o.name.c_str());
                 if (ImGui::Button("Editar script del objeto", ImVec2(-1, 0)))
                     open_object_script(o.name);
+                // El comportamiento (controles, cuerpo fisico) vive en el script, y
+                // este solo se crea la primera vez. Si cambias masa, densidad,
+                // velocidad, etc. en el Inspector, hay que rehacerlo para que se apliquen.
+                bool con_plantilla = o.is_player || (o.phys >= 1 && o.phys <= 4);
+                if (con_plantilla) {
+                    if (ImGui::Button("Regenerar script desde los valores de arriba", ImVec2(-1, 0))) {
+                        regen_obj = o.name; ask_regen = true;
+                    }
+                    if (script_untouched(o.name) || script_read(o.name).empty())
+                        ImGui::TextDisabled("Lo mantiene el editor: se rehace solo al generar el juego.");
+                    else
+                        ImGui::TextWrapped("Este script lo has editado tu, asi que el editor ya no lo toca. "
+                                           "Los valores de arriba NO llegan al juego hasta que regeneres "
+                                           "(y entonces pierdes tus cambios).");
+                }
             }
             if (ImGui::CollapsingHeader(ICON_FA_CUBES "  Fisica (Jolt)")) {
                 const char* ptypes[] = { "Ninguna (decorativo)", "Caja", "Esfera", "Capsula",
@@ -2097,6 +2176,38 @@ int main(int, char**) {
         ImGui::SeparatorText("Camara");
         ImGui::SliderFloat("Distancia", &cam_dist, 5.0f, 60.0f);
         ImGui::End();
+
+        // --- Confirmacion antes de regenerar un script ---
+        // Regenerar SOBREESCRIBE el fichero, asi que no puede ocurrir por un clic
+        // despistado: hay que confirmarlo viendo el nombre del objeto.
+        if (ask_regen) { ImGui::OpenPopup("Regenerar script"); ask_regen = false; }
+        if (ImGui::BeginPopupModal("Regenerar script", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Se va a rehacer  Scripts/%s.prg", regen_obj.c_str());
+            ImGui::Spacing();
+            ImGui::TextWrapped("Volvera a escribirse con los valores actuales del Inspector.\n"
+                               "SE PERDERA cualquier cambio que hayas hecho a mano en ese script.");
+            ImGui::Spacing();
+            if (ImGui::Button("Regenerar", ImVec2(140, 0))) {
+                const SObj* po = nullptr;
+                for (auto& o : objects) if (o.name == regen_obj) { po = &o; break; }
+                if (po) {
+                    if (script_write_generated(*po)) {
+                        status = "Script regenerado: " + regen_obj + ".prg";
+                        console_add(status + "\n");
+                        // Si estaba abierto en el editor, recargarlo para no dejar
+                        // a la vista una version que ya no es la del disco.
+                        if (show_script && script_obj == regen_obj) open_object_script(regen_obj);
+                    } else {
+                        status = "ERROR: no puedo escribir Scripts/" + regen_obj + ".prg";
+                        console_add(status + "\n");
+                    }
+                }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancelar", ImVec2(140, 0))) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
 
         // --- Editor de SCRIPT a pantalla completa (se abre desde el Inspector) ---
         static std::string compile_out;

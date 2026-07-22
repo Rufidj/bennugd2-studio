@@ -83,3 +83,11 @@ set_target_properties(editor3d PROPERTIES
     BUILD_RPATH   "${BGD_BIN};${BGD_DEPS}"
     INSTALL_RPATH "${BGD_BIN};${BGD_DEPS}"
 )
+
+# --disable-new-dtags => rpath como DT_RPATH y no DT_RUNPATH. IMPRESCINDIBLE:
+# bgdrtm carga los modulos con dlopen("libmod_xxx.so") a secas, y el DT_RUNPATH
+# del ejecutable NO se consulta en los dlopen que hace otra libreria (y libbgdrtm
+# no tiene rpath propio). Con DT_RUNPATH solo funcionaba si LD_LIBRARY_PATH
+# venia puesto en el entorno: por consola si, pero al abrir el editor con doble
+# clic no, y al pulsar Play fallaba la carga del modulo y se cerraba la app.
+target_link_options(editor3d PRIVATE "-Wl,--disable-new-dtags")

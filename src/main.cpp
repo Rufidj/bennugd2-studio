@@ -140,6 +140,8 @@ extern "C" {
                                   float amp, float wavelen, float speed, float swell,
                                   float dr, float dg, float db, float sr, float sg, float sb);
     void  g3d_editor_water_set_texture(void *tex);
+    void  g3d_water_ripple(float x, float z, float strength);
+    void  g3d_water_splash(float x, float y, float z, float strength);
     int   g3d_editor_cave_enter(int scene, void *terrain, float world_size);
     void  g3d_editor_cave_exit(void);
     void  g3d_editor_cave_reset(void);
@@ -439,104 +441,200 @@ int main(int, char**) {
     std::string status;
 
     // carga el script de un objeto en el editor (o una plantilla si no existe)
-    // Plantilla del script de un JUGADOR: trae los controles DENTRO, para que sean
-    // tuyos y los puedas cambiar (teclas, doble salto, dash...). El editor solo la
-    // crea la primera vez; a partir de ahi el fichero es tuyo y no se toca.
-    // Recibe la entidad y el modelo, que es lo que necesita para moverse y animar.
-    auto player_script_template = [&](const SObj& o) -> std::string {
+    // ---------------------------------------------------------------------------
+    // PLANTILLA DEL SCRIPT DE UN OBJETO
+    // El comportamiento de un objeto vive en SU script, no escondido en el main:
+    // controles si es el jugador, cuerpo rigido si tiene fisica. El editor solo la
+    // escribe la primera vez; a partir de ahi el fichero es tuyo y no se toca.
+    // ---------------------------------------------------------------------------
+    auto object_script_template = [&](const SObj& o) -> std::string {
         char b[4096];
-        std::string s =
-            "// ===== JUGADOR '" + o.name + "' =====\n"
-            "// Creado por el editor con los controles dentro: a partir de aqui es TUYO.\n"
-            "// Cambia las teclas, la velocidad o anade lo que quieras (doble salto, dash...).\n"
-            "//   id     = la entidad de este objeto en la escena\n"
-            "//   modelo = su modelo, necesario para las animaciones\n"
-            "PROCESS " + o.name + "(int id, int modelo)\n"
-            "PRIVATE\n"
-            "    int ch; int gnd; int inw;\n"
-            "    float wx; float wz; float wl; float spd; float t; float facing;\n"
-            "    float px; float py; float pz; float prevx; float prevz; float dt;\n"
-            "END\n"
-            "BEGIN\n"
-            "    dt = 1.0 / 60.0;\n";
-        snprintf(b, sizeof(b),
-            "    // capsula de colision del personaje (x, y, z, radio, altura)\n"
-            "    ch = g3d_char_create(%.3f, %.3f, %.3f, %.3f, %.3f);\n"
-            "    g3d_char_set_tuning(ch, 0.8, 46.0);\n"
-            "    facing = 0.0; t = 0.0;\n\n"
-            "    LOOP\n"
-            "        prevx = g3d_char_x(ch); prevz = g3d_char_z(ch);\n\n"
-            "        // ---------- CONTROLES ----------\n"
-            "        wx = 0.0; wz = 0.0;\n"
-            "        IF (key(_W)) wz = wz + 1.0; END\n"
-            "        IF (key(_S)) wz = wz - 1.0; END\n"
-            "        IF (key(_D)) wx = wx + 1.0; END\n"
-            "        IF (key(_A)) wx = wx - 1.0; END\n"
-            "        spd = %.3f;\n"
-            "        IF (key(_L_SHIFT) OR key(_R_SHIFT)) spd = %.3f; END\n\n"
-            "        wl = sqrt(wx * wx + wz * wz);\n"
-            "        IF (wl > 0.001)\n"
-            "            wx = wx / wl * spd; wz = wz / wl * spd;\n"
-            "            facing = atan2(wx, wz);       // mira hacia donde anda\n"
-            "        END\n"
-            "        g3d_char_move(ch, wx, wz);\n"
-            "        IF (key(_SPACE)) g3d_char_jump(ch, %.3f); END\n"
-            "        g3d_char_update(ch, dt);\n\n"
-            "        px = g3d_char_x(ch); py = g3d_char_y(ch); pz = g3d_char_z(ch);\n",
-            o.x, o.y, o.z, o.char_radius, o.char_height, o.walk_speed, o.run_speed, o.jump_force);
-        s += b;
 
-        if (water_on && o.buoyant) {          // nado
+        // ---------------- JUGADOR ----------------
+        if (o.is_player) {
+            std::string s =
+                "// ===== JUGADOR '" + o.name + "' =====\n"
+                "// Creado por el editor con los controles dentro: a partir de aqui es TUYO.\n"
+                "// Cambia las teclas, la velocidad o anade lo que quieras (doble salto, dash...).\n"
+                "//   id     = la entidad de este objeto en la escena\n"
+                "//   modelo = su modelo, necesario para las animaciones\n"
+                "PROCESS " + o.name + "(int id, int modelo)\n"
+                "PRIVATE\n"
+                "    int ch; int gnd; int inw; int moja;\n"
+                "    float wx; float wz; float wl; float spd; float t; float facing;\n"
+                "    float px; float py; float pz; float prevx; float prevz; float dt; float ript;\n"
+                "END\n"
+                "BEGIN\n"
+                "    dt = 1.0 / 60.0;\n";
             snprintf(b, sizeof(b),
-                "\n        // ---------- AGUA: flota y nada ----------\n"
-                "        inw = 0;\n"
-                "        IF (py < %.3f) inw = 1; END\n"
-                "        g3d_char_set_water(ch, inw, %.3f);\n",
-                water_level - 1.2f, water_level);
+                "    // capsula de colision del personaje (x, y, z, radio, altura)\n"
+                "    ch = g3d_char_create(%.3f, %.3f, %.3f, %.3f, %.3f);\n"
+                "    g3d_char_set_tuning(ch, 0.8, 46.0);\n"
+                "    facing = 0.0; t = 0.0;\n\n"
+                "    LOOP\n"
+                "        prevx = g3d_char_x(ch); prevz = g3d_char_z(ch);\n\n"
+                "        // ---------- CONTROLES ----------\n"
+                "        wx = 0.0; wz = 0.0;\n"
+                "        IF (key(_W)) wz = wz + 1.0; END\n"
+                "        IF (key(_S)) wz = wz - 1.0; END\n"
+                "        IF (key(_D)) wx = wx + 1.0; END\n"
+                "        IF (key(_A)) wx = wx - 1.0; END\n"
+                "        spd = %.3f;\n"
+                "        IF (key(_L_SHIFT) OR key(_R_SHIFT)) spd = %.3f; END\n\n"
+                "        wl = sqrt(wx * wx + wz * wz);\n"
+                "        IF (wl > 0.001)\n"
+                "            wx = wx / wl * spd; wz = wz / wl * spd;\n"
+                "            facing = atan2(wx, wz);       // mira hacia donde anda\n"
+                "        END\n"
+                "        g3d_char_move(ch, wx, wz);\n"
+                "        IF (key(_SPACE)) g3d_char_jump(ch, %.3f); END\n"
+                "        g3d_char_update(ch, dt);\n\n"
+                "        px = g3d_char_x(ch); py = g3d_char_y(ch); pz = g3d_char_z(ch);\n",
+                o.x, o.y, o.z, o.char_radius, o.char_height, o.walk_speed, o.run_speed, o.jump_force);
             s += b;
-        }
-        if (o.zone_layer >= 0) {              // zonas de barrera
-            snprintf(b, sizeof(b),
-                "\n        // ---------- ZONAS: no puede entrar en la capa %d ----------\n"
-                "        IF (g3d_zone_blocked(px, pz, %d))\n"
-                "            g3d_char_set_position(ch, prevx, py, prevz);\n"
-                "            px = prevx; pz = prevz;\n"
-                "        END\n", o.zone_layer + 1, o.zone_layer);
-            s += b;
-        }
 
-        s += "\n        g3d_entity_set_position(id, px, py, pz);\n"
-             "        g3d_entity_set_rotation(id, 0.0, facing, 0.0);\n";
-
-        void* mm = load_model(o.asset);
-        if (mm && g3d_model_animation_count(mm) > 0) {
-            snprintf(b, sizeof(b),
-                "\n        // ---------- ANIMACION segun lo que este haciendo ----------\n"
-                "        t = t + dt; gnd = g3d_char_grounded(ch);\n"
-                "%s"
-                "        IF (gnd == 0)\n"
-                "            g3d_model_animate(modelo, %d, t, 1);          // saltando\n"
-                "        ELSE\n"
-                "            IF (wl > 0.001)\n"
-                "                IF (key(_L_SHIFT) OR key(_R_SHIFT)) g3d_model_animate(modelo, %d, t, 1);   // corriendo\n"
-                "                ELSE g3d_model_animate(modelo, %d, t, 1); END                              // andando\n"
-                "            ELSE\n"
-                "                g3d_model_animate(modelo, %d, t, 1);      // quieto\n"
-                "            END\n"
-                "        END\n%s",
-                (water_on && o.buoyant && o.anim_swim >= 0) ? "        IF (inw == 0)\n" : "",
-                o.anim_jump, o.anim_run, o.anim_walk, o.anim_idle,
-                (water_on && o.buoyant && o.anim_swim >= 0) ? "        END\n" : "");
-            s += b;
-            if (water_on && o.buoyant && o.anim_swim >= 0) {
+            if (water_on && o.buoyant) {
                 snprintf(b, sizeof(b),
-                    "        IF (inw) g3d_model_animate(modelo, %d, t, 1); END   // nadando\n", o.anim_swim);
+                    "\n        // ---------- AGUA: flota y nada ----------\n"
+                    "        inw = 0;\n"
+                    "        IF (py < %.3f) inw = 1; END\n"
+                    "        g3d_char_set_water(ch, inw, %.3f);\n",
+                    water_level - 1.2f, water_level);
                 s += b;
             }
+            if (o.zone_layer >= 0) {
+                snprintf(b, sizeof(b),
+                    "\n        // ---------- ZONAS: no puede entrar en la capa %d ----------\n"
+                    "        IF (g3d_zone_blocked(px, pz, %d))\n"
+                    "            g3d_char_set_position(ch, prevx, py, prevz);\n"
+                    "            px = prevx; pz = prevz;\n"
+                    "        END\n", o.zone_layer + 1, o.zone_layer);
+                s += b;
+            }
+            if (water_on) {   // ondas al andar/nadar por el agua + chapuzon al entrar
+                snprintf(b, sizeof(b),
+                    "\n        // ---------- ONDAS EN EL AGUA ----------\n"
+                    "        IF (py < %.3f)\n"
+                    "            IF (moja == 0) g3d_water_splash(px, %.3f, pz, 1.0); END   // chapuzon al entrar\n"
+                    "            moja = 1;\n"
+                    "            ript = ript + dt;\n"
+                    "            IF (ript > 0.12 AND (wl > 0.001 OR inw))\n"
+                    "                g3d_water_ripple(px, pz, 0.6);   // estela mientras se mueve\n"
+                    "                ript = 0.0;\n"
+                    "            END\n"
+                    "        ELSE\n"
+                    "            moja = 0;\n"
+                    "        END\n", water_level, water_level);
+                s += b;
+            }
+
+            s += "\n        g3d_entity_set_position(id, px, py, pz);\n"
+                 "        g3d_entity_set_rotation(id, 0.0, facing, 0.0);\n";
+
+            void* mm = load_model(o.asset);
+            if (mm && g3d_model_animation_count(mm) > 0) {
+                snprintf(b, sizeof(b),
+                    "\n        // ---------- ANIMACION segun lo que este haciendo ----------\n"
+                    "        t = t + dt; gnd = g3d_char_grounded(ch);\n"
+                    "%s"
+                    "        IF (gnd == 0)\n"
+                    "            g3d_model_animate(modelo, %d, t, 1);          // saltando\n"
+                    "        ELSE\n"
+                    "            IF (wl > 0.001)\n"
+                    "                IF (key(_L_SHIFT) OR key(_R_SHIFT)) g3d_model_animate(modelo, %d, t, 1);   // corriendo\n"
+                    "                ELSE g3d_model_animate(modelo, %d, t, 1); END                              // andando\n"
+                    "            ELSE\n"
+                    "                g3d_model_animate(modelo, %d, t, 1);      // quieto\n"
+                    "            END\n"
+                    "        END\n%s",
+                    (water_on && o.buoyant && o.anim_swim >= 0) ? "        IF (inw == 0)\n" : "",
+                    o.anim_jump, o.anim_run, o.anim_walk, o.anim_idle,
+                    (water_on && o.buoyant && o.anim_swim >= 0) ? "        END\n" : "");
+                s += b;
+                if (water_on && o.buoyant && o.anim_swim >= 0) {
+                    snprintf(b, sizeof(b),
+                        "        IF (inw) g3d_model_animate(modelo, %d, t, 1); END   // nadando\n", o.anim_swim);
+                    s += b;
+                }
+            }
+            s += "\n        FRAME;\n    END\nEND\n";
+            return s;
         }
-        s += "\n        FRAME;\n    END\nEND\n";
-        return s;
+
+        // ---------------- OBJETO CON FISICA ----------------
+        if (o.phys >= 1 && o.phys <= 4) {
+            float c = o.csize > 0.05f ? o.csize : 0.5f;
+            float by0 = o.y + c;             // el cuerpo se apoya donde lo colocaste
+            std::string s =
+                "// ===== OBJETO CON FISICA '" + o.name + "' =====\n"
+                "// Creado por el editor con su cuerpo rigido dentro: a partir de aqui es TUYO.\n"
+                "// El motor avanza el mundo fisico una vez por frame; aqui solo se crea el\n"
+                "// cuerpo y se coloca el modelo donde la fisica lo haya llevado.\n"
+                "PROCESS " + o.name + "(int id)\n"
+                "PRIVATE\n"
+                "    int cuerpo; int moja; float by; float vy; float sub; float dt; float ript;\n"
+                "END\n"
+                "BEGIN\n"
+                "    dt = 1.0 / 60.0;\n";
+            const char* mk =
+                (o.phys == 1) ? "    cuerpo = g3d_rigidbody_create(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n"
+              : (o.phys == 2) ? "    cuerpo = g3d_rigidbody_create_sphere(%.3f, %.3f, %.3f, %.3f, %.3f);\n"
+              : (o.phys == 3) ? "    cuerpo = g3d_rigidbody_create_capsule(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n"
+                              : "    cuerpo = g3d_rigidbody_create_cylinder(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n";
+            if (o.phys == 1)      snprintf(b, sizeof(b), mk, o.x, by0, o.z, c, c, c, o.mass);
+            else if (o.phys == 2) snprintf(b, sizeof(b), mk, o.x, by0, o.z, c, o.mass);
+            else                  snprintf(b, sizeof(b), mk, o.x, by0, o.z, c, c, o.mass);
+            s += b;
+            snprintf(b, sizeof(b), "    g3d_rigidbody_set_bounce(cuerpo, %.3f, %.3f);   // rebote, friccion\n\n    LOOP\n",
+                     o.bounce, o.friction);
+            s += b;
+
+            if (water_on && o.buoyant && o.mass > 0.0f) {
+                float de = o.density > 0.05f ? o.density : 0.05f;
+                float bk = 24.0f * o.mass / (2.0f * c * de);
+                snprintf(b, sizeof(b),
+                    "        // ---------- FLOTACION (empuje de Arquimedes) ----------\n"
+                    "        by = g3d_rigidbody_y(cuerpo);\n"
+                    "        vy = (by - sub) / dt; sub = by;          // velocidad vertical aprox.\n"
+                    "        by = %.3f - (g3d_rigidbody_y(cuerpo) - %.3f);   // cuanto esta sumergido\n"
+                    "        IF (by > 0.0)\n"
+                    "            g3d_rigidbody_apply_impulse(cuerpo, 0.0, (%.4f * by - vy * %.3f * 3.0) * dt, 0.0);\n"
+                    "            IF (moja == 0) g3d_water_splash(g3d_rigidbody_x(cuerpo), %.3f, g3d_rigidbody_z(cuerpo), 1.0); END\n"
+                    "            moja = 1;\n"
+                    "            ript = ript + dt;\n"
+                    "            IF (ript > 0.15)\n"
+                    "                g3d_water_ripple(g3d_rigidbody_x(cuerpo), g3d_rigidbody_z(cuerpo), 0.4);\n"
+                    "                ript = 0.0;\n"
+                    "            END\n"
+                    "        ELSE\n"
+                    "            moja = 0;\n"
+                    "        END\n\n",
+                    water_level, c, bk, o.mass, water_level);
+                s += b;
+            }
+            s += "        // colocar el modelo donde lo haya llevado la fisica\n"
+                 "        g3d_entity_set_position(id, g3d_rigidbody_render_x(cuerpo),\n"
+                 "                                    g3d_rigidbody_render_y(cuerpo),\n"
+                 "                                    g3d_rigidbody_render_z(cuerpo));\n"
+                 "        g3d_entity_set_rotation(id, g3d_rigidbody_angle_x(cuerpo),\n"
+                 "                                    g3d_rigidbody_angle_y(cuerpo),\n"
+                 "                                    g3d_rigidbody_angle_z(cuerpo));\n"
+                 "        FRAME;\n    END\nEND\n";
+            return s;
+        }
+
+        // ---------------- OBJETO NORMAL ----------------
+        return "// Componente del objeto '" + o.name + "'.\n"
+               "// Es un PROCESS BennuGD2 que el juego instancia sobre el objeto.\n"
+               "PROCESS " + o.name + "(int id)\n"
+               "BEGIN\n"
+               "    LOOP\n"
+               "        // ... logica del objeto ...\n"
+               "        FRAME;\n"
+               "    END\n"
+               "END\n";
     };
+
 
     auto open_object_script = [&](const std::string& objname) {
         script_obj = objname;
@@ -549,23 +647,12 @@ int main(int, char**) {
             fclose(f);
             script.SetText(t);
         } else {
-            // Si el objeto es el jugador, se crea con los controles ya dentro.
+            // No existe: se crea con la plantilla que corresponda (jugador con sus
+            // controles, objeto con fisica con su cuerpo rigido, o vacia).
             const SObj* po = nullptr;
-            for (auto& o : objects) if (o.name == objname && o.is_player) { po = &o; break; }
-            if (po) {
-                script.SetText(player_script_template(*po));
-            } else {
-                script.SetText(
-                    "// Componente del objeto '" + objname + "'.\n"
-                    "// Es un PROCESS BennuGD2 que el juego instancia sobre el objeto.\n"
-                    "PROCESS " + objname + "(int id)\n"
-                    "BEGIN\n"
-                    "    LOOP\n"
-                    "        // ... logica del objeto ...\n"
-                    "        FRAME;\n"
-                    "    END\n"
-                    "END\n");
-            }
+            for (auto& o : objects) if (o.name == objname) { po = &o; break; }
+            script.SetText(po ? object_script_template(*po)
+                              : ("PROCESS " + objname + "(int id)\nBEGIN\n    LOOP\n        FRAME;\n    END\nEND\n"));
         }
     };
     // Guardar la escena: una linea OBJECT por objeto (fuente de verdad del juego).
@@ -780,17 +867,23 @@ int main(int, char**) {
             if (objects[i].attach_to == player_idx && player_idx >= 0 && (int)i != player_idx)
                 attach_list.push_back((int)i);
 
-        // El script del jugador debe EXISTIR antes de concatenar los componentes:
-        // si no, el main llamaria a un PROCESS que no esta en el fichero.
-        if (player_idx >= 0) {
-            auto& p = objects[player_idx];
-            std::string psp = scripts_dir + "/" + p.name + ".prg";
+        // El comportamiento vive en el script del objeto, asi que los que lo
+        // necesiten (jugador o cuerpo fisico) deben TENER script antes de
+        // concatenar los componentes: si no, el main llamaria a un PROCESS que no
+        // esta en el fichero. Solo se crea si falta; si ya existe, es tuyo.
+        for (auto& o : objects) {
+            bool necesita = o.is_player || (o.phys >= 1 && o.phys <= 4);
+            if (!necesita) continue;
+            std::string psp = scripts_dir + "/" + o.name + ".prg";
             FILE* t = fopen(psp.c_str(), "r");
-            if (!t) {
-                FILE* w = fopen(psp.c_str(), "w");
-                if (w) { std::string tx = player_script_template(p); fwrite(tx.data(), 1, tx.size(), w); fclose(w);
-                         console_add("Creado Scripts/" + p.name + ".prg con los controles del jugador\n"); }
-            } else fclose(t);
+            if (t) { fclose(t); continue; }
+            FILE* w = fopen(psp.c_str(), "w");
+            if (w) {
+                std::string tx = object_script_template(o);
+                fwrite(tx.data(), 1, tx.size(), w); fclose(w);
+                console_add("Creado Scripts/" + o.name + ".prg (" +
+                            (o.is_player ? "controles del jugador" : "cuerpo fisico") + ")\n");
+            }
         }
 
         // componentes (scripts de cada objeto)
@@ -808,9 +901,7 @@ int main(int, char**) {
         fputs("\nPROCESS main()\n", f);
         fputs("PRIVATE int e; int m; int tex; int mat; int follow_ent; float tx; float ty; float tz;\n", f);
         // arrays para los cuerpos fisicos (Jolt): entidad, id de cuerpo, flotacion...
-        fputs("  int bmdl[255]; int bid[255]; int bbuoy[255]; float bhalf[255];\n", f);
-        fputs("  float bmass[255]; float bk[255]; float bprevy[255];\n", f);
-        fputs("  int nb; int i; float dt; float by; float vy; float sub;\n", f);
+        fputs("  int i; float dt;\n", f);
         // jugador + enganches a huesos
         fputs("  int pch; int pplayer; int pmodel;\n", f);
         fputs("  float px; float py; float pz; float pfacing;\n", f);
@@ -849,7 +940,7 @@ int main(int, char**) {
             fputs("    g3d_water_set_enabled(1);\n", f);
         }
         // objetos + sus componentes (+ cuerpos fisicos Jolt)
-        fputs("    dt = 1.0 / 60.0; nb = 0;\n", f);
+        fputs("    dt = 1.0 / 60.0;\n", f);
         int pj = 0;   // indice de cuerpo fisico (literal)
         for (size_t i = 0; i < objects.size(); i++) {
             auto& o = objects[i];
@@ -879,32 +970,7 @@ int main(int, char**) {
                         o.x - hx, o.y - 5.0f, o.z - hx, o.x + hx, o.y + 30.0f, o.z + hx);
                 fputs("    g3d_entity_set_scale(e, 0.0001, 0.0001, 0.0001);   // invisible en el juego\n", f);
             }
-            // ---- cuerpo fisico dinamico (el jugador usa char controller, no rigidbody) ----
-            if (o.phys >= 1 && o.phys <= 4 && !o.is_player && pj < 255) {
-                float c = o.csize > 0.05f ? o.csize : 0.5f;
-                float by0 = o.y + c;   // centro del cuerpo: base apoyada donde se coloco
-                fprintf(f, "    bmdl[%d] = e;\n", pj);
-                if (o.phys == 1)
-                    fprintf(f, "    bid[%d] = g3d_rigidbody_create(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n",
-                            pj, o.x, by0, o.z, c, c, c, o.mass);
-                else if (o.phys == 2)
-                    fprintf(f, "    bid[%d] = g3d_rigidbody_create_sphere(%.3f, %.3f, %.3f, %.3f, %.3f);\n",
-                            pj, o.x, by0, o.z, c, o.mass);
-                else if (o.phys == 3)
-                    fprintf(f, "    bid[%d] = g3d_rigidbody_create_capsule(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n",
-                            pj, o.x, by0, o.z, c, c, o.mass);
-                else
-                    fprintf(f, "    bid[%d] = g3d_rigidbody_create_cylinder(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n",
-                            pj, o.x, by0, o.z, c, c, o.mass);
-                fprintf(f, "    g3d_rigidbody_set_bounce(bid[%d], %.3f, %.3f);\n", pj, o.bounce, o.friction);
-                // flotacion: constante muelle bk = g*masa / (2*half*densidad); equilibrio a esa sumersion
-                int buoy = (water_on && o.buoyant && o.mass > 0.0f) ? 1 : 0;
-                float bk = 0.0f;
-                if (buoy) { float de = o.density > 0.05f ? o.density : 0.05f; bk = 24.0f * o.mass / (2.0f * c * de); }
-                fprintf(f, "    bbuoy[%d] = %d; bhalf[%d] = %.3f; bmass[%d] = %.3f; bk[%d] = %.4f; bprevy[%d] = %.3f;\n",
-                        pj, buoy, pj, c, pj, o.mass, pj, bk, pj, by0);
-                pj++;
-            }
+            // Los cuerpos rigidos los crea cada objeto en SU script.
             std::string sp = scripts_dir + "/" + o.name + ".prg";
             // El jugador lleva sus controles en SU script: si aun no existe, se crea
             // con la plantilla para que el juego salga jugable a la primera.
@@ -915,7 +981,6 @@ int main(int, char**) {
                 if (s) { fclose(s); fprintf(f, "    %s(e);\n", o.name.c_str()); }
             }
         }
-        fprintf(f, "    nb = %d;   // numero de cuerpos fisicos\n", pj);
         // ---- huesos de enganche (el jugador se crea a si mismo en SU script) ----
         if (player_idx >= 0) {
             for (size_t k = 0; k < attach_list.size(); k++)
@@ -956,27 +1021,9 @@ int main(int, char**) {
         }
         // bucle: ESC cierra TODO (exit), no solo el main (los objetos son procesos)
         fputs("    LOOP\n        IF (key(_ESC)) exit(); END\n", f);
-        // --- fisica: avanza el mundo y sincroniza modelos + flotacion ---
+        // --- fisica: solo se avanza el MUNDO una vez por frame; cada objeto
+        //     coloca su modelo desde su propio script ---
         fputs("        g3d_rigidbody_step(dt);\n", f);
-        fputs("        FOR (i = 0; i < nb; i = i + 1)\n", f);
-        fputs("            g3d_entity_set_position(bmdl[i], g3d_rigidbody_render_x(bid[i]), g3d_rigidbody_render_y(bid[i]), g3d_rigidbody_render_z(bid[i]));\n", f);
-        fputs("            g3d_entity_set_rotation(bmdl[i], g3d_rigidbody_angle_x(bid[i]), g3d_rigidbody_angle_y(bid[i]), g3d_rigidbody_angle_z(bid[i]));\n", f);
-        if (water_on) {
-            // empuje de Arquimedes (muelle) + amortiguacion vertical mientras esta sumergido
-            char b[512];
-            snprintf(b, sizeof(b),
-                "            IF (bbuoy[i])\n"
-                "                by = g3d_rigidbody_y(bid[i]);\n"
-                "                vy = (by - bprevy[i]) / dt;\n"
-                "                sub = %.3f - (by - bhalf[i]);\n"
-                "                IF (sub > 0.0)\n"
-                "                    g3d_rigidbody_apply_impulse(bid[i], 0.0, (bk[i] * sub - vy * bmass[i] * 3.0) * dt, 0.0);\n"
-                "                END\n"
-                "                bprevy[i] = by;\n"
-                "            END\n", water_level);
-            fputs(b, f);
-        }
-        fputs("        END\n", f);
         // ---- objetos enganchados a un hueso del jugador (arma en la mano) ----
         // El jugador lo mueve SU script; aqui solo leemos donde ha quedado su
         // entidad para colgarle el arma del hueso.
@@ -1091,13 +1138,14 @@ int main(int, char**) {
     // FUERA del frame de ImGui: play_start hace popen(fork) y carga modulos que
     // reinicializan SDL; hacerlo en mitad del frame se lleva por delante el contexto GL.
     int  play_req = 0;   // 0=nada 1=arrancar 2=parar
-    struct SimBody { int ent, bid, buoy; float half, mass, bk, prevy; };
+    struct SimBody { int ent, bid, buoy, wet; float half, mass, bk, prevy, ript; };
     std::vector<SimBody> sim_bodies;
     struct SimAttach { int ent, node; float ox, oy, oz, sc, yaw; };
     std::vector<SimAttach> sim_attach;
     int sim_pch = -1, sim_player_ent = -1, sim_player_idx = -1;
     void* sim_player_model = nullptr;
     float sim_facing = 0, sim_t = 0, sim_pprevx = 0, sim_pprevz = 0;
+    bool  sim_wet = false; float sim_ript = 0;   // ondas del jugador en el agua
     std::vector<std::array<float,5>> play_snap;   // x,y,z,ry,scale de cada objeto
     float play_cam_snap[6] = {0,0,0,0,0,0};
 
@@ -1129,7 +1177,7 @@ int main(int, char**) {
                 g3d_rigidbody_set_bounce(bid,o.bounce,o.friction);
                 int buoy=(water_on&&o.buoyant&&o.mass>0.0f)?1:0; float bk=0.0f;
                 if(buoy){ float de=o.density>0.05f?o.density:0.05f; bk=24.0f*o.mass/(2.0f*c*de); }
-                sim_bodies.push_back({ o.entity, bid, buoy, c, o.mass, bk, by0 });
+                sim_bodies.push_back({ o.entity, bid, buoy, 0, c, o.mass, bk, by0, 0.0f });
             }
         }
         if (sim_player_idx>=0 && sim_player_model)
@@ -1169,7 +1217,14 @@ int main(int, char**) {
             if (water_on && b.buoy){
                 float by=g3d_rigidbody_y(b.bid); float vy=(by-b.prevy)/dt;
                 float sub=water_level-(by-b.half);
-                if (sub>0.0f) g3d_rigidbody_apply_impulse(b.bid,0.0f,(b.bk*sub - vy*b.mass*3.0f)*dt,0.0f);
+                if (sub>0.0f) {
+                    g3d_rigidbody_apply_impulse(b.bid,0.0f,(b.bk*sub - vy*b.mass*3.0f)*dt,0.0f);
+                    if (!b.wet) { g3d_water_splash(g3d_rigidbody_render_x(b.bid), water_level,
+                                                   g3d_rigidbody_render_z(b.bid), 1.0f); b.wet = 1; }
+                    b.ript += dt;
+                    if (b.ript > 0.15f) { g3d_water_ripple(g3d_rigidbody_render_x(b.bid),
+                                                           g3d_rigidbody_render_z(b.bid), 0.4f); b.ript = 0.0f; }
+                } else b.wet = 0;
                 b.prevy=by;
             }
         }

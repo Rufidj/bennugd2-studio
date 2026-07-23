@@ -78,9 +78,53 @@ fi
 # El interprete carga los modulos con dlopen, y para eso mira PATH/LD_LIBRARY_PATH.
 cat > "$OUT/bennugd2-studio.sh" <<'EOF'
 #!/bin/sh
+# Lanzador. Por defecto usa el BennuGD2 que viene dentro (lib/).
+#
+# Para usar TU propia compilacion de BennuGD2:
+#     BGD_BIN=/ruta/a/BennuGD2/build/linux-gnu/bin ./bennugd2-studio.sh
+#
+# Ojo: ese BennuGD2 tiene que traer el libmod_3d con la API de edicion. El editor
+# llama a funciones (zonas pintadas, carga de relieve, colisionador de terreno...)
+# que NO estan en el libmod_3d original. Sin ellas el editor no arranca, y el
+# error del cargador ("undefined symbol") no explica nada, asi que se comprueba
+# aqui antes y se dice lo que pasa.
 AQUI=$(cd "$(dirname "$0")" && pwd)
-PATH="$AQUI/lib:$PATH"
-LD_LIBRARY_PATH="$AQUI/lib:$LD_LIBRARY_PATH"
+
+if [ -n "$BGD_BIN" ]; then
+    SO="$BGD_BIN/libmod_3d.so"
+    if [ ! -f "$SO" ]; then
+        echo "No encuentro $SO"
+        echo "BGD_BIN debe apuntar a los binarios ya compilados, por ejemplo:"
+        echo "    BGD_BIN=/ruta/a/BennuGD2/build/linux-gnu/bin"
+        exit 1
+    fi
+    if command -v nm >/dev/null 2>&1; then
+        FALTAN=""
+        for f in g3d_zone_load g3d_zone_paint g3d_terrain_load \
+                 g3d_scene_set_terrain_collider g3d_model_is_skinned \
+                 g3d_model_node_find g3d_model_bounds g3d_model_animation_name; do
+            nm -D --defined-only "$SO" 2>/dev/null | grep -qw "$f" || FALTAN="$FALTAN $f"
+        done
+        if [ -n "$FALTAN" ]; then
+            echo "Ese libmod_3d no trae la API que necesita el editor."
+            echo "  Fichero: $SO"
+            echo "  Le faltan:"
+            for f in $FALTAN; do echo "     $f"; done
+            echo
+            echo "El editor usa una version ampliada de libmod_3d:"
+            echo "    https://github.com/Rufidj/libmod_3d"
+            echo "Clonala en TuBennuGD2/modules/libmod_3d, recompila BennuGD2 y vuelve"
+            echo "a intentarlo. O ejecuta sin BGD_BIN para usar el que viene dentro."
+            exit 1
+        fi
+    fi
+    PATH="$BGD_BIN:$AQUI/lib:$PATH"
+    LD_LIBRARY_PATH="$BGD_BIN:$AQUI/lib:$LD_LIBRARY_PATH"
+    echo "Usando tu BennuGD2: $BGD_BIN"
+else
+    PATH="$AQUI/lib:$PATH"
+    LD_LIBRARY_PATH="$AQUI/lib:$LD_LIBRARY_PATH"
+fi
 export PATH LD_LIBRARY_PATH
 exec "$AQUI/lib/editor3d" "$@"
 EOF
@@ -94,6 +138,15 @@ Arrancar:
     ./bennugd2-studio.sh
 
 No hace falta tener BennuGD2 compilado: va todo dentro de lib/.
+
+Si prefieres usar TU propia compilacion de BennuGD2:
+
+    BGD_BIN=/ruta/a/BennuGD2/build/linux-gnu/bin ./bennugd2-studio.sh
+
+Eso si: tiene que traer el libmod_3d con la API de edicion, que NO esta en el
+libmod_3d original de BennuGD2. Esta en https://github.com/Rufidj/libmod_3d;
+se clona en TuBennuGD2/modules/libmod_3d y se recompila BennuGD2. El lanzador lo
+comprueba antes de arrancar y te dice que funciones faltan.
 
 Si algo falla, el editor lo dice por la terminal indicando QUE fichero busca y en
 que rutas ha mirado. Arrancalo desde una terminal para verlo.

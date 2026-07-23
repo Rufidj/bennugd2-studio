@@ -293,6 +293,10 @@ int main(int, char**) {
     // queda DENTRO del modelo y se ven las caras interiores de la cabeza y el
     // torso. Adelantada lo justo, se siguen viendo los brazos y las piernas.
     float cam_fwd = 0.45f;
+    // Sensibilidad del raton en FPS: milesimas de grado por pixel de movimiento.
+    // Con el modo relativo de SDL, dx/dy ya son el movimiento del frame, no una
+    // posicion absoluta, asi que este numero se comporta de forma estable.
+    float cam_sens = 120.0f;
     // carga (perezosa) la textura de pintura i; devuelve su puntero
     auto paint_tex = [&](int i) -> void* {
         if (i < 0 || i >= (int)paints.size()) return nullptr;
@@ -699,24 +703,29 @@ int main(int, char**) {
                 "    facing = 0.0; t = 0.0;\n";
             if (fps_look)
                 fmt +=
-                "    // Mirada con el raton: se recentra el puntero cada frame y se mide\n"
-                "    // cuanto se habia movido. El 60 de abajo es la sensibilidad, en\n"
-                "    // milesimas de grado por pixel: subelo para girar mas rapido.\n"
+                "    // Mirada con el raton, modo relativo de SDL: el puntero se oculta y\n"
+                "    // se bloquea, y cada frame se lee cuanto se ha movido (dx, dy). Es lo\n"
+                "    // correcto para un FPS; escribir mouse.x no recentraba y la camara se\n"
+                "    // disparaba.\n"
                 "    mirax = 0.0; miray = 0.0;\n"
-                "    mouse.x = escena_cx; mouse.y = escena_cy;\n";
+                "    g3d_mouse_capture(1);   // ocultar y capturar el raton\n";
             fmt +=
                 "\n    LOOP\n"
                 "        prevx = g3d_char_x(ch); prevz = g3d_char_z(ch);\n\n";
-            if (fps_look)
-                fmt +=
+            if (fps_look) {
+                char lk[1024];
+                snprintf(lk, sizeof(lk),
                 "        // ---------- MIRAR (raton) ----------\n"
-                "        mirax = mirax + (mouse.x - escena_cx) * 60.0;\n"
-                "        miray = miray - (mouse.y - escena_cy) * 60.0;\n"
-                "        IF (miray >  75000.0) miray =  75000.0; END   // tope al mirar arriba\n"
-                "        IF (miray < -75000.0) miray = -75000.0; END   // tope al mirar abajo\n"
-                "        mouse.x = escena_cx; mouse.y = escena_cy;   // recentrar: asi se gira sin fin\n"
+                "        g3d_mouse_update();   // lee el movimiento del raton de este frame\n"
+                "        mirax = mirax + g3d_mouse_dx() * %.3f;   // %.3f = sensibilidad (md/pixel)\n"
+                "        miray = miray - g3d_mouse_dy() * %.3f;\n"
+                "        IF (miray >  85000.0) miray =  85000.0; END   // tope al mirar arriba\n"
+                "        IF (miray < -85000.0) miray = -85000.0; END   // tope al mirar abajo\n"
                 "        facing = mirax;\n"
-                "        escena_pitch = miray;           // la camara lo lee para inclinarse\n\n"
+                "        escena_pitch = miray;           // la camara lo lee para inclinarse\n\n",
+                cam_sens, cam_sens, cam_sens);
+                fmt += lk;
+                fmt +=
                 "        // ---------- ANDAR (respecto a donde miras) ----------\n"
                 "        adel = 0.0; lat = 0.0;\n"
                 "        IF (key(_W)) adel = adel + 1.0; END\n"
@@ -725,7 +734,7 @@ int main(int, char**) {
                 "        IF (key(_A)) lat = lat - 1.0; END\n"
                 "        wx = sin(facing) * adel + cos(facing) * lat;\n"
                 "        wz = cos(facing) * adel - sin(facing) * lat;\n";
-            else
+            } else {
                 fmt +=
                 "        // ---------- CONTROLES ----------\n"
                 "        wx = 0.0; wz = 0.0;\n"
@@ -733,6 +742,7 @@ int main(int, char**) {
                 "        IF (key(_S)) wz = wz - 1.0; END\n"
                 "        IF (key(_D)) wx = wx + 1.0; END\n"
                 "        IF (key(_A)) wx = wx - 1.0; END\n";
+            }
             fmt +=
                 "        spd = %.3f;\n"
                 "        IF (key(_L_SHIFT) OR key(_R_SHIFT)) spd = %.3f; END\n\n"
@@ -992,9 +1002,9 @@ int main(int, char**) {
         fprintf(f, "WATER %d %.4f %.4f %.4f %.4f %.4f %.3f %.3f %.3f %.3f %.3f %.3f\n",
                 water_on ? 1 : 0, water_level, w_amp, w_len, w_speed, w_swell,
                 w_deep[0], w_deep[1], w_deep[2], w_shallow[0], w_shallow[1], w_shallow[2]);
-        fprintf(f, "CAMERA %d %d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
+        fprintf(f, "CAMERA %d %d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
                 cam_mode, cam_follow, cam_pos[0], cam_pos[1], cam_pos[2],
-                cam_look[0], cam_look[1], cam_look[2], gcam_dist, cam_height, cam_fwd);
+                cam_look[0], cam_look[1], cam_look[2], gcam_dist, cam_height, cam_fwd, cam_sens);
         for (auto& o : objects) {
             fprintf(f, "OBJECT %s %.4f %.4f %.4f %.4f %.4f SCRIPT %s PHYS %d %.3f %.3f %.3f %d %.3f %.3f",
                     o.asset.c_str(), o.x, o.y, o.z, o.ry, o.scale, o.name.c_str(),
@@ -1047,14 +1057,14 @@ int main(int, char**) {
                                 w_shallow[0]=s0;w_shallow[1]=s1;w_shallow[2]=s2; }
                 continue;
             }
-            int cm, cfol; float px,py,pz, lx,ly,lz, cd, ch, cf = 0.45f;
-            int nleidos = sscanf(line, "CAMERA %d %d %f %f %f %f %f %f %f %f %f",
-                       &cm, &cfol, &px,&py,&pz, &lx,&ly,&lz, &cd, &ch, &cf);
+            int cm, cfol; float px,py,pz, lx,ly,lz, cd, ch, cf = 0.45f, cs = 120.0f;
+            int nleidos = sscanf(line, "CAMERA %d %d %f %f %f %f %f %f %f %f %f %f",
+                       &cm, &cfol, &px,&py,&pz, &lx,&ly,&lz, &cd, &ch, &cf, &cs);
             if (nleidos >= 10) {   // las escenas de antes no traen el adelanto
                 cam_mode = cm; cam_follow = cfol;
                 cam_pos[0]=px; cam_pos[1]=py; cam_pos[2]=pz;
                 cam_look[0]=lx; cam_look[1]=ly; cam_look[2]=lz;
-                gcam_dist = cd; cam_height = ch; cam_fwd = cf;
+                gcam_dist = cd; cam_height = ch; cam_fwd = cf; cam_sens = cs;
                 continue;
             }
             float x, y, z, ry, sc;
@@ -2402,6 +2412,9 @@ int main(int, char**) {
                     ImGui::TextWrapped("El adelanto saca la camara del cuerpo. A 0 se ven las "
                                        "caras interiores del modelo; subelo hasta que solo se "
                                        "vean los brazos y las piernas.");
+                    ImGui::SliderFloat("Sensibilidad raton", &cam_sens, 20.0f, 400.0f, "%.0f");
+                    ImGui::TextDisabled("Cuanto gira la vista por cada pixel de raton. "
+                                        "Mas bajo = mas suave.");
                 } else {
                     ImGui::SliderFloat("Distancia", &gcam_dist, 1.0f, 30.0f, "%.1f");
                     ImGui::SliderFloat("Altura", &cam_height, 0.0f, 20.0f, "%.1f");

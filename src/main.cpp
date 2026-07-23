@@ -1302,7 +1302,7 @@ int main(int, char**) {
         std::string camf;
         if (follow) {
             camf  = "        g3d_entity_get_position(follow_ent, &tx, &ty, &tz);\n";
-            char b[512];
+            char b[2048];   // ojo: la camara FPS genera bastante texto y con 512 se cortaba
             if (cam_mode == 1) {          // tercera persona: detras y arriba
                 snprintf(b, sizeof(b),
                     "        g3d_camera_set_position(camera, tx, ty + %.3f, tz - %.3f);\n"

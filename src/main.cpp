@@ -270,6 +270,10 @@ int main(int, char**) {
     float cam_look[3] = { 0.0f,  2.0f,   0.0f };  // punto de mira (modo Fija)
     float gcam_dist   = 8.0f;                   // distancia detras/altura del objetivo
     float cam_height = 3.0f;                    // altura de la camara sobre el objetivo
+    // FPS: cuanto se adelanta la camara respecto al centro del personaje. Sin esto
+    // queda DENTRO del modelo y se ven las caras interiores de la cabeza y el
+    // torso. Adelantada lo justo, se siguen viendo los brazos y las piernas.
+    float cam_fwd = 0.45f;
     // carga (perezosa) la textura de pintura i; devuelve su puntero
     auto paint_tex = [&](int i) -> void* {
         if (i < 0 || i >= (int)paints.size()) return nullptr;
@@ -901,9 +905,9 @@ int main(int, char**) {
         fprintf(f, "WATER %d %.4f %.4f %.4f %.4f %.4f %.3f %.3f %.3f %.3f %.3f %.3f\n",
                 water_on ? 1 : 0, water_level, w_amp, w_len, w_speed, w_swell,
                 w_deep[0], w_deep[1], w_deep[2], w_shallow[0], w_shallow[1], w_shallow[2]);
-        fprintf(f, "CAMERA %d %d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
+        fprintf(f, "CAMERA %d %d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
                 cam_mode, cam_follow, cam_pos[0], cam_pos[1], cam_pos[2],
-                cam_look[0], cam_look[1], cam_look[2], gcam_dist, cam_height);
+                cam_look[0], cam_look[1], cam_look[2], gcam_dist, cam_height, cam_fwd);
         for (auto& o : objects) {
             fprintf(f, "OBJECT %s %.4f %.4f %.4f %.4f %.4f SCRIPT %s PHYS %d %.3f %.3f %.3f %d %.3f %.3f",
                     o.asset.c_str(), o.x, o.y, o.z, o.ry, o.scale, o.name.c_str(),
@@ -956,13 +960,14 @@ int main(int, char**) {
                                 w_shallow[0]=s0;w_shallow[1]=s1;w_shallow[2]=s2; }
                 continue;
             }
-            int cm, cfol; float px,py,pz, lx,ly,lz, cd, ch;
-            if (sscanf(line, "CAMERA %d %d %f %f %f %f %f %f %f %f",
-                       &cm, &cfol, &px,&py,&pz, &lx,&ly,&lz, &cd, &ch) == 10) {
+            int cm, cfol; float px,py,pz, lx,ly,lz, cd, ch, cf = 0.45f;
+            int nleidos = sscanf(line, "CAMERA %d %d %f %f %f %f %f %f %f %f %f",
+                       &cm, &cfol, &px,&py,&pz, &lx,&ly,&lz, &cd, &ch, &cf);
+            if (nleidos >= 10) {   // las escenas de antes no traen el adelanto
                 cam_mode = cm; cam_follow = cfol;
                 cam_pos[0]=px; cam_pos[1]=py; cam_pos[2]=pz;
                 cam_look[0]=lx; cam_look[1]=ly; cam_look[2]=lz;
-                gcam_dist = cd; cam_height = ch;
+                gcam_dist = cd; cam_height = ch; cam_fwd = cf;
                 continue;
             }
             float x, y, z, ry, sc;
@@ -1303,11 +1308,23 @@ int main(int, char**) {
                     "        g3d_camera_set_position(camera, tx, ty + %.3f, tz - %.3f);\n"
                     "        g3d_camera_look_at(camera, tx, ty + 1.0, tz, 0.0, 1.0, 0.0);\n",
                     cam_height, gcam_dist);
-            } else if (cam_mode == 2) {   // primera persona (FPS): a la altura de los ojos
+            } else if (cam_mode == 2) {   // primera persona (FPS)
+                // Mira hacia donde MIRA el personaje. Antes apuntaba siempre a
+                // tz+10, o sea al norte: girabas y la camara seguia mirando igual.
+                // Y va adelantada, porque en el centro del cuerpo se ven las caras
+                // interiores del modelo; asi se ven los brazos y las piernas.
+                // Los angulos salen en milesimas de grado, que es lo que comen
+                // cos() y sin() de BennuGD2.
                 snprintf(b, sizeof(b),
-                    "        g3d_camera_set_position(camera, tx, ty + %.3f, tz);\n"
-                    "        g3d_camera_look_at(camera, tx, ty + %.3f, tz + 10.0, 0.0, 1.0, 0.0);\n",
-                    cam_height, cam_height);
+                    "        g3d_entity_get_rotation(follow_ent, &crx, &cyaw, &crz);\n"
+                    "        g3d_camera_set_position(camera, tx + sin(cyaw) * %.3f,\n"
+                    "                                        ty + %.3f,\n"
+                    "                                        tz + cos(cyaw) * %.3f);\n"
+                    "        g3d_camera_look_at(camera, tx + sin(cyaw) * %.3f,\n"
+                    "                                   ty + %.3f,\n"
+                    "                                   tz + cos(cyaw) * %.3f, 0.0, 1.0, 0.0);\n",
+                    cam_fwd, cam_height, cam_fwd,
+                    cam_fwd + 10.0f, cam_height, cam_fwd + 10.0f);
             } else {                      // cenital (top-down): justo encima mirando abajo
                 snprintf(b, sizeof(b),
                     "        g3d_camera_set_position(camera, tx, ty + %.3f, tz + 0.5);\n"
@@ -1323,6 +1340,7 @@ int main(int, char**) {
         fputs("// Mueve la fisica, los enganches y la camara, un paso por frame.\n"
               "PROCESS escena_motor()\n", f);
         fputs("PRIVATE float tx; float ty; float tz;\n"
+              "  float crx; float cyaw; float crz;\n"
               "  float px; float py; float pz; float pfacing;\n"
               "  float nx; float ny; float nz; float wx2; float wz2; float a2;\nEND\nBEGIN\n", f);
         fputs("    LOOP\n", f);
@@ -1636,8 +1654,12 @@ int main(int, char**) {
             g3d_camera_set_position(cam,tx,ty+cam_height,tz-gcam_dist);
             g3d_camera_look_at(cam,tx,ty+1.0f,tz,0.0f,1.0f,0.0f);
         } else if (cam_mode==2){
-            g3d_camera_set_position(cam,tx,ty+cam_height,tz);
-            g3d_camera_look_at(cam,tx,ty+cam_height,tz+10.0f,0.0f,1.0f,0.0f);
+            // igual que en el juego: mira hacia donde mira, y adelantada para no
+            // quedarse dentro del modelo
+            float sf = sinf(sim_facing), cf = cosf(sim_facing);
+            g3d_camera_set_position(cam, tx+sf*cam_fwd, ty+cam_height, tz+cf*cam_fwd);
+            g3d_camera_look_at(cam, tx+sf*(cam_fwd+10.0f), ty+cam_height,
+                                    tz+cf*(cam_fwd+10.0f), 0.0f,1.0f,0.0f);
         } else {
             g3d_camera_set_position(cam,tx,ty+gcam_dist,tz+0.5f);
             g3d_camera_look_at(cam,tx,ty,tz,0.0f,1.0f,0.0f);
@@ -2043,7 +2065,11 @@ int main(int, char**) {
                 else {
                     float tx=objects[fi].x, ty=objects[fi].y, tz=objects[fi].z;
                     if (cam_mode == 1)      { cp[0]=tx; cp[1]=ty+cam_height; cp[2]=tz-gcam_dist; ct[0]=tx; ct[1]=ty+1.0f; ct[2]=tz; }
-                    else if (cam_mode == 2) { cp[0]=tx; cp[1]=ty+cam_height; cp[2]=tz; ct[0]=tx; ct[1]=ty+cam_height; ct[2]=tz+10.0f; }
+                    else if (cam_mode == 2) {
+                        float ry = objects[cam_follow].ry, sf = sinf(ry), cf = cosf(ry);
+                        cp[0]=tx+sf*cam_fwd; cp[1]=ty+cam_height; cp[2]=tz+cf*cam_fwd;
+                        ct[0]=tx+sf*(cam_fwd+10.0f); ct[1]=ty+cam_height; ct[2]=tz+cf*(cam_fwd+10.0f);
+                    }
                     else                    { cp[0]=tx; cp[1]=ty+gcam_dist; cp[2]=tz+0.5f; ct[0]=tx; ct[1]=ty; ct[2]=tz; }
                 }
             }
@@ -2277,8 +2303,16 @@ int main(int, char**) {
             }
             if (cam_mode == 3) ImGui::SliderFloat("Altura camara", &gcam_dist, 5.0f, 120.0f, "%.1f");
             else {
-                ImGui::SliderFloat("Distancia", &gcam_dist, 1.0f, 30.0f, "%.1f");
-                ImGui::SliderFloat("Altura", &cam_height, 0.0f, 20.0f, "%.1f");
+                if (cam_mode == 2) {
+                    ImGui::SliderFloat("Altura (ojos)", &cam_height, 0.0f, 20.0f, "%.1f");
+                    ImGui::SliderFloat("Adelanto", &cam_fwd, 0.0f, 3.0f, "%.2f");
+                    ImGui::TextWrapped("El adelanto saca la camara del cuerpo. A 0 se ven las "
+                                       "caras interiores del modelo; subelo hasta que solo se "
+                                       "vean los brazos y las piernas.");
+                } else {
+                    ImGui::SliderFloat("Distancia", &gcam_dist, 1.0f, 30.0f, "%.1f");
+                    ImGui::SliderFloat("Altura", &cam_height, 0.0f, 20.0f, "%.1f");
+                }
             }
             if (cam_follow < 0)
                 ImGui::TextColored(ImVec4(1,0.7f,0.2f,1), "Elige un objeto a seguir");

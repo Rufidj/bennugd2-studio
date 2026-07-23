@@ -347,6 +347,8 @@ int main(int, char**) {
         if (game_out.size() > 400000) game_out.erase(0, game_out.size() - 300000);  // no crecer sin fin
     };
     std::string script_obj = "barril_01";  // objeto cuyo script se edita (placeholder)
+    std::string script_file;    // ruta completa del fichero abierto
+    std::string script_title;   // como se llama en la barra del editor
     // ---- herramienta activa (toolbar con iconos) ----
     enum Tool { T_SELECT, T_MOVE, T_ROTATE, T_SCALE, T_PLACE, T_RAISE, T_LOWER, T_SMOOTH, T_FLATTEN, T_PAINT,
                 T_HOLE, T_ZONE };
@@ -801,6 +803,7 @@ int main(int, char**) {
         script_obj = objname;
         show_script = true; focus_script = true;
         std::string sp = scripts_dir + "/" + objname + ".prg";
+        script_file = sp; script_title = "Script del objeto:  Scripts/" + objname + ".prg";
         FILE* f = fopen(sp.c_str(), "r");
         if (f) {
             std::string t; char buf[1024]; size_t n;
@@ -1005,6 +1008,53 @@ int main(int, char**) {
     // ---- GENERAR JUEGO: main.prg con los componentes + escena + spawns ----
     // Convierte la escena en un juego BennuGD2 jugable: incluye el script de cada
     // objeto (PROCESS) y en el main coloca cada objeto y lanza su proceso.
+    // ---- main.prg: se crea una vez y a partir de ahi es del usuario ----
+    bool ask_regen_main = false;
+    auto main_template = []() -> std::string {
+        return
+            "// ===== main del juego =====\n"
+            "// Este fichero es TUYO: el editor lo crea una vez y no lo vuelve a\n"
+            "// tocar. Lo que cambia con la escena esta en __escena.prg, que si se\n"
+            "// rehace cada vez que generas (y por eso no hay que editarlo).\n\n"
+            "import \"libmod_gfx\"; import \"libmod_misc\"; import \"libmod_input\"; import \"libmod_3d\";\n\n"
+            "#include \"__escena.prg\"\n\n"
+            "PROCESS main()\n"
+            "BEGIN\n"
+            "    escena_iniciar();   // terreno, agua, objetos y camara\n"
+            "    escena_motor();     // fisica + camara, un paso por frame\n"
+            "\n"
+            "    LOOP\n"
+            "        IF (key(_ESC)) exit(); END\n"
+            "        // ---- tu codigo aqui ----\n"
+            "        FRAME;\n"
+            "    END\n"
+            "END\n";
+    };
+    auto write_main_prg = [&]() -> bool {
+        FILE* mf = fopen((project_dir + "/main.prg").c_str(), "w");
+        if (!mf) return false;
+        std::string t = main_template();
+        fwrite(t.data(), 1, t.size(), mf);
+        fclose(mf);
+        return true;
+    };
+    auto open_main_script = [&]() {
+        std::string mp = project_dir + "/main.prg";
+        FILE* mf = fopen(mp.c_str(), "r");
+        if (!mf) {                       // aun no se ha generado nunca: se crea ahora
+            if (!write_main_prg()) { status = "ERROR: no puedo crear main.prg"; return; }
+            mf = fopen(mp.c_str(), "r");
+            if (!mf) return;
+        }
+        std::string t; char b[1024]; size_t n;
+        while ((n = fread(b, 1, sizeof(b), mf)) > 0) t.append(b, n);
+        fclose(mf);
+        script.SetText(t);
+        script_file = mp; script_title = "main.prg  (tuyo: el editor no lo toca)";
+        script_obj.clear();
+        show_script = true; focus_script = true;
+    };
+
     auto generate_game = [&](bool run) {
         save_scene(scene_path);   // asegura .terrain/.paint.png frescos antes de generar
         // rutas (relativas al proyecto) del relieve y el pintado del terreno
@@ -1012,11 +1062,17 @@ int main(int, char**) {
         std::string rel_relief = rel_scene + ".terrain";
         std::string rel_paint  = rel_scene + ".paint.png";
         std::string rel_zones  = rel_scene + ".zones";
-        std::string mainp = project_dir + "/main.prg";
-        FILE* f = fopen(mainp.c_str(), "w");
-        if (!f) { status = "ERROR generando main.prg"; return; }
-        fputs("// ===== Juego generado por el editor BennuGD2 =====\n", f);
-        fputs("import \"libmod_gfx\"; import \"libmod_misc\"; import \"libmod_input\"; import \"libmod_3d\";\n\n", f);
+        // El escenario va en __escena.prg, que SE REHACE SIEMPRE. main.prg se crea
+        // una sola vez y no se vuelve a tocar: es tuyo, para tu codigo de arranque,
+        // menus, estados del juego... Los import van en main.prg (deben ir los
+        // primeros del fichero), asi que aqui no se repiten.
+        std::string mainp  = project_dir + "/main.prg";
+        std::string escenp = project_dir + "/__escena.prg";
+        FILE* f = fopen(escenp.c_str(), "w");
+        if (!f) { status = "ERROR generando __escena.prg"; return; }
+        fputs("// ===== Escenario generado por el editor BennuGD2 =====\n"
+              "// NO EDITES ESTE FICHERO: se rehace entero cada vez que generas el\n"
+              "// juego. Tu codigo va en main.prg, que el editor no toca.\n\n", f);
         fputs("GLOBAL int scene; int camera; int light; END\n\n", f);
         // ---- localizar el jugador y los objetos enganchados a su esqueleto ----
         int player_idx = -1;
@@ -1062,17 +1118,17 @@ int main(int, char**) {
             fclose(s);
         }
         // main
-        fputs("\nPROCESS main()\n", f);
-        fputs("PRIVATE int e; int m; int tex; int mat; int follow_ent; float tx; float ty; float tz;\n", f);
-        // arrays para los cuerpos fisicos (Jolt): entidad, id de cuerpo, flotacion...
-        fputs("  int i; float dt;\n", f);
-        // jugador + enganches a huesos
-        fputs("  int pch; int pplayer; int pmodel;\n", f);
-        fputs("  float px; float py; float pz; float pfacing;\n", f);
-        fputs("  float pwx; float pwz; float pwl; float pspd; float pt; int pgnd; int pinw;\n", f);
-        fputs("  float pprevx; float pprevz;\n", f);
-        fputs("  float nx; float ny; float nz; float wx2; float wz2; float a2;\n", f);
-        fputs("  int atc[32]; int atn[32];\nEND\nBEGIN\n", f);
+        // Lo que comparten el montaje y el bucle tiene que ser GLOBAL: antes era
+        // todo PRIVATE de un unico PROCESS main, y al partirlo en dos deja de valer.
+        fputs("GLOBAL\n"
+              "    int follow_ent;          // entidad a la que sigue la camara\n"
+              "    int pplayer; int pmodel; // entidad y modelo del jugador\n"
+              "    int atc[32]; int atn[32];// enganches a huesos: entidad y nodo\n"
+              "    float escena_dt;\n"
+              "END\n\n", f);
+        fputs("// Monta el escenario: terreno, agua, objetos, sus procesos y la camara.\n"
+              "FUNCTION escena_iniciar()\n", f);
+        fputs("PRIVATE int e; int m; int tex; int mat;\nEND\nBEGIN\n", f);
         fputs("    set_mode(1280,720); set_fps(60,0); window_set_title(\"EDITOR_PLAY\");\n", f);
         fputs("    scene = g3d_scene_create(\"juego\"); g3d_scene_set_active(scene);\n", f);
         fputs("    camera = g3d_camera_create(); g3d_camera_set_active(camera);\n", f);
@@ -1104,7 +1160,7 @@ int main(int, char**) {
             fputs("    g3d_water_set_enabled(1);\n", f);
         }
         // objetos + sus componentes (+ cuerpos fisicos Jolt)
-        fputs("    dt = 1.0 / 60.0;\n", f);
+        fputs("    escena_dt = 1.0 / 60.0;\n", f);
         int pj = 0;   // indice de cuerpo fisico (literal)
         for (size_t i = 0; i < objects.size(); i++) {
             auto& o = objects[i];
@@ -1183,11 +1239,19 @@ int main(int, char**) {
             }
             camf += b;
         }
-        // bucle: ESC cierra TODO (exit), no solo el main (los objetos son procesos)
-        fputs("    LOOP\n        IF (key(_ESC)) exit(); END\n", f);
+        // Aqui acaba el montaje. El bucle por frame va en su propio proceso para
+        // que main.prg pueda ser tuyo: arrancas el escenario, lanzas el motor y
+        // encima escribes lo que quieras.
+        fputs("    RETURN;\nEND\n\n", f);
+        fputs("// Mueve la fisica, los enganches y la camara, un paso por frame.\n"
+              "PROCESS escena_motor()\n", f);
+        fputs("PRIVATE float tx; float ty; float tz;\n"
+              "  float px; float py; float pz; float pfacing;\n"
+              "  float nx; float ny; float nz; float wx2; float wz2; float a2;\nEND\nBEGIN\n", f);
+        fputs("    LOOP\n", f);
         // --- fisica: solo se avanza el MUNDO una vez por frame; cada objeto
         //     coloca su modelo desde su propio script ---
-        fputs("        g3d_rigidbody_step(dt);\n", f);
+        fputs("        g3d_rigidbody_step(escena_dt);\n", f);
         // ---- objetos enganchados a un hueso del jugador (arma en la mano) ----
         // El jugador lo mueve SU script; aqui solo leemos donde ha quedado su
         // entidad para colgarle el arma del hueso.
@@ -1223,6 +1287,17 @@ int main(int, char**) {
         fputs(camf.c_str(), f);
         fputs("        FRAME;\n    END\nEND\n", f);
         fclose(f);
+
+        // main.prg: se crea la PRIMERA vez y despues no se toca nunca mas. Es el
+        // sitio para tu codigo (menus, estados, lo que sea) sin que el editor lo
+        // pise cada vez que cambias algo en la escena.
+        { FILE* mf = fopen(mainp.c_str(), "r");
+          if (mf) fclose(mf);
+          else {
+            if (!write_main_prg()) { status = "ERROR creando main.prg"; return; }
+            console_add("Creado main.prg (a partir de ahora es tuyo, el editor no lo toca)\n");
+          }
+        }
         // bgdc/bgdi localizan los modulos (.so) via PATH/LD_LIBRARY_PATH; el popen
         // no hereda el PATH del perfil -> los fijamos al directorio de los modulos.
         std::string bindir = std::string(BGDC_PATH); bindir = bindir.substr(0, bindir.rfind('/'));
@@ -1624,6 +1699,11 @@ int main(int, char**) {
             if (ImGui::BeginMenu("Juego")) {
                 if (ImGui::MenuItem("Generar y compilar")) generate_game(false);
                 if (ImGui::MenuItem(ICON_FA_PLAY " Generar y ejecutar")) generate_game(true);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Editar main.prg")) open_main_script();
+                if (ImGui::MenuItem("Rehacer main.prg...")) ask_regen_main = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Vuelve a dejarlo como recien creado.\nSe pierde lo que hayas escrito.");
                 ImGui::EndMenu();
             }
             // ---- toolbar de iconos (herramientas del editor) ----
@@ -2302,6 +2382,32 @@ int main(int, char**) {
         ImGui::End();
         if (borrar_sel) delete_obj(obj_sel);
 
+        // --- Confirmacion antes de rehacer main.prg ---
+        // Es codigo del usuario: rehacerlo lo borra entero, asi que no puede pasar
+        // por un clic despistado.
+        if (ask_regen_main) { ImGui::OpenPopup("Rehacer main.prg"); ask_regen_main = false; }
+        if (ImGui::BeginPopupModal("Rehacer main.prg", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextWrapped("main.prg volvera a quedar como recien creado.\n"
+                               "SE PERDERA todo lo que hayas escrito en el.");
+            ImGui::Spacing();
+            ImGui::TextDisabled("El escenario (__escena.prg) no se toca: ese se rehace solo al generar.");
+            ImGui::Spacing();
+            if (ImGui::Button("Rehacer", ImVec2(140, 0))) {
+                if (write_main_prg()) {
+                    status = "main.prg rehecho";
+                    console_add(status + "\n");
+                    if (show_script && script_obj.empty()) open_main_script();   // refrescar si estaba abierto
+                } else {
+                    status = "ERROR: no puedo escribir main.prg";
+                    console_add(status + "\n");
+                }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancelar", ImVec2(140, 0))) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+
         // --- Confirmacion antes de regenerar un script ---
         // Regenerar SOBREESCRIBE el fichero, asi que no puede ocurrir por un clic
         // despistado: hay que confirmarlo viendo el nombre del objeto.
@@ -2345,13 +2451,14 @@ int main(int, char**) {
                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
                 ImGuiWindowFlags_NoDocking);
 
-            std::string obj_script = scripts_dir + "/" + script_obj + ".prg";
-            ImGui::Text("Script del objeto:  Scripts/%s.prg", script_obj.c_str());
+            const std::string& obj_script = script_file;
+            ImGui::TextUnformatted(script_title.c_str());
             ImGui::SameLine(0, 30);
             if (ImGui::Button("Guardar")) {
                 FILE* f = fopen(obj_script.c_str(), "w");
                 if (f) { std::string t = script.GetText(); fwrite(t.data(), 1, t.size(), f); fclose(f);
-                         compile_out = "Guardado en Scripts/" + script_obj + ".prg"; }
+                         compile_out = "Guardado: " + script_file; }
+                else     compile_out = "ERROR: no puedo escribir " + script_file;
             }
             ImGui::SameLine();
             if (ImGui::Button("Compilar")) {

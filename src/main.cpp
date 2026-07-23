@@ -717,7 +717,7 @@ int main(int, char**) {
                 snprintf(lk, sizeof(lk),
                 "        // ---------- MIRAR (raton) ----------\n"
                 "        g3d_mouse_update();   // lee el movimiento del raton de este frame\n"
-                "        mirax = mirax + g3d_mouse_dx() * %.3f;   // %.3f = sensibilidad (md/pixel)\n"
+                "        mirax = mirax - g3d_mouse_dx() * %.3f;   // %.3f = sensibilidad (md/pixel)\n"
                 "        miray = miray - g3d_mouse_dy() * %.3f;\n"
                 "        IF (miray >  85000.0) miray =  85000.0; END   // tope al mirar arriba\n"
                 "        IF (miray < -85000.0) miray = -85000.0; END   // tope al mirar abajo\n"
@@ -731,8 +731,8 @@ int main(int, char**) {
                 "        adel = 0.0; lat = 0.0;\n"
                 "        IF (key(_W)) adel = adel + 1.0; END\n"
                 "        IF (key(_S)) adel = adel - 1.0; END\n"
-                "        IF (key(_D)) lat = lat + 1.0; END\n"
-                "        IF (key(_A)) lat = lat - 1.0; END\n"
+                "        IF (key(_D)) lat = lat - 1.0; END\n"
+                "        IF (key(_A)) lat = lat + 1.0; END\n"
                 "        wx = sin(facing) * adel + cos(facing) * lat;\n"
                 "        wz = cos(facing) * adel - sin(facing) * lat;\n";
             } else {

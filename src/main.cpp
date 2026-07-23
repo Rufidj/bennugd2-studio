@@ -90,6 +90,7 @@ extern "C" {
     void  g3d_char_update(int id, float dt);
     void  g3d_char_set_position(int id, float x, float y, float z);
     void  g3d_char_set_tuning(int id, float step, float slope_deg);
+    void  g3d_char_set_push(int id, float fuerza);   // empuja cuerpos fisicos
     float g3d_char_x(int id); float g3d_char_y(int id); float g3d_char_z(int id);
     int   g3d_char_grounded(int id);
     int   g3d_rigidbody_create(float x, float y, float z, float hx, float hy, float hz, float mass);
@@ -477,6 +478,10 @@ int main(int, char**) {
                 "    // capsula de colision del personaje (x, y, z, radio, altura)\n"
                 "    ch = g3d_char_create(%.3f, %.3f, %.3f, %.3f, %.3f);\n"
                 "    g3d_char_set_tuning(ch, 0.8, 46.0);\n"
+                "    // Fuerza con la que aparta barriles, cajas y demas cuerpos fisicos.\n"
+                "    // Cuanto mas pesado sea el objeto menos se movera, y si no puede con\n"
+                "    // el le cortara el paso. 0 = choca pero no mueve nada.\n"
+                "    g3d_char_set_push(ch, 200.0);\n"
                 "    facing = 0.0; t = 0.0;\n\n"
                 "    LOOP\n"
                 "        prevx = g3d_char_x(ch); prevz = g3d_char_z(ch);\n\n"

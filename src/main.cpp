@@ -399,6 +399,13 @@ int main(int, char**) {
     };
     std::vector<SObj> objects;
     int obj_sel = -1;
+    // Estado para deshacer/rehacer (los lambdas que lo usan estan mas abajo; se
+    // declara aqui para poder vaciarlo al cargar una escena o un proyecto).
+    struct EditState { std::vector<SObj> objs; int follow; };
+    std::vector<EditState> undo_stack, redo_stack;
+    EditState last_state;
+    bool state_init = false;
+    auto undo_reset = [&]() { undo_stack.clear(); redo_stack.clear(); state_init = false; };
     std::map<std::string, void*> model_cache;
     std::set<void*> posed_static;   // modelos sin esqueleto ya colocados (pose t=0)
     auto load_model = [&](const std::string& file) -> void* {
@@ -506,8 +513,10 @@ int main(int, char**) {
         o.x += dx; o.z += dz;
         o.name = unique_obj_name(name_base(src.name));
         o.attach_to = -1;              // el enganche no se copia: apuntaria al padre del original
-        o.entity = g3d_model_spawn(scene, m, o.x, o.y, o.z, o.ry, 0.0f);
+        // ojo con la firma: (escena, modelo, x, y, z, ALTURA, giro-Y en grados).
+        o.entity = g3d_model_spawn(scene, m, o.x, o.y, o.z, 0.0f, 0.0f);
         if (o.entity < 0) return -1;
+        g3d_entity_impl_set_rotation(o.entity, 0.0f, o.ry, 0.0f);
         g3d_entity_impl_set_scale(o.entity, o.scale, o.scale, o.scale);
         objects.push_back(o);
         return (int)objects.size() - 1;
@@ -527,6 +536,71 @@ int main(int, char**) {
         int n = spawn_copy(clipboard, 1.5f, 1.5f);
         if (n >= 0) { obj_sel = n; status = "Pegado: " + objects[n].name; }
     };
+
+    // ====================== deshacer / rehacer ======================
+    // Se guardan estados enteros de la escena (son 15-20 objetos, no duele) en vez
+    // de instrumentar cada accion: asi no hay forma de olvidarse de una. Cada
+    // frame se compara con el ultimo estado confirmado y, si cambio y no se esta
+    // arrastrando nada, se apunta. Eso agrupa un arrastre entero del gizmo o de un
+    // deslizador en UN solo paso de deshacer, en vez de uno por frame.
+    auto obj_igual = [](const SObj& a, const SObj& b) -> bool {
+        return a.name == b.name && a.asset == b.asset &&
+               a.x == b.x && a.y == b.y && a.z == b.z && a.ry == b.ry && a.scale == b.scale &&
+               a.phys == b.phys && a.mass == b.mass && a.bounce == b.bounce &&
+               a.friction == b.friction && a.buoyant == b.buoyant && a.density == b.density &&
+               a.csize == b.csize && a.is_player == b.is_player &&
+               a.walk_speed == b.walk_speed && a.run_speed == b.run_speed &&
+               a.jump_force == b.jump_force &&
+               a.anim_idle == b.anim_idle && a.anim_walk == b.anim_walk &&
+               a.anim_run == b.anim_run && a.anim_jump == b.anim_jump &&
+               a.anim_swim == b.anim_swim &&
+               a.char_radius == b.char_radius && a.char_height == b.char_height &&
+               a.attach_to == b.attach_to && a.attach_bone == b.attach_bone &&
+               a.att_off[0] == b.att_off[0] && a.att_off[1] == b.att_off[1] &&
+               a.att_off[2] == b.att_off[2] &&
+               a.att_scale == b.att_scale && a.att_yaw == b.att_yaw &&
+               a.zone_layer == b.zone_layer;
+    };
+    auto state_igual = [&](const EditState& a, const EditState& b) -> bool {
+        if (a.follow != b.follow || a.objs.size() != b.objs.size()) return false;
+        for (size_t i = 0; i < a.objs.size(); i++)
+            if (!obj_igual(a.objs[i], b.objs[i])) return false;
+        return true;
+    };
+    // Volver a un estado: se destruyen las entidades actuales y se vuelven a crear
+    // todas. Con estas cantidades es instantaneo, y sirve igual para deshacer un
+    // borrado, un duplicado o un movimiento, sin casos especiales.
+    auto apply_state = [&](const EditState& st) {
+        for (auto& o : objects) if (o.entity >= 0) g3d_entity_impl_destroy(o.entity);
+        objects = st.objs;
+        cam_follow = st.follow;
+        for (auto& o : objects) {
+            void* m = load_model(o.asset);
+            o.entity = m ? g3d_model_spawn(scene, m, o.x, o.y, o.z, 0.0f, 0.0f) : -1;
+            if (o.entity >= 0) {
+                g3d_entity_impl_set_rotation(o.entity, 0.0f, o.ry, 0.0f);
+                g3d_entity_impl_set_scale(o.entity, o.scale, o.scale, o.scale);
+            }
+        }
+        if (obj_sel >= (int)objects.size()) obj_sel = -1;
+    };
+    auto do_undo = [&]() {
+        if (playing || undo_stack.empty()) return;
+        redo_stack.push_back(EditState{ objects, cam_follow });
+        apply_state(undo_stack.back());
+        last_state = undo_stack.back();
+        undo_stack.pop_back();
+        status = "Deshecho (quedan " + std::to_string(undo_stack.size()) + ")";
+    };
+    auto do_redo = [&]() {
+        if (playing || redo_stack.empty()) return;
+        undo_stack.push_back(EditState{ objects, cam_follow });
+        apply_state(redo_stack.back());
+        last_state = redo_stack.back();
+        redo_stack.pop_back();
+        status = "Rehecho";
+    };
+
 
 
     // carga el script de un objeto en el editor (o una plantilla si no existe)
@@ -861,7 +935,10 @@ int main(int, char**) {
         FILE* f = fopen(path.c_str(), "r");
         if (!f) { status = "No pude abrir la escena"; return; }
         scene_path = path;
-        for (auto& o : objects) g3d_entity_impl_set_position(o.entity, 0, -99999, 0);
+        // Cargar es empezar de cero: la pila de deshacer de la escena anterior no
+        // vale, y si se dejara, un Ctrl+Z de mas restauraria un estado vacio.
+        undo_reset();
+        for (auto& o : objects) if (o.entity >= 0) g3d_entity_impl_destroy(o.entity);
         objects.clear(); obj_sel = -1;
         // terreno primero: las cuevas/objetos se apoyan en su altura
         if (terrain) g3d_editor_terrain_load(terrain, (path + ".terrain").c_str());
@@ -1586,11 +1663,32 @@ int main(int, char**) {
         if (play_req == 1) { play_req = 0; play_start(); }
         else if (play_req == 2) { play_req = 0; play_stop(); }
 
+        // --- Apuntar el estado para deshacer ---
+        // Al final de cada frame: si la escena cambio y ya no se esta arrastrando
+        // nada, se guarda el estado anterior. Lo de esperar a soltar es lo que hace
+        // que mover con el gizmo cuente como UN paso y no como sesenta por segundo.
+        if (!playing) {
+            EditState ahora{ objects, cam_follow };
+            if (!state_init) { last_state = ahora; state_init = true; }
+            else if (!state_igual(ahora, last_state) &&
+                     !ImGuizmo::IsUsing() && !ImGui::IsAnyItemActive() &&
+                     !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                undo_stack.push_back(last_state);
+                if (undo_stack.size() > 128) undo_stack.erase(undo_stack.begin());
+                redo_stack.clear();
+                last_state = ahora;
+            }
+        }
+
         // --- Atajos: copiar / pegar / duplicar / borrar ---
         // Solo si no se esta escribiendo (nombres, rutas, el editor de scripts) ni
         // corriendo el Play: si no, Ctrl+C en el codigo borraria un objeto.
         if (!ImGui::GetIO().WantTextInput && !show_script && !playing) {
             bool ctrl = ImGui::GetIO().KeyCtrl;
+            bool shift = ImGui::GetIO().KeyShift;
+            if (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) do_undo();
+            if (ctrl && ((shift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) ||
+                         ImGui::IsKeyPressed(ImGuiKey_Y, false)))          do_redo();
             if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D, false)) duplicate_obj(obj_sel);
             if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false)) copy_obj(obj_sel);
             if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V, false)) paste_obj();
@@ -1707,6 +1805,16 @@ int main(int, char**) {
                 if (ImGui::MenuItem("Cargar escena..."))         { openDlg.SetPwd(scenes_dir); openDlg.Open(); }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Salir")) running = false;
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Editar")) {
+                if (ImGui::MenuItem("Deshacer", "Ctrl+Z", false, !undo_stack.empty())) do_undo();
+                if (ImGui::MenuItem("Rehacer", "Ctrl+Shift+Z", false, !redo_stack.empty())) do_redo();
+                ImGui::Separator();
+                if (ImGui::MenuItem("Duplicar", "Ctrl+D", false, obj_sel >= 0)) duplicate_obj(obj_sel);
+                if (ImGui::MenuItem("Copiar",   "Ctrl+C", false, obj_sel >= 0)) copy_obj(obj_sel);
+                if (ImGui::MenuItem("Pegar",    "Ctrl+V", false, has_clip))     paste_obj();
+                if (ImGui::MenuItem("Borrar",   "Supr",   false, obj_sel >= 0)) delete_obj(obj_sel);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Escena")) {

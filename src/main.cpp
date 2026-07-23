@@ -615,7 +615,8 @@ int main(int, char**) {
 
             // Agua: el chapuzon y la estela son por CONTACTO, flote o no. Un barril
             // que rueda al agua y se hunde tambien salpica. La flotacion es aparte.
-            if (water_on) {
+            // Un cuerpo fijo no se mueve, asi que nada de esto le aplica.
+            if (water_on && o.mass > 0.0f) {
                 snprintf(b, sizeof(b),
                     "        // ---------- CONTACTO CON EL AGUA ----------\n"
                     "        bx = g3d_rigidbody_x(cuerpo); by = g3d_rigidbody_y(cuerpo);\n"
@@ -2095,21 +2096,28 @@ int main(int, char**) {
                 ImGui::Combo("Cuerpo", &o.phys, ptypes, IM_ARRAYSIZE(ptypes));
                 if (o.phys >= 1 && o.phys <= 4) {         // cuerpo dinamico
                     ImGui::DragFloat("Masa / peso", &o.mass, 0.1f, 0.0f, 1000.0f, "%.2f kg");
-                    if (o.mass <= 0.0f) ImGui::TextColored(ImVec4(1,0.7f,0.2f,1), "Masa 0 = estatico (inamovible)");
-                    ImGui::SliderFloat("Rebote", &o.bounce, 0.0f, 1.0f, "%.2f");
-                    ImGui::SliderFloat("Friccion", &o.friction, 0.0f, 1.0f, "%.2f");
                     ImGui::DragFloat("Tamano colision", &o.csize, 0.05f, 0.1f, 50.0f, "%.2f");
-                    ImGui::Checkbox("Flota en el agua", (bool*)&o.buoyant);
-                    if (o.buoyant) {
-                        ImGui::SliderFloat("Densidad", &o.density, 0.05f, 1.0f, "%.2f");
-                        ImGui::TextDisabled("0.05 = corcho (flota alto)  ->  1 = casi se hunde");
+                    if (o.mass <= 0.0f) {
+                        // Decorado solido: barcos, rocas, cajones que no se empujan.
+                        ImGui::TextColored(ImVec4(0.4f,0.9f,0.4f,1), "FIJO: choca con todo pero nada lo mueve");
+                        ImGui::TextWrapped("Los objetos fisicos chocan contra el y el jugador no puede "
+                                           "atravesarlo. Para decorado solido sin poner muros a mano.");
+                    } else {
+                        ImGui::TextDisabled("Cuanto mas pesado, menos lo empujaran el jugador y los demas.");
+                        ImGui::SliderFloat("Rebote", &o.bounce, 0.0f, 1.0f, "%.2f");
+                        ImGui::SliderFloat("Friccion", &o.friction, 0.0f, 1.0f, "%.2f");
+                        ImGui::Checkbox("Flota en el agua", (bool*)&o.buoyant);
+                        if (o.buoyant) {
+                            ImGui::SliderFloat("Densidad", &o.density, 0.05f, 1.0f, "%.2f");
+                            ImGui::TextDisabled("0.05 = corcho (flota alto)  ->  1 = casi se hunde");
+                        }
                     }
                 } else if (o.phys == 5) {                 // muro invisible
                     ImGui::DragFloat("Tamano (medio X/Z)", &o.csize, 0.05f, 0.1f, 200.0f, "%.2f");
                     ImGui::TextWrapped("Muro alto e invisible: bloquea el paso. Coloca varios "
                                        "para cerrar los bordes del lago, hacer vallas, limites...");
                 } else {
-                    ImGui::TextDisabled("Objeto fijo, sin simulacion.");
+                    ImGui::TextDisabled("Sin colision: los objetos y el jugador lo atraviesan.");
                 }
             }
             if (ImGui::CollapsingHeader(ICON_FA_PERSON_RUNNING "  Jugador")) {

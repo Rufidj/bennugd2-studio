@@ -17,3 +17,6 @@ main.prg
 
 # Sistema
 .DS_Store
+
+# Paquetes portables generados por tools/empaquetar.sh
+/dist/

@@ -178,10 +178,13 @@ target_link_libraries(editor3d
 
 # En runtime hay que encontrar libmod_3d.so y sus dependencias (bgdrtm, bggfx,
 # sdlhandler, SDL2_gpu) sin depender de LD_LIBRARY_PATH.
+# $ORIGIN/lib va PRIMERO para que un paquete portable (editor + lib/ al lado) se
+# use a si mismo. Detras van las rutas de esta maquina, que son las que valen
+# mientras se desarrolla aqui. Sin $ORIGIN, el binario copiado a otro ordenador
+# busca las librerias en el disco de quien lo compilo y no arranca.
 set_target_properties(editor3d PROPERTIES
-    BUILD_RPATH   "${BGD_BIN};${BGD_DEPS}"
-    INSTALL_RPATH "${BGD_BIN};${BGD_DEPS}"
-)
+    BUILD_RPATH   "$ORIGIN/lib;$ORIGIN;${BGD_BIN};${BGD_DEPS}"
+    INSTALL_RPATH "$ORIGIN/lib;$ORIGIN;${BGD_BIN};${BGD_DEPS}")
 
 # --disable-new-dtags => rpath como DT_RPATH y no DT_RUNPATH. El DT_RUNPATH del
 # ejecutable NO se consulta en los dlopen que hace otra libreria, asi que con

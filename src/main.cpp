@@ -188,6 +188,22 @@ struct ViewportFBO {
     }
 };
 
+// Busca un fichero primero JUNTO AL EJECUTABLE y luego donde estaba al compilar.
+// Las rutas que fija CMake son absolutas y del ordenador de quien compilo: si el
+// editor se copia a otra maquina (un zip, una carpeta portable) no existen.
+static std::string ruta_util(const std::string& rel_junto_al_exe,
+                             const std::string& ruta_de_compilacion) {
+    std::vector<std::string> cands;
+    if (char* base = SDL_GetBasePath()) {
+        cands.push_back(std::string(base) + rel_junto_al_exe);
+        cands.push_back(std::string(base) + "../" + rel_junto_al_exe);
+        SDL_free(base);
+    }
+    if (!ruta_de_compilacion.empty()) cands.push_back(ruta_de_compilacion);
+    for (auto& c : cands) if (fs::exists(c)) return c;   // vale fichero o carpeta
+    return ruta_de_compilacion;   // que falle con la ruta conocida, no con una inventada
+}
+
 int main(int, char**) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
         printf("SDL_Init error: %s\n", SDL_GetError());
@@ -243,7 +259,10 @@ int main(int, char**) {
     g3d_light_enable_shadow(light, 1);
 
     // ---- PROYECTO actual (runtime; se puede abrir/crear otro .bgd2) ----
-    std::string project_dir = PROJECT_DIR;   // carpeta raiz del proyecto
+    // Carpeta de proyecto por defecto. PROJECT_DIR es absoluta y del ordenador de
+    // quien compilo, asi que en un paquete portable no existe: se prefiere la que
+    // venga junto al ejecutable.
+    std::string project_dir = ruta_util("project", PROJECT_DIR);   // carpeta raiz del proyecto
     std::string project_name = "proyecto";
 
     // texturas del proyecto (para pintar el terreno) -- NO hardcodeadas
@@ -1488,10 +1507,11 @@ int main(int, char**) {
         }
         // bgdc/bgdi localizan los modulos (.so) via PATH/LD_LIBRARY_PATH; el popen
         // no hereda el PATH del perfil -> los fijamos al directorio de los modulos.
-        std::string bindir = std::string(BGDC_PATH); bindir = bindir.substr(0, bindir.rfind('/'));
+        std::string bgdc = ruta_util("lib/bgdc", BGDC_PATH);
+        std::string bindir = bgdc.substr(0, bgdc.rfind('/'));
         std::string env = "PATH=\"" + bindir + ":$PATH\" LD_LIBRARY_PATH=\"" + bindir + ":$LD_LIBRARY_PATH\" ";
         std::string proj = project_dir;
-        std::string cmd = "cd \"" + proj + "\" && " + env + "\"" + BGDC_PATH + "\" main.prg 2>&1";
+        std::string cmd = "cd \"" + proj + "\" && " + env + "\"" + bgdc + "\" main.prg 2>&1";
         console_add("\n----- compilando main.prg -----\n");
         console_focus = true;
         std::string out; FILE* p = popen(cmd.c_str(), "r");
@@ -2712,7 +2732,7 @@ int main(int, char**) {
                     fclose(f);
                 }
                 compile_out.clear();
-                std::string cmd = std::string(BGDC_PATH) + " " + tmp + " 2>&1";
+                std::string cmd = ruta_util("lib/bgdc", BGDC_PATH) + " " + tmp + " 2>&1";
                 FILE* p = popen(cmd.c_str(), "r");
                 if (p) { char buf[512]; size_t n;
                          while ((n = fread(buf, 1, sizeof(buf) - 1, p)) > 0) { buf[n] = 0; compile_out += buf; }

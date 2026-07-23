@@ -1291,11 +1291,31 @@ int main(int, char**) {
         // main.prg: se crea la PRIMERA vez y despues no se toca nunca mas. Es el
         // sitio para tu codigo (menus, estados, lo que sea) sin que el editor lo
         // pise cada vez que cambias algo en la escena.
-        { FILE* mf = fopen(mainp.c_str(), "r");
-          if (mf) fclose(mf);
-          else {
-            if (!write_main_prg()) { status = "ERROR creando main.prg"; return; }
-            console_add("Creado main.prg (a partir de ahora es tuyo, el editor no lo toca)\n");
+        {
+          // Si ya hay main.prg se respeta... salvo que sea uno de los ANTIGUOS, de
+          // cuando el editor lo reescribia entero. Aquel no incluye __escena.prg,
+          // asi que dejarlo tal cual seria lo peor posible: el juego seguiria
+          // compilando con la escena vieja incrustada dentro y los cambios del
+          // editor no llegarian nunca, sin un solo aviso. Se guarda copia y se
+          // pone el nuevo.
+          std::string viejo;
+          bool existe = false;
+          { FILE* mf = fopen(mainp.c_str(), "r");
+            if (mf) { existe = true; char b[4096]; size_t n;
+                      while ((n = fread(b,1,sizeof(b),mf)) > 0) viejo.append(b,n);
+                      fclose(mf); } }
+          bool incluye = viejo.find("__escena.prg") != std::string::npos;
+          if (!existe) {
+              if (!write_main_prg()) { status = "ERROR creando main.prg"; return; }
+              console_add("Creado main.prg (a partir de ahora es tuyo, el editor no lo toca)\n");
+          } else if (!incluye) {
+              std::string bak = project_dir + "/main.prg.anterior";
+              FILE* bf = fopen(bak.c_str(), "w");
+              if (bf) { fwrite(viejo.data(), 1, viejo.size(), bf); fclose(bf); }
+              if (!write_main_prg()) { status = "ERROR creando main.prg"; return; }
+              console_add("main.prg era del formato antiguo (lo reescribia el editor entero).\n"
+                          "Copia guardada en main.prg.anterior y puesto el nuevo, que incluye\n"
+                          "__escena.prg. A partir de ahora main.prg es tuyo.\n");
           }
         }
         // bgdc/bgdi localizan los modulos (.so) via PATH/LD_LIBRARY_PATH; el popen

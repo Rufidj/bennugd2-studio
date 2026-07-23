@@ -101,7 +101,7 @@ extern "C" {
     void  g3d_rigidbody_set_bounce(int id, float restitution, float friction);
     void  g3d_rigidbody_set_damping(int id, float lin, float ang);   // resistencia del medio (agua)
     void  g3d_rigidbody_apply_angular_impulse(int id, float ax, float ay, float az);
-    void  g3d_rigidbody_set_upright(int id, float strength);   // lo que flota se endereza
+    void  g3d_rigidbody_set_buoyancy(int id, float water_y, float rel_density);  // flotacion real
     void  g3d_rigidbody_apply_impulse(int id, float ix, float iy, float iz);
     float g3d_rigidbody_x(int id);
     float g3d_rigidbody_y(int id);
@@ -579,7 +579,7 @@ int main(int, char**) {
                 "// cuerpo y se coloca el modelo donde la fisica lo haya llevado.\n"
                 "PROCESS " + o.name + "(int id)\n"
                 "PRIVATE\n"
-                "    int cuerpo; int moja; float bx; float by; float bz; float vy; float sub; float mov;\n"
+                "    int cuerpo; int moja; float bx; float by; float bz; float mov;\n"
                 "    float prevx; float prevy; float prevz; float dt; float ript;\n"
                 "END\n"
                 "BEGIN\n"
@@ -597,12 +597,13 @@ int main(int, char**) {
                      o.bounce, o.friction);
             s += b;
             if (water_on && o.buoyant && o.mass > 0.0f) {
-                // Lo que flota se endereza solo: el empuje se aplica en el centro y
-                // por si mismo no endereza nada, asi que sin esto el objeto se queda
-                // inclinado con la postura en la que cayo al agua.
+                // Flotacion real: el motor reparte el empuje por el volumen sumergido,
+                // no lo aplica en el centro. De ahi salen solas la profundidad a la que
+                // queda, que se enderece, y que vuelque si la forma es inestable o el
+                // golpe es bastante fuerte. Nada de eso hay que programarlo aqui.
                 snprintf(b, sizeof(b),
-                         "    g3d_rigidbody_set_upright(cuerpo, %.3f);   // se endereza al flotar\n",
-                         o.mass * 20.0f);
+                         "    g3d_rigidbody_set_buoyancy(cuerpo, %.3f, %.3f);   // nivel del agua, densidad\n",
+                         water_level, o.density > 0.05f ? o.density : 0.05f);
                 s += b;
             }
             s += "\n    LOOP\n";
@@ -610,10 +611,6 @@ int main(int, char**) {
             // Agua: el chapuzon y la estela son por CONTACTO, flote o no. Un barril
             // que rueda al agua y se hunde tambien salpica. La flotacion es aparte.
             if (water_on) {
-                float bk = 0.0f;
-                bool flota = (o.buoyant && o.mass > 0.0f);
-                if (flota) { float de = o.density > 0.05f ? o.density : 0.05f;
-                             bk = 24.0f * o.mass / (2.0f * c * de); }
                 snprintf(b, sizeof(b),
                     "        // ---------- CONTACTO CON EL AGUA ----------\n"
                     "        bx = g3d_rigidbody_x(cuerpo); by = g3d_rigidbody_y(cuerpo);\n"
@@ -639,17 +636,7 @@ int main(int, char**) {
                     "            END\n",
                     c, water_level, water_level, c, water_level - 1.0f);
                 s += b;
-                if (flota) {
-                    snprintf(b, sizeof(b),
-                        "            // ---------- FLOTACION (empuje de Arquimedes) ----------\n"
-                        "            vy = (by - prevy) / dt;\n"
-                        "            sub = %.3f - (by - %.3f);\n"
-                        "            IF (sub > 0.0)\n"
-                        "                g3d_rigidbody_apply_impulse(cuerpo, 0.0, (%.4f * sub - vy * %.3f * 3.0) * dt, 0.0);\n"
-                        "            END\n",
-                        water_level, c, bk, o.mass);
-                    s += b;
-                }
+
                 s += "        ELSE\n"
                      "            // al salir del agua se recupera la resistencia del aire\n"
                      "            IF (moja == 1) g3d_rigidbody_set_damping(cuerpo, 0.05, 0.05); END\n"
@@ -1268,9 +1255,10 @@ int main(int, char**) {
                 else bid=g3d_rigidbody_create_cylinder(o.x,by0,o.z,c,c,o.mass);
                 g3d_rigidbody_set_bounce(bid,o.bounce,o.friction);
                 int buoy=(water_on&&o.buoyant&&o.mass>0.0f)?1:0; float bk=0.0f;
-                if(buoy){ float de=o.density>0.05f?o.density:0.05f; bk=24.0f*o.mass/(2.0f*c*de);
-                          // el empuje va al centro y no endereza: sin esto se queda ladeado
-                          g3d_rigidbody_set_upright(bid, o.mass*20.0f); }
+                // flotacion real: la hace el motor repartiendo el empuje por el
+                // volumen sumergido (profundidad, adrizamiento y vuelco salen solos)
+                if(buoy) g3d_rigidbody_set_buoyancy(bid, water_level,
+                                                    o.density>0.05f?o.density:0.05f);
                 sim_bodies.push_back({ o.entity, bid, buoy, 0, c, o.mass, bk, o.x, by0, o.z, 0.0f });
             }
         }
@@ -1323,12 +1311,6 @@ int main(int, char**) {
                     if (dx*dx+dy*dy+dz*dz > 0.0004f && by + b.half > water_level - 1.0f) {
                         b.ript += dt;
                         if (b.ript > 0.15f) { g3d_water_ripple(bx, bz, 0.4f); b.ript = 0.0f; }
-                    }
-                    if (b.buoy) {
-                        float vy = (by - b.prevy) / dt;
-                        float sub = water_level - (by - b.half);
-                        if (sub > 0.0f)
-                            g3d_rigidbody_apply_impulse(b.bid, 0.0f, (b.bk*sub - vy*b.mass*3.0f)*dt, 0.0f);
                     }
                 } else {
                     if (b.wet) g3d_rigidbody_set_damping(b.bid, 0.05f, 0.05f);   // fuera del agua

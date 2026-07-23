@@ -57,6 +57,7 @@ extern "C" {
     void  g3d_renderer_set_viewport_physical(unsigned x, unsigned y, unsigned w, unsigned h);
     void  g3d_renderer_set_hdr(int enabled);
     void  g3d_renderer_set_shadows(int enabled);
+    void  g3d_renderer_set_shadow_resolution(unsigned resolution);
     void  g3d_renderer_set_clear_color(float r, float g, float b, float a);
     void  g3d_renderer_set_target(unsigned fbo);
     int   g3d_scene_create(const char *name);
@@ -241,6 +242,7 @@ int main(int, char**) {
     // esa textura de profundidad queda incompleta -> el driver tira el draw.
     g3d_renderer_set_hdr(0);
     g3d_renderer_set_shadows(1);
+    g3d_renderer_set_shadow_resolution(2048);   // por defecto; se ajusta al cargar la escena
     g3d_renderer_set_clear_color(0.15f, 0.20f, 0.30f, 1.0f);
 
     int scene = g3d_scene_create("editor");
@@ -297,6 +299,9 @@ int main(int, char**) {
     // Con el modo relativo de SDL, dx/dy ya son el movimiento del frame, no una
     // posicion absoluta, asi que este numero se comporta de forma estable.
     float cam_sens = 120.0f;
+    // Resolucion del shadow map. El motor arranca en 1024 (se ven los dientes en
+    // terreno grande); 2048 es un buen equilibrio, 4096 muy nitido.
+    int shadow_res = 2048;
     // carga (perezosa) la textura de pintura i; devuelve su puntero
     auto paint_tex = [&](int i) -> void* {
         if (i < 0 || i >= (int)paints.size()) return nullptr;
@@ -1003,9 +1008,10 @@ int main(int, char**) {
         fprintf(f, "WATER %d %.4f %.4f %.4f %.4f %.4f %.3f %.3f %.3f %.3f %.3f %.3f\n",
                 water_on ? 1 : 0, water_level, w_amp, w_len, w_speed, w_swell,
                 w_deep[0], w_deep[1], w_deep[2], w_shallow[0], w_shallow[1], w_shallow[2]);
-        fprintf(f, "CAMERA %d %d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
+        fprintf(f, "CAMERA %d %d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %d\n",
                 cam_mode, cam_follow, cam_pos[0], cam_pos[1], cam_pos[2],
-                cam_look[0], cam_look[1], cam_look[2], gcam_dist, cam_height, cam_fwd, cam_sens);
+                cam_look[0], cam_look[1], cam_look[2], gcam_dist, cam_height, cam_fwd, cam_sens,
+                shadow_res);
         for (auto& o : objects) {
             fprintf(f, "OBJECT %s %.4f %.4f %.4f %.4f %.4f SCRIPT %s PHYS %d %.3f %.3f %.3f %d %.3f %.3f",
                     o.asset.c_str(), o.x, o.y, o.z, o.ry, o.scale, o.name.c_str(),
@@ -1058,14 +1064,15 @@ int main(int, char**) {
                                 w_shallow[0]=s0;w_shallow[1]=s1;w_shallow[2]=s2; }
                 continue;
             }
-            int cm, cfol; float px,py,pz, lx,ly,lz, cd, ch, cf = 0.45f, cs = 120.0f;
-            int nleidos = sscanf(line, "CAMERA %d %d %f %f %f %f %f %f %f %f %f %f",
-                       &cm, &cfol, &px,&py,&pz, &lx,&ly,&lz, &cd, &ch, &cf, &cs);
+            int cm, cfol, sres = 2048; float px,py,pz, lx,ly,lz, cd, ch, cf = 0.45f, cs = 120.0f;
+            int nleidos = sscanf(line, "CAMERA %d %d %f %f %f %f %f %f %f %f %f %f %d",
+                       &cm, &cfol, &px,&py,&pz, &lx,&ly,&lz, &cd, &ch, &cf, &cs, &sres);
             if (nleidos >= 10) {   // las escenas de antes no traen el adelanto
                 cam_mode = cm; cam_follow = cfol;
                 cam_pos[0]=px; cam_pos[1]=py; cam_pos[2]=pz;
                 cam_look[0]=lx; cam_look[1]=ly; cam_look[2]=lz;
                 gcam_dist = cd; cam_height = ch; cam_fwd = cf; cam_sens = cs;
+                shadow_res = sres; g3d_renderer_set_shadow_resolution((unsigned)shadow_res);
                 continue;
             }
             float x, y, z, ry, sc;
@@ -1317,6 +1324,7 @@ int main(int, char**) {
         fputs("    camera = g3d_camera_create(); g3d_camera_set_active(camera);\n", f);
         fputs("    light = g3d_light_create(0,1.0,0.96,0.86); g3d_light_set_direction(light,-0.45,-0.75,-0.35);\n", f);
         fputs("    g3d_light_set_intensity(light,1.5); g3d_light_enable_shadow(light,1); g3d_set_shadows(1);\n", f);
+        fprintf(f, "    g3d_set_shadow_resolution(%d);   // nitidez de las sombras\n", shadow_res);
         fputs("    g3d_sky_set_gradient(0.35,0.55,0.85, 0.82,0.88,0.96); g3d_sky_enable(1);\n", f);
         // terreno: mismo grid/worldsize que el editor (160 / 400), plano y luego
         // se le aplica el relieve esculpido y el pintado guardados en la escena.
@@ -2645,6 +2653,16 @@ int main(int, char**) {
         }
         ImGui::SeparatorText("Camara");
         ImGui::SliderFloat("Distancia", &cam_dist, 5.0f, 60.0f);
+
+        ImGui::SeparatorText("Sombras");
+        // Calidad del shadow map. Se aplica al viewport al momento para verlo.
+        int sres_idx = (shadow_res >= 4096) ? 2 : (shadow_res >= 2048) ? 1 : 0;
+        const char* sres_lbl[] = { "Baja (1024)", "Media (2048)", "Alta (4096)" };
+        if (ImGui::Combo("Calidad", &sres_idx, sres_lbl, 3)) {
+            shadow_res = (sres_idx == 2) ? 4096 : (sres_idx == 1) ? 2048 : 1024;
+            g3d_renderer_set_shadow_resolution((unsigned)shadow_res);
+        }
+        ImGui::TextDisabled("Mas alta = bordes mas nitidos, algo mas de video.");
         ImGui::End();
         if (borrar_sel) delete_obj(obj_sel);
 

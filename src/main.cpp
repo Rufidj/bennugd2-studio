@@ -722,7 +722,8 @@ int main(int, char**) {
                 "        IF (miray >  85000.0) miray =  85000.0; END   // tope al mirar arriba\n"
                 "        IF (miray < -85000.0) miray = -85000.0; END   // tope al mirar abajo\n"
                 "        facing = mirax;\n"
-                "        escena_pitch = miray;           // la camara lo lee para inclinarse\n\n",
+                "        escena_yaw = mirax;             // la camara lo lee para girar\n"
+                "        escena_pitch = miray;           // ...y para inclinarse\n\n",
                 cam_sens, cam_sens, cam_sens);
                 fmt += lk;
                 fmt +=
@@ -1254,7 +1255,7 @@ int main(int, char**) {
               "// juego. Tu codigo va en main.prg, que el editor no toca.\n\n", f);
         fputs("GLOBAL int scene; int camera; int light;\n"
       "    float escena_pitch;   // hacia donde mira en vertical (FPS)\n"
-      "    int escena_cx; int escena_cy;   // centro de la pantalla (para recentrar el raton)\n"
+      "    float escena_yaw;     // hacia donde mira en horizontal (FPS)\n"
       "END\n\n", f);
         // ---- localizar el jugador y los objetos enganchados a su esqueleto ----
         int player_idx = -1;
@@ -1311,8 +1312,7 @@ int main(int, char**) {
         fputs("// Monta el escenario: terreno, agua, objetos, sus procesos y la camara.\n"
               "FUNCTION escena_iniciar()\n", f);
         fputs("PRIVATE int e; int m; int tex; int mat;\nEND\nBEGIN\n", f);
-        fputs("    set_mode(1280,720); set_fps(60,0); window_set_title(\"EDITOR_PLAY\");\n"
-              "    escena_cx = 640; escena_cy = 360;   // centro: lo usa la mirada con raton\n", f);
+        fputs("    set_mode(1280,720); set_fps(60,0); window_set_title(\"EDITOR_PLAY\");\n", f);
         fputs("    scene = g3d_scene_create(\"juego\"); g3d_scene_set_active(scene);\n", f);
         fputs("    camera = g3d_camera_create(); g3d_camera_set_active(camera);\n", f);
         fputs("    light = g3d_light_create(0,1.0,0.96,0.86); g3d_light_set_direction(light,-0.45,-0.75,-0.35);\n", f);
@@ -1417,14 +1417,13 @@ int main(int, char**) {
                 // Los angulos salen en milesimas de grado, que es lo que comen
                 // cos() y sin() de BennuGD2.
                 snprintf(b, sizeof(b),
-                    "        g3d_entity_get_rotation(follow_ent, &crx, &cyaw, &crz);\n"
-                    "        g3d_camera_set_position(camera, tx + sin(cyaw) * %.3f,\n"
+                    "        // escena_yaw / escena_pitch los escribe el jugador al mover el raton\n"
+                    "        g3d_camera_set_position(camera, tx + sin(escena_yaw) * %.3f,\n"
                     "                                        ty + %.3f,\n"
-                    "                                        tz + cos(cyaw) * %.3f);\n"
-                    "        // escena_pitch lo escribe el script del jugador al mover el raton\n"
-                    "        g3d_camera_look_at(camera, tx + sin(cyaw) * %.3f * cos(escena_pitch),\n"
+                    "                                        tz + cos(escena_yaw) * %.3f);\n"
+                    "        g3d_camera_look_at(camera, tx + sin(escena_yaw) * %.3f * cos(escena_pitch),\n"
                     "                                   ty + %.3f + sin(escena_pitch) * 10.0,\n"
-                    "                                   tz + cos(cyaw) * %.3f * cos(escena_pitch), 0.0, 1.0, 0.0);\n",
+                    "                                   tz + cos(escena_yaw) * %.3f * cos(escena_pitch), 0.0, 1.0, 0.0);\n",
                     cam_fwd, cam_height, cam_fwd,
                     cam_fwd + 10.0f, cam_height, cam_fwd + 10.0f);
             } else {                      // cenital (top-down): justo encima mirando abajo
@@ -1442,7 +1441,6 @@ int main(int, char**) {
         fputs("// Mueve la fisica, los enganches y la camara, un paso por frame.\n"
               "PROCESS escena_motor()\n", f);
         fputs("PRIVATE float tx; float ty; float tz;\n"
-              "  float crx; float cyaw; float crz;\n"
               "  float px; float py; float pz; float pfacing;\n"
               "  float nx; float ny; float nz; float wx2; float wz2; float a2;\nEND\nBEGIN\n", f);
         fputs("    LOOP\n", f);

@@ -125,6 +125,7 @@ extern "C" {
     int   g3d_entity_impl_set_position(int entity_id, float x, float y, float z);
     int   g3d_entity_impl_set_rotation(int entity_id, float pitch, float yaw, float roll);
     int   g3d_entity_impl_set_scale(int entity_id, float sx, float sy, float sz);
+    int   g3d_entity_impl_destroy(int entity_id);
     void  g3d_editor_get_view(float *m16);
     void  g3d_editor_get_proj(float *m16);
     void  g3d_editor_set_aspect(float a);
@@ -447,6 +448,84 @@ int main(int, char**) {
     { std::error_code ec; fs::create_directories(scripts_dir, ec); }
     std::string scene_path = scenes_dir + "/level.scene";   // escena actual
     std::string status;
+    bool playing = false;         // Play en marcha: no se puede editar la escena
+
+    // ================== copiar / pegar / duplicar / borrar ==================
+    SObj clipboard; bool has_clip = false;
+
+    // Un nombre que no choque con ninguno. No vale usar objects.size(): tras
+    // borrar y volver a poner salen nombres repetidos, y el nombre es el del
+    // PROCESS y el del fichero de script, asi que dos iguales se pisan.
+    auto unique_obj_name = [&](const std::string& base) -> std::string {
+        for (int n = 1; ; n++) {
+            std::string cand = base + "_" + std::to_string(n);
+            bool libre = true;
+            for (auto& o : objects) if (o.name == cand) { libre = false; break; }
+            if (libre) return cand;
+        }
+    };
+    auto name_base = [](const std::string& name) -> std::string {
+        // "barrel_12" -> "barrel";  "pirate_ship_10" -> "pirate_ship"
+        size_t u = name.rfind('_');
+        if (u != std::string::npos && u + 1 < name.size()) {
+            bool digits = true;
+            for (size_t i = u + 1; i < name.size(); i++) if (!isdigit((unsigned char)name[i])) digits = false;
+            if (digits) return name.substr(0, u);
+        }
+        return name;
+    };
+    // Al borrar un objeto, los indices de los que van detras BAJAN uno. Como
+    // attach_to y cam_follow son indices, sin corregirlos el arma se engancharia
+    // a otro objeto y la camara seguiria al equivocado, en silencio.
+    auto fix_indices_after_erase = [&](int erased) {
+        if (cam_follow == erased) cam_follow = -1;
+        else if (cam_follow > erased) cam_follow--;
+        for (auto& o : objects) {
+            if (o.attach_to == erased) o.attach_to = -1;
+            else if (o.attach_to > erased) o.attach_to--;
+        }
+    };
+    auto delete_obj = [&](int i) {
+        if (playing) { status = "Para el Play antes de editar la escena"; return; }
+        if (i < 0 || i >= (int)objects.size()) return;
+        g3d_entity_impl_destroy(objects[i].entity);
+        objects.erase(objects.begin() + i);
+        fix_indices_after_erase(i);
+        if (obj_sel == i) obj_sel = -1;
+        else if (obj_sel > i) obj_sel--;
+    };
+    // Pone una copia de `src` en el mundo. Se desplaza un poco para que no quede
+    // exactamente encima del original y parezca que no ha pasado nada.
+    auto spawn_copy = [&](const SObj& src, float dx, float dz) -> int {
+        if (playing) { status = "Para el Play antes de editar la escena"; return -1; }
+        void* m = load_model(src.asset);
+        if (!m) return -1;
+        SObj o = src;
+        o.x += dx; o.z += dz;
+        o.name = unique_obj_name(name_base(src.name));
+        o.attach_to = -1;              // el enganche no se copia: apuntaria al padre del original
+        o.entity = g3d_model_spawn(scene, m, o.x, o.y, o.z, o.ry, 0.0f);
+        if (o.entity < 0) return -1;
+        g3d_entity_impl_set_scale(o.entity, o.scale, o.scale, o.scale);
+        objects.push_back(o);
+        return (int)objects.size() - 1;
+    };
+    auto duplicate_obj = [&](int i) {
+        if (i < 0 || i >= (int)objects.size()) return;
+        int n = spawn_copy(objects[i], 1.5f, 1.5f);
+        if (n >= 0) { obj_sel = n; status = "Duplicado: " + objects[n].name; }
+    };
+    auto copy_obj = [&](int i) {
+        if (i < 0 || i >= (int)objects.size()) return;
+        clipboard = objects[i]; has_clip = true;
+        status = "Copiado: " + objects[i].name;
+    };
+    auto paste_obj = [&]() {
+        if (!has_clip) return;
+        int n = spawn_copy(clipboard, 1.5f, 1.5f);
+        if (n >= 0) { obj_sel = n; status = "Pegado: " + objects[n].name; }
+    };
+
 
     // carga el script de un objeto en el editor (o una plantilla si no existe)
     // ---------------------------------------------------------------------------
@@ -1218,7 +1297,6 @@ int main(int, char**) {
     // ================= PLAY EN VIVO (emulador integrado, sin BennuGD2) =================
     // Reproduce dentro del editor la MISMA logica que genera el juego (jugador, fisica,
     // flotacion, zonas, camaras, enganche a huesos). No ejecuta los scripts propios.
-    bool playing = false;
     // Play/Stop se PIDEN desde la UI y se ejecutan al principio del frame siguiente,
     // FUERA del frame de ImGui: play_start hace popen(fork) y carga modulos que
     // reinicializan SDL; hacerlo en mitad del frame se lleva por delante el contexto GL.
@@ -1412,6 +1490,18 @@ int main(int, char**) {
         // Atender Play/Stop pedidos desde la UI, AQUI (fuera del frame de ImGui).
         if (play_req == 1) { play_req = 0; play_start(); }
         else if (play_req == 2) { play_req = 0; play_stop(); }
+
+        // --- Atajos: copiar / pegar / duplicar / borrar ---
+        // Solo si no se esta escribiendo (nombres, rutas, el editor de scripts) ni
+        // corriendo el Play: si no, Ctrl+C en el codigo borraria un objeto.
+        if (!ImGui::GetIO().WantTextInput && !show_script && !playing) {
+            bool ctrl = ImGui::GetIO().KeyCtrl;
+            if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D, false)) duplicate_obj(obj_sel);
+            if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false)) copy_obj(obj_sel);
+            if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V, false)) paste_obj();
+            if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_Delete, false) && obj_sel >= 0)
+                delete_obj(obj_sel);
+        }
 
         // DEPURACION: EDITOR_AUTOPLAY=1 lanza Play solo (para reproducir fallos sin GUI)
         { static int ap = 0;
@@ -1994,15 +2084,42 @@ int main(int, char**) {
         ImGui::TextDisabled("Objetos: %d", (int)objects.size());
         ImGui::Separator();
         ImGui::BeginChild("lista_obj");
+        int pedir_borrar = -1;                 // no se borra dentro del bucle: invalidaria el recorrido
         for (int i = 0; i < (int)objects.size(); i++) {
+            ImGui::PushID(i);
             if (ImGui::Selectable(objects[i].name.c_str(), obj_sel == i)) obj_sel = i;
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                 open_anim_preview(objects[i].asset);
+            // Menu contextual: el clic derecho tambien selecciona, para que las
+            // acciones sean siempre sobre el objeto en el que se ha pulsado.
+            if (ImGui::BeginPopupContextItem("ctx_obj")) {
+                obj_sel = i;
+                ImGui::TextDisabled("%s", objects[i].name.c_str());
+                ImGui::Separator();
+                if (ImGui::MenuItem("Duplicar", "Ctrl+D"))  duplicate_obj(i);
+                if (ImGui::MenuItem("Copiar",   "Ctrl+C"))  copy_obj(i);
+                if (ImGui::MenuItem("Pegar",    "Ctrl+V", false, has_clip)) paste_obj();
+                ImGui::Separator();
+                if (ImGui::MenuItem("Editar script"))       open_object_script(objects[i].name);
+                if (ImGui::MenuItem("Ver animaciones"))     open_anim_preview(objects[i].asset);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Borrar", "Supr"))      pedir_borrar = i;
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+        }
+        // clic derecho en el hueco de la lista: solo pegar
+        if (ImGui::BeginPopupContextWindow("ctx_vacio", ImGuiPopupFlags_MouseButtonRight |
+                                                        ImGuiPopupFlags_NoOpenOverItems)) {
+            if (ImGui::MenuItem("Pegar", "Ctrl+V", false, has_clip)) paste_obj();
+            ImGui::EndPopup();
         }
         ImGui::EndChild();
+        if (pedir_borrar >= 0) delete_obj(pedir_borrar);
         ImGui::End();
 
         // --- Panel: Inspector (del objeto seleccionado / pincel de terreno) ---
+        bool borrar_sel = false;   // se borra al cerrar el panel: dentro invalidaria `o`
         ImGui::Begin("Inspector");
         if (tool == T_HOLE) {
             ImGui::SeparatorText("Agujero de terreno");
@@ -2173,10 +2290,8 @@ int main(int, char**) {
             }
 
             ImGui::Spacing();
-            if (ImGui::Button("Borrar objeto", ImVec2(-1, 0))) {
-                g3d_entity_impl_set_position(o.entity, 0, -99999, 0);   // ocultar
-                objects.erase(objects.begin() + obj_sel); obj_sel = -1;
-            }
+            if (ImGui::Button("Duplicar", ImVec2(-1, 0))) duplicate_obj(obj_sel);
+            if (ImGui::Button("Borrar objeto", ImVec2(-1, 0))) borrar_sel = true;
         } else {
             ImGui::TextDisabled("Nada seleccionado.");
             ImGui::TextWrapped("Elige un asset y haz clic en la escena para colocar. "
@@ -2185,6 +2300,7 @@ int main(int, char**) {
         ImGui::SeparatorText("Camara");
         ImGui::SliderFloat("Distancia", &cam_dist, 5.0f, 60.0f);
         ImGui::End();
+        if (borrar_sel) delete_obj(obj_sel);
 
         // --- Confirmacion antes de regenerar un script ---
         // Regenerar SOBREESCRIBE el fichero, asi que no puede ocurrir por un clic

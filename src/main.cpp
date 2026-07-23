@@ -300,7 +300,36 @@ int main(int, char**) {
     static const ImWchar fa_range[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
     ImFontConfig fa_cfg; fa_cfg.MergeMode = true; fa_cfg.PixelSnapH = true;
     fa_cfg.GlyphMinAdvanceX = 16.0f;
-    io.Fonts->AddFontFromFileTTF(FONT_DIR "/" FONT_ICON_FILE_NAME_FAS, 15.0f, &fa_cfg, fa_range);
+    // La fuente de iconos se busca PRIMERO junto al ejecutable y luego en la ruta
+    // de compilacion. FONT_DIR se fija al configurar con CMake, asi que apunta al
+    // arbol de fuentes de quien compilo: si el binario se mueve, se instala o se
+    // reparte, esa ruta ya no existe. Y si no se encuentra, ImGui aborta sin
+    // decir que fichero le falta, que es lo peor posible para quien lo estrena.
+    {
+        std::vector<std::string> cands;
+        if (char* base = SDL_GetBasePath()) {
+            cands.push_back(std::string(base) + "fonts/" FONT_ICON_FILE_NAME_FAS);
+            cands.push_back(std::string(base) + "../fonts/" FONT_ICON_FILE_NAME_FAS);
+            SDL_free(base);
+        }
+        cands.push_back(FONT_DIR "/" FONT_ICON_FILE_NAME_FAS);
+        cands.push_back("fonts/" FONT_ICON_FILE_NAME_FAS);
+        std::string hallada;
+        for (auto& c : cands) { FILE* t = fopen(c.c_str(), "rb"); if (t) { fclose(t); hallada = c; break; } }
+        if (!hallada.empty()) {
+            io.Fonts->AddFontFromFileTTF(hallada.c_str(), 15.0f, &fa_cfg, fa_range);
+        } else {
+            // Sin iconos se puede trabajar: se avisa y se sigue, en vez de morir.
+            fprintf(stderr,
+                "AVISO: no encuentro la fuente de iconos '%s'.\n"
+                "El editor arranca igual, pero los botones saldran sin icono.\n"
+                "La he buscado en:\n", FONT_ICON_FILE_NAME_FAS);
+            for (auto& c : cands) fprintf(stderr, "   %s\n", c.c_str());
+            fprintf(stderr,
+                "Copia la carpeta 'fonts' del repositorio junto al ejecutable, o\n"
+                "ejecuta el editor desde la carpeta del proyecto.\n");
+        }
+    }
 
     ImGui_ImplSDL2_InitForOpenGL(window, gl);
     ImGui_ImplOpenGL3_Init("#version 150");
@@ -619,6 +648,10 @@ int main(int, char**) {
 
         // ---------------- JUGADOR ----------------
         if (o.is_player) {
+            // Con la camara en primera persona se mira con el raton y se anda
+            // respecto a donde se mira, como en cualquier FPS. En tercera persona
+            // o cenital se conserva el control clasico: andas y te giras solo.
+            bool fps_look = (cam_mode == 2);
             std::string s =
                 "// ===== JUGADOR '" + o.name + "' =====\n"
                 "// Creado por el editor con los controles dentro: a partir de aqui es TUYO.\n"
@@ -629,11 +662,14 @@ int main(int, char**) {
                 "PRIVATE\n"
                 "    int ch; int gnd; int inw; int moja;\n"
                 "    float wx; float wz; float wl; float spd; float t; float facing;\n"
+                "    float mirax; float miray; float adel; float lat;\n"
                 "    float px; float py; float pz; float prevx; float prevz; float dt; float ript;\n"
                 "END\n"
                 "BEGIN\n"
                 "    dt = 1.0 / 60.0;\n";
-            snprintf(b, sizeof(b),
+            // El formato se arma antes: segun el modo de camara cambian trozos
+            // enteros, y eso no se puede hacer concatenando dentro del snprintf.
+            std::string fmt =
                 "    // capsula de colision del personaje (x, y, z, radio, altura)\n"
                 "    ch = g3d_char_create(%.3f, %.3f, %.3f, %.3f, %.3f);\n"
                 "    g3d_char_set_tuning(ch, 0.8, 46.0);\n"
@@ -641,26 +677,58 @@ int main(int, char**) {
                 "    // Cuanto mas pesado sea el objeto menos se movera, y si no puede con\n"
                 "    // el le cortara el paso. 0 = choca pero no mueve nada.\n"
                 "    g3d_char_set_push(ch, 200.0);\n"
-                "    facing = 0.0; t = 0.0;\n\n"
-                "    LOOP\n"
-                "        prevx = g3d_char_x(ch); prevz = g3d_char_z(ch);\n\n"
+                "    facing = 0.0; t = 0.0;\n";
+            if (fps_look)
+                fmt +=
+                "    // Mirada con el raton: se recentra el puntero cada frame y se mide\n"
+                "    // cuanto se habia movido. El 60 de abajo es la sensibilidad, en\n"
+                "    // milesimas de grado por pixel: subelo para girar mas rapido.\n"
+                "    mirax = 0.0; miray = 0.0;\n"
+                "    mouse.x = escena_cx; mouse.y = escena_cy;\n";
+            fmt +=
+                "\n    LOOP\n"
+                "        prevx = g3d_char_x(ch); prevz = g3d_char_z(ch);\n\n";
+            if (fps_look)
+                fmt +=
+                "        // ---------- MIRAR (raton) ----------\n"
+                "        mirax = mirax + (mouse.x - escena_cx) * 60.0;\n"
+                "        miray = miray - (mouse.y - escena_cy) * 60.0;\n"
+                "        IF (miray >  75000.0) miray =  75000.0; END   // tope al mirar arriba\n"
+                "        IF (miray < -75000.0) miray = -75000.0; END   // tope al mirar abajo\n"
+                "        mouse.x = escena_cx; mouse.y = escena_cy;   // recentrar: asi se gira sin fin\n"
+                "        facing = mirax;\n"
+                "        escena_pitch = miray;           // la camara lo lee para inclinarse\n\n"
+                "        // ---------- ANDAR (respecto a donde miras) ----------\n"
+                "        adel = 0.0; lat = 0.0;\n"
+                "        IF (key(_W)) adel = adel + 1.0; END\n"
+                "        IF (key(_S)) adel = adel - 1.0; END\n"
+                "        IF (key(_D)) lat = lat + 1.0; END\n"
+                "        IF (key(_A)) lat = lat - 1.0; END\n"
+                "        wx = sin(facing) * adel + cos(facing) * lat;\n"
+                "        wz = cos(facing) * adel - sin(facing) * lat;\n";
+            else
+                fmt +=
                 "        // ---------- CONTROLES ----------\n"
                 "        wx = 0.0; wz = 0.0;\n"
                 "        IF (key(_W)) wz = wz + 1.0; END\n"
                 "        IF (key(_S)) wz = wz - 1.0; END\n"
                 "        IF (key(_D)) wx = wx + 1.0; END\n"
-                "        IF (key(_A)) wx = wx - 1.0; END\n"
+                "        IF (key(_A)) wx = wx - 1.0; END\n";
+            fmt +=
                 "        spd = %.3f;\n"
                 "        IF (key(_L_SHIFT) OR key(_R_SHIFT)) spd = %.3f; END\n\n"
                 "        wl = sqrt(wx * wx + wz * wz);\n"
                 "        IF (wl > 0.001)\n"
-                "            wx = wx / wl * spd; wz = wz / wl * spd;\n"
-                "            facing = atan2(wx, wz);       // mira hacia donde anda\n"
+                "            wx = wx / wl * spd; wz = wz / wl * spd;\n";
+            if (!fps_look)
+                fmt += "            facing = atan2(wx, wz);       // mira hacia donde anda\n";
+            fmt +=
                 "        END\n"
                 "        g3d_char_move(ch, wx, wz);\n"
                 "        IF (key(_SPACE)) g3d_char_jump(ch, %.3f); END\n"
                 "        g3d_char_update(ch, dt);\n\n"
-                "        px = g3d_char_x(ch); py = g3d_char_y(ch); pz = g3d_char_z(ch);\n",
+                "        px = g3d_char_x(ch); py = g3d_char_y(ch); pz = g3d_char_z(ch);\n";
+            snprintf(b, sizeof(b), fmt.c_str(),
                 o.x, o.y, o.z, o.char_radius, o.char_height, o.walk_speed, o.run_speed, o.jump_force);
             s += b;
 
@@ -1155,7 +1223,10 @@ int main(int, char**) {
         fputs("// ===== Escenario generado por el editor BennuGD2 =====\n"
               "// NO EDITES ESTE FICHERO: se rehace entero cada vez que generas el\n"
               "// juego. Tu codigo va en main.prg, que el editor no toca.\n\n", f);
-        fputs("GLOBAL int scene; int camera; int light; END\n\n", f);
+        fputs("GLOBAL int scene; int camera; int light;\n"
+      "    float escena_pitch;   // hacia donde mira en vertical (FPS)\n"
+      "    int escena_cx; int escena_cy;   // centro de la pantalla (para recentrar el raton)\n"
+      "END\n\n", f);
         // ---- localizar el jugador y los objetos enganchados a su esqueleto ----
         int player_idx = -1;
         for (size_t i = 0; i < objects.size(); i++)
@@ -1211,7 +1282,8 @@ int main(int, char**) {
         fputs("// Monta el escenario: terreno, agua, objetos, sus procesos y la camara.\n"
               "FUNCTION escena_iniciar()\n", f);
         fputs("PRIVATE int e; int m; int tex; int mat;\nEND\nBEGIN\n", f);
-        fputs("    set_mode(1280,720); set_fps(60,0); window_set_title(\"EDITOR_PLAY\");\n", f);
+        fputs("    set_mode(1280,720); set_fps(60,0); window_set_title(\"EDITOR_PLAY\");\n"
+              "    escena_cx = 640; escena_cy = 360;   // centro: lo usa la mirada con raton\n", f);
         fputs("    scene = g3d_scene_create(\"juego\"); g3d_scene_set_active(scene);\n", f);
         fputs("    camera = g3d_camera_create(); g3d_camera_set_active(camera);\n", f);
         fputs("    light = g3d_light_create(0,1.0,0.96,0.86); g3d_light_set_direction(light,-0.45,-0.75,-0.35);\n", f);
@@ -1302,7 +1374,7 @@ int main(int, char**) {
         std::string camf;
         if (follow) {
             camf  = "        g3d_entity_get_position(follow_ent, &tx, &ty, &tz);\n";
-            char b[2048];   // ojo: la camara FPS genera bastante texto y con 512 se cortaba
+            char b[2048];   // la camara FPS genera bastante texto: con 512 se cortaba
             if (cam_mode == 1) {          // tercera persona: detras y arriba
                 snprintf(b, sizeof(b),
                     "        g3d_camera_set_position(camera, tx, ty + %.3f, tz - %.3f);\n"
@@ -1320,9 +1392,10 @@ int main(int, char**) {
                     "        g3d_camera_set_position(camera, tx + sin(cyaw) * %.3f,\n"
                     "                                        ty + %.3f,\n"
                     "                                        tz + cos(cyaw) * %.3f);\n"
-                    "        g3d_camera_look_at(camera, tx + sin(cyaw) * %.3f,\n"
-                    "                                   ty + %.3f,\n"
-                    "                                   tz + cos(cyaw) * %.3f, 0.0, 1.0, 0.0);\n",
+                    "        // escena_pitch lo escribe el script del jugador al mover el raton\n"
+                    "        g3d_camera_look_at(camera, tx + sin(cyaw) * %.3f * cos(escena_pitch),\n"
+                    "                                   ty + %.3f + sin(escena_pitch) * 10.0,\n"
+                    "                                   tz + cos(cyaw) * %.3f * cos(escena_pitch), 0.0, 1.0, 0.0);\n",
                     cam_fwd, cam_height, cam_fwd,
                     cam_fwd + 10.0f, cam_height, cam_fwd + 10.0f);
             } else {                      // cenital (top-down): justo encima mirando abajo

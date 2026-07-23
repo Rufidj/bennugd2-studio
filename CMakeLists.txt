@@ -188,3 +188,12 @@ set_target_properties(editor3d PROPERTIES
 # RUNPATH la carga de librerias solo funcionaba si LD_LIBRARY_PATH venia puesto
 # en el entorno: por consola si, pero al abrir el editor con doble clic no.
 target_link_options(editor3d PRIVATE "-Wl,--disable-new-dtags")
+
+# Las fuentes de iconos se copian junto al ejecutable. FONT_DIR (arriba) apunta al
+# arbol de fuentes de quien compila; si el binario se mueve o se reparte, esa ruta
+# deja de existir. Con la copia al lado, el editor se encuentra siempre.
+add_custom_command(TARGET editor3d POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+            "$<TARGET_FILE_DIR:editor3d>/fonts"
+    COMMENT "Copiando fonts junto al ejecutable")

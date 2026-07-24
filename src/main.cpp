@@ -676,6 +676,50 @@ int main(int, char**) {
     auto object_script_template = [&](const SObj& o) -> std::string {
         char b[4096];
 
+        // ---------------- OBJETO ENGANCHADO A UN HUESO (arma en la mano) ----------------
+        // Sigue un hueso del personaje. Es un proceso nativo: cada frame lee donde
+        // esta el hueso y se coloca ahi con x/y/z/angle_y; el motor lo dibuja al FRAME.
+        if (o.attach_to >= 0 && o.attach_to < (int)objects.size()) {
+            const SObj& padre = objects[o.attach_to];
+            float ps = padre.scale;
+            char wb[1600];
+            snprintf(wb, sizeof(wb),
+                "// ===== OBJETO ENGANCHADO '%s' (a un hueso de '%s') =====\n"
+                "// Cada frame lee donde esta el hueso del personaje y se coloca ahi con\n"
+                "// sus variables nativas. pent = entidad del personaje, pmod = su modelo,\n"
+                "// nodo = el hueso. A partir de aqui es TUYO.\n"
+                "PROCESS %s(int modelo, int pent, int pmod, int nodo)\n"
+                "PRIVATE\n"
+                "    float px; float py; float pz; float pfacing; float rr;\n"
+                "    float nx; float ny; float nz; float wx2; float wz2; float a2;\n"
+                "END\n"
+                "BEGIN\n"
+                "    ctype = C_3D; csubtype = C3D_ENTITY;\n"
+                "    size = %.3f;   // escala en %% (100 = 1.0)\n"
+                "    entity = g3d_model_spawn(scene, modelo, 0.0, 0.0, 0.0, 0.0, 0.0);\n"
+                "    LOOP\n"
+                "        IF (nodo >= 0)\n"
+                "            g3d_entity_get_position(pent, &px, &py, &pz);\n"
+                "            g3d_entity_get_rotation(pent, &rr, &pfacing, &rr);   // pfacing = giro del personaje\n"
+                "            nx = g3d_model_node_x(pmod, nodo) * %.3f + %.3f;   // hueso * escala + offset\n"
+                "            ny = g3d_model_node_y(pmod, nodo) * %.3f + %.3f;\n"
+                "            nz = g3d_model_node_z(pmod, nodo) * %.3f + %.3f;\n"
+                "            a2 = pfacing;\n"
+                "            wx2 =  nx * cos(a2) + nz * sin(a2);   // girar el offset con el personaje\n"
+                "            wz2 = -nx * sin(a2) + nz * cos(a2);\n"
+                "            x = px + wx2; y = py + ny; z = pz + wz2;   // vars nativas\n"
+                "            angle_y = a2 + %.1f;\n"
+                "        END\n"
+                "        FRAME;\n"
+                "    END\n"
+                "END\n",
+                o.name.c_str(), padre.name.c_str(), o.name.c_str(),
+                o.att_scale * 100.0f,
+                ps, o.att_off[0], ps, o.att_off[1], ps, o.att_off[2],
+                o.att_yaw * 1000.0f);
+            return wb;
+        }
+
         // ---------------- JUGADOR ----------------
         if (o.is_player) {
             // Con la camara en primera persona se mira con el raton y se anda
@@ -1522,16 +1566,19 @@ int main(int, char**) {
                 continue;
             }
 
-            // ¿Este objeto usa ya el idioma nativo (el proceso se crea su propia
-            // entidad)? Los objetos con fisica y los decorativos. El jugador, la
-            // camara-objetivo y los enganchados a un hueso todavia necesitan que la
-            // entidad se cree aqui fuera (se migran en su turno del plan).
-            bool es_padre_enganche = false;
-            for (auto& oo : objects) if (oo.attach_to == (int)i) es_padre_enganche = true;
+            // Objeto enganchado a un hueso: se lanza DESPUES del bucle, cuando ya se
+            // conoce el nodo del hueso (necesita pmodel). Se aplaza aqui.
             bool es_hijo_enganche = false;
             for (int k : attach_list) if (k == (int)i) es_hijo_enganche = true;
+            if (es_hijo_enganche) continue;
+
+            // ¿Este objeto usa ya el idioma nativo (el proceso se crea su propia
+            // entidad)? Los objetos con fisica y los decorativos. El jugador y la
+            // camara-objetivo todavia necesitan que la entidad se cree aqui fuera.
+            bool es_padre_enganche = false;
+            for (auto& oo : objects) if (oo.attach_to == (int)i) es_padre_enganche = true;
             bool nativo = (o.phys >= 0 && o.phys <= 4) && !o.is_player &&
-                          (int)i != cam_follow && !es_padre_enganche && !es_hijo_enganche;
+                          (int)i != cam_follow && !es_padre_enganche;
             if (nativo) {
                 // El proceso recibe el modelo y hace el spawn dentro (con su posado
                 // si hace falta). Aqui solo se carga el modelo y se lanza.
@@ -1556,10 +1603,7 @@ int main(int, char**) {
                   fputs("    g3d_model_animate_all(m, 0.0, 0);\n", f); }
             if ((int)i == cam_follow) fputs("    follow_ent = e;   // camara sigue a este objeto\n", f);
             if ((int)i == player_idx) fputs("    pplayer = e; pmodel = m;   // el jugador\n", f);
-            // capturar la entidad de los objetos enganchados a un hueso
-            for (size_t k = 0; k < attach_list.size(); k++)
-                if (attach_list[k] == (int)i)
-                    fprintf(f, "    atc[%d] = e;   // enganchado a hueso\n", (int)k);
+            // (los objetos enganchados a un hueso se lanzan mas abajo, como proceso)
             // (los muros invisibles se manejaron arriba: solo colisionador, sin entidad)
             // Los cuerpos rigidos los crea cada objeto en SU script.
             std::string sp = scripts_dir + "/" + o.name + ".prg";
@@ -1577,11 +1621,23 @@ int main(int, char**) {
                 if (s) { fclose(s); fprintf(f, "    %s(m);\n", o.name.c_str()); }
             }
         }
-        // ---- huesos de enganche (el jugador se crea a si mismo en SU script) ----
+        // ---- objetos enganchados a un hueso: se lanza su proceso ahora, que ya se
+        //      conoce pplayer/pmodel. Cada uno busca su nodo y se lanza con el ----
         if (player_idx >= 0) {
-            for (size_t k = 0; k < attach_list.size(); k++)
+            for (size_t k = 0; k < attach_list.size(); k++) {
+                auto& a = objects[attach_list[k]];
+                const char* loader = "g3d_load_gltf";
+                { std::string s=a.asset; for(auto&c:s)c=(char)tolower(c);
+                  if (s.size()>4 && s.substr(s.size()-4)==".fbx") loader="g3d_load_fbx"; }
+                std::string sp = scripts_dir + "/" + a.name + ".prg";
+                FILE* s = fopen(sp.c_str(), "r");
+                if (!s) continue;
+                fclose(s);
                 fprintf(f, "    atn[%d] = g3d_model_node_find(pmodel, \"%s\");\n",
-                        (int)k, objects[attach_list[k]].attach_bone.c_str());
+                        (int)k, a.attach_bone.c_str());
+                fprintf(f, "    m = %s(\"Assets/%s\"); %s(m, pplayer, pmodel, atn[%d]);\n",
+                        loader, a.asset.c_str(), a.name.c_str(), (int)k);
+            }
         }
         // ---- CAMARA: se lanza su proceso (definido arriba). follow_ent ya esta
         //      puesto (el jugador se spawnea antes), asi que la camara ve al
@@ -1591,48 +1647,14 @@ int main(int, char**) {
         // que main.prg pueda ser tuyo: arrancas el escenario, lanzas el motor y
         // encima escribes lo que quieras.
         fputs("    RETURN;\nEND\n\n", f);
-        fputs("// Mueve la fisica, los enganches y la camara, un paso por frame.\n"
+        fputs("// Avanza el mundo fisico una vez por frame. Cada objeto (barril, jugador,\n"
+              "// arma, camara) es su propio proceso y se coloca solo; aqui solo la fisica.\n"
               "PROCESS escena_motor()\n", f);
-        fputs("PRIVATE float tx; float ty; float tz;\n"
-              "  float px; float py; float pz; float pfacing;\n"
-              "  float nx; float ny; float nz; float wx2; float wz2; float a2;\nEND\nBEGIN\n", f);
+        fputs("BEGIN\n", f);
         fputs("    LOOP\n", f);
-        // --- fisica: solo se avanza el MUNDO una vez por frame; cada objeto
-        //     coloca su modelo desde su propio script ---
         fputs("        g3d_rigidbody_step(escena_dt);\n", f);
-        // ---- objetos enganchados a un hueso del jugador (arma en la mano) ----
-        // El jugador lo mueve SU script; aqui solo leemos donde ha quedado su
-        // entidad para colgarle el arma del hueso.
-        if (player_idx >= 0 && !attach_list.empty()) {
-            auto& p = objects[player_idx];
-            fputs("        g3d_entity_get_position(pplayer, &px, &py, &pz);\n", f);
-            fputs("        g3d_entity_get_rotation(pplayer, &tx, &pfacing, &tz);\n", f);
-            for (size_t k = 0; k < attach_list.size(); k++) {
-                auto& a = objects[attach_list[k]];
-                float s = a.att_scale;
-                char c[1024];
-                snprintf(c, sizeof(c),
-                    "        IF (atn[%d] >= 0)\n"
-                    "            nx = g3d_model_node_x(pmodel, atn[%d]) * %.3f + %.3f;\n"
-                    "            ny = g3d_model_node_y(pmodel, atn[%d]) * %.3f + %.3f;\n"
-                    "            nz = g3d_model_node_z(pmodel, atn[%d]) * %.3f + %.3f;\n"
-                    "            a2 = pfacing;\n"
-                    "            wx2 =  nx * cos(a2) + nz * sin(a2);\n"
-                    "            wz2 = -nx * sin(a2) + nz * cos(a2);\n"
-                    "            g3d_entity_set_position(atc[%d], px + wx2, py + ny, pz + wz2);\n"
-                    "            g3d_entity_set_rotation(atc[%d], 0.0, a2 + %.1f, 0.0);\n"
-                    "            g3d_entity_set_scale(atc[%d], %.3f, %.3f, %.3f);\n"
-                    "        END\n",
-                    (int)k,
-                    (int)k, p.scale, a.att_off[0],
-                    (int)k, p.scale, a.att_off[1],
-                    (int)k, p.scale, a.att_off[2],
-                    (int)k, (int)k, a.att_yaw * 1000.0f,
-                    (int)k, s, s, s);
-                fputs(c, f);
-            }
-        }
-        // La camara ya no va aqui: es su propio proceso (escena_camara).
+        // El enganche de armas ya no va aqui: cada arma es su propio proceso que
+        // sigue el hueso con sus variables nativas.
         fputs("        FRAME;\n    END\nEND\n", f);
         fclose(f);
         std::string setup(setup_buf ? setup_buf : "", setup_sz);

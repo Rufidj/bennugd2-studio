@@ -102,8 +102,12 @@ un objeto); compila y corre.
       persona (cámara sigue, luz cálida) y FPS (1401 frames).
 - [ ] `escena_iniciar` / `escena_motor`: revisar si parte del bucle desaparece
       (mucho de lo que hace el motor ahora a mano lo hará el hook).
-- [ ] Enganche de armas a hueso: rehacer en este estilo (además valida el fix de
-      `quat_to_euler`, aún sin probar con un arma puesta).
+- [x] Enganche de armas a hueso → el arma es un proceso nativo que cada frame lee
+      la posición del hueso del personaje y se coloca ahí con x/y/z/angle_y. ✅
+      Verificado en pantalla (la antorcha cuelga de mixamorig:RightHand del
+      personaje). Valida además el fix de `quat_to_euler` (la orientación del arma
+      sale del yaw del personaje via get_rotation). El bloque de enganche
+      desaparece de escena_motor, que ahora SOLO avanza la física.
 - [ ] Variables locales bien: `PRIVATE`/`PUBLIC` según haga falta, nombres claros.
 
 ### Cómo verificar

@@ -82,7 +82,12 @@ un objeto); compila y corre.
       Aún en estilo *handle* (se migran en su turno): jugador, cámara-objetivo y
       objetos enganchados a un hueso.
 - [ ] Objeto decorativo y muro invisible.
-- [ ] Jugador (char controller) → x/y/z/angle_y nativos, controles dentro.
+- [x] Jugador (char controller) → x/y/z/angle_y nativos, controles dentro.
+      ✅ hecho y verificado en pantalla (3ª persona: el personaje se dibuja a su
+      escala junto al agua y la cámara lo sigue). La entidad la crea escena_iniciar
+      (para que `follow_ent` siga válido sin depender del orden de procesos) y el
+      proceso la ata a `entity`. Pendiente: cuando haya arma enganchada, migrar
+      junto con el enganche a hueso.
 - [ ] Luz del escenario → como el ejemplo `Sun()` (target/intensity/color nativos).
 - [ ] Cámara → `csubtype = C3D_CAMERA`, target_x/y/z nativos.
 - [ ] `escena_iniciar` / `escena_motor`: revisar si parte del bucle desaparece

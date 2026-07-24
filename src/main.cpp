@@ -694,7 +694,15 @@ int main(int, char**) {
                 "    float px; float py; float pz; float prevx; float prevz; float dt; float ript;\n"
                 "END\n"
                 "BEGIN\n"
-                "    dt = 1.0 / 60.0;\n";
+                "    // Proceso BennuGD2: usa sus variables nativas. La entidad la creo\n"
+                "    // escena_iniciar (para que la camara pueda seguirla) y aqui se ata a\n"
+                "    // la var nativa 'entity'; el motor la dibuja desde x/y/z/angle_y solo.\n"
+                "    ctype = C_3D; csubtype = C3D_ENTITY;\n"
+                "    entity = id;\n";
+            { char sz[96]; snprintf(sz, sizeof(sz),
+                "    size = %.3f;   // escala en %% (100 = 1.0)\n", o.scale * 100.0f);
+              s += sz; }
+            s += "    dt = 1.0 / 60.0;\n";
             // El formato se arma antes: segun el modo de camara cambian trozos
             // enteros, y eso no se puede hacer concatenando dentro del snprintf.
             std::string fmt =
@@ -802,8 +810,9 @@ int main(int, char**) {
                 s += b;
             }
 
-            s += "\n        g3d_entity_set_position(id, px, py, pz);\n"
-                 "        g3d_entity_set_rotation(id, 0.0, facing, 0.0);\n";
+            s += "\n        // vars nativas: el motor coloca el modelo al hacer FRAME (sin set_position)\n"
+                 "        x = px; y = py; z = pz;\n"
+                 "        angle_y = facing;\n";
 
             void* mm = load_model(o.asset);
             if (mm && g3d_model_animation_count(mm) > 0) {

@@ -870,6 +870,10 @@ int main(int, char**) {
                 o.name.c_str(), o.name.c_str(),
                 o.x, o.y, o.z, o.ry * 57295.78f, o.scale * 100.0f);
             std::string s = hdr;
+            // Posar una vez los modelos sin esqueleto con piezas atadas a nodos.
+            { void* mm = load_model(o.asset);
+              if (mm && g3d_model_animation_count(mm) > 0 && !g3d_model_is_skinned(mm))
+                  s += "    g3d_model_animate_all(modelo, 0.0, 0);   // posar (piezas en nodos)\n"; }
             const char* mk =
                 (o.phys == 1) ? "    cuerpo = g3d_rigidbody_create(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n"
               : (o.phys == 2) ? "    cuerpo = g3d_rigidbody_create_sphere(%.3f, %.3f, %.3f, %.3f, %.3f);\n"
@@ -942,16 +946,35 @@ int main(int, char**) {
             return s;
         }
 
-        // ---------------- OBJETO NORMAL ----------------
-        return "// Componente del objeto '" + o.name + "'.\n"
-               "// Es un PROCESS BennuGD2 que el juego instancia sobre el objeto.\n"
-               "PROCESS " + o.name + "(int id)\n"
-               "BEGIN\n"
-               "    LOOP\n"
-               "        // ... logica del objeto ...\n"
-               "        FRAME;\n"
-               "    END\n"
-               "END\n";
+        // ---------------- OBJETO DECORATIVO (sin fisica) ----------------
+        // Modelos sin esqueleto con piezas atadas a nodos animados hay que posarlos
+        // UNA vez o esas piezas no se colocan y no se ven.
+        std::string pose;
+        { void* mm = load_model(o.asset);
+          if (mm && g3d_model_animation_count(mm) > 0 && !g3d_model_is_skinned(mm))
+              pose = "    g3d_model_animate_all(modelo, 0.0, 0);   // posar (piezas en nodos)\n"; }
+        char dh[900];
+        snprintf(dh, sizeof(dh),
+            "// ===== OBJETO '%s' =====\n"
+            "// Proceso BennuGD2: es el objeto. Usa sus variables nativas (x, y, z,\n"
+            "// angle_y, size) y el motor lo dibuja al hacer FRAME. Ponle aqui la\n"
+            "// logica que quieras: girarlo, moverlo, lo que sea.\n"
+            "PROCESS %s(int modelo)\n"
+            "BEGIN\n"
+            "    ctype = C_3D; csubtype = C3D_ENTITY;\n"
+            "    x = %.3f; y = %.3f; z = %.3f;\n"
+            "    angle_y = %.3f;   // milesimas de grado\n"
+            "    size = %.3f;      // escala en %% (100 = 1.0)\n"
+            "    entity = g3d_model_spawn(scene, modelo, x, y, z, 0.0, 0.0);\n"
+            "%s"
+            "    LOOP\n"
+            "        // ... tu logica (por ejemplo: angle_y = angle_y + 500; para girarlo) ...\n"
+            "        FRAME;\n"
+            "    END\n"
+            "END\n",
+            o.name.c_str(), o.name.c_str(),
+            o.x, o.y, o.z, o.ry * 57295.78f, o.scale * 100.0f, pose.c_str());
+        return dh;
     };
 
 
@@ -1340,7 +1363,7 @@ int main(int, char**) {
         // juego, porque su fisica vive en el script y el script no se rehacia nunca.
         // En cuanto lo editas a mano, la marca deja de cuadrar y ya no se toca.
         for (auto& o : objects) {
-            bool necesita = o.is_player || (o.phys >= 1 && o.phys <= 4);
+            bool necesita = o.is_player || (o.phys >= 0 && o.phys <= 4);   // 5 = muro (sin script)
             if (!necesita) continue;
             std::string psp = scripts_dir + "/" + o.name + ".prg";
             FILE* t = fopen(psp.c_str(), "r");
@@ -1349,7 +1372,8 @@ int main(int, char**) {
             if (existe && !script_untouched(o.name)) continue;   // es tuyo
             if (script_write_generated(o))
                 console_add((existe ? "Actualizado Scripts/" : "Creado Scripts/") + o.name + ".prg (" +
-                            (o.is_player ? "controles del jugador" : "cuerpo fisico") + ")\n");
+                            (o.is_player ? "controles del jugador"
+                             : (o.phys == 0) ? "objeto decorativo" : "cuerpo fisico") + ")\n");
         }
 
         // Un #include por objeto (SIN duplicar: el codigo vive en Scripts/<n>.prg).
@@ -1485,18 +1509,30 @@ int main(int, char**) {
             { std::string a=o.asset; for(auto&c:a)c=(char)tolower(c);
               if (a.size()>4 && a.substr(a.size()-4)==".fbx") loader="g3d_load_fbx"; }
 
+            // ---- muro invisible: solo un colisionador estatico, sin entidad ----
+            // Es invisible en el juego, asi que no hay nada que dibujar: no se
+            // spawnea modelo ni proceso, solo se registra la caja de colision.
+            if (o.phys == 5 && !o.is_player) {
+                float hx = o.csize > 0.05f ? o.csize : 0.5f;
+                fprintf(f, "    g3d_collider_add_box(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f);   // muro '%s'\n",
+                        o.x - hx, o.y - 5.0f, o.z - hx, o.x + hx, o.y + 30.0f, o.z + hx,
+                        o.name.c_str());
+                continue;
+            }
+
             // ¿Este objeto usa ya el idioma nativo (el proceso se crea su propia
-            // entidad)? Solo los objetos con fisica "normales": el jugador, la
+            // entidad)? Los objetos con fisica y los decorativos. El jugador, la
             // camara-objetivo y los enganchados a un hueso todavia necesitan que la
             // entidad se cree aqui fuera (se migran en su turno del plan).
             bool es_padre_enganche = false;
             for (auto& oo : objects) if (oo.attach_to == (int)i) es_padre_enganche = true;
             bool es_hijo_enganche = false;
             for (int k : attach_list) if (k == (int)i) es_hijo_enganche = true;
-            bool nativo = (o.phys >= 1 && o.phys <= 4) && !o.is_player &&
+            bool nativo = (o.phys >= 0 && o.phys <= 4) && !o.is_player &&
                           (int)i != cam_follow && !es_padre_enganche && !es_hijo_enganche;
             if (nativo) {
-                // El proceso carga nada: recibe el modelo y hace el spawn dentro.
+                // El proceso recibe el modelo y hace el spawn dentro (con su posado
+                // si hace falta). Aqui solo se carga el modelo y se lanza.
                 std::string sp = scripts_dir + "/" + o.name + ".prg";
                 FILE* s = fopen(sp.c_str(), "r");
                 if (s) { fclose(s);
@@ -1522,13 +1558,7 @@ int main(int, char**) {
             for (size_t k = 0; k < attach_list.size(); k++)
                 if (attach_list[k] == (int)i)
                     fprintf(f, "    atc[%d] = e;   // enganchado a hueso\n", (int)k);
-            // ---- muro invisible: colisionador estatico alto + ocultar el modelo ----
-            if (o.phys == 5 && !o.is_player) {
-                float hx = o.csize > 0.05f ? o.csize : 0.5f;
-                fprintf(f, "    g3d_collider_add_box(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n",
-                        o.x - hx, o.y - 5.0f, o.z - hx, o.x + hx, o.y + 30.0f, o.z + hx);
-                fputs("    g3d_entity_set_scale(e, 0.0001, 0.0001, 0.0001);   // invisible en el juego\n", f);
-            }
+            // (los muros invisibles se manejaron arriba: solo colisionador, sin entidad)
             // Los cuerpos rigidos los crea cada objeto en SU script.
             std::string sp = scripts_dir + "/" + o.name + ".prg";
             // El jugador lleva sus controles en SU script: si aun no existe, se crea
@@ -1536,8 +1566,13 @@ int main(int, char**) {
             if ((int)i == player_idx) {   // su script ya se aseguro mas arriba
                 fprintf(f, "    %s(e, m);   // jugador: entidad + modelo (para animar)\n", o.name.c_str());
             } else {
+                // Aqui solo llega un objeto fisico/decorativo si es objetivo de
+                // camara o enganche (su plantilla se auto-crea la entidad, asi que
+                // NO se le pasa 'e': se lanza nativo). La camara-a-otro-objeto y el
+                // enganche a hueso se rehacen en su turno del plan; de momento no se
+                // engancha follow_ent a estos (limitacion conocida, sin crash).
                 FILE* s = fopen(sp.c_str(), "r");
-                if (s) { fclose(s); fprintf(f, "    %s(e);\n", o.name.c_str()); }
+                if (s) { fclose(s); fprintf(f, "    %s(m);\n", o.name.c_str()); }
             }
         }
         // ---- huesos de enganche (el jugador se crea a si mismo en SU script) ----
@@ -2632,7 +2667,7 @@ int main(int, char**) {
                 // El comportamiento (controles, cuerpo fisico) vive en el script, y
                 // este solo se crea la primera vez. Si cambias masa, densidad,
                 // velocidad, etc. en el Inspector, hay que rehacerlo para que se apliquen.
-                bool con_plantilla = o.is_player || (o.phys >= 1 && o.phys <= 4);
+                bool con_plantilla = o.is_player || (o.phys >= 0 && o.phys <= 4);
                 if (con_plantilla) {
                     if (ImGui::Button("Regenerar script desde los valores de arriba", ImVec2(-1, 0))) {
                         regen_obj = o.name; ask_regen = true;

@@ -81,7 +81,10 @@ un objeto); compila y corre.
       estos objetos con `Nombre(modelo)` y el proceso se crea su propia entidad.
       Aún en estilo *handle* (se migran en su turno): jugador, cámara-objetivo y
       objetos enganchados a un hueso.
-- [ ] Objeto decorativo y muro invisible.
+- [x] Objeto decorativo → proceso nativo self-spawn (con posado si el modelo lo
+      necesita). Muro invisible → ya no spawnea entidad ni proceso: solo registra
+      el colisionador. ✅ verificado en pantalla (roca y antorcha aparecen; escena
+      completa 1552 frames).
 - [x] Jugador (char controller) → x/y/z/angle_y nativos, controles dentro.
       ✅ hecho y verificado en pantalla (3ª persona: el personaje se dibuja a su
       escala junto al agua y la cámara lo sigue). La entidad la crea escena_iniciar

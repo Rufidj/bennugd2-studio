@@ -75,7 +75,12 @@ función propia + llamada en `main` sobrevivieron a un regenerado que además qu
 un objeto); compila y corre.
 
 ### Alcance (todo lo que genera el editor hay que reescribirlo a este estilo)
-- [ ] Objeto con física → proceso con `ctype/csubtype`, `entity` local, x/y/z nativos.
+- [x] Objeto con física → proceso con `ctype/csubtype`, `entity` local, x/y/z nativos.
+      ✅ hecho y verificado en pantalla (barriles cayendo por la ladera dibujados
+      por el hook desde sus vars nativas; barco flotando). `escena_iniciar` lanza
+      estos objetos con `Nombre(modelo)` y el proceso se crea su propia entidad.
+      Aún en estilo *handle* (se migran en su turno): jugador, cámara-objetivo y
+      objetos enganchados a un hueso.
 - [ ] Objeto decorativo y muro invisible.
 - [ ] Jugador (char controller) → x/y/z/angle_y nativos, controles dentro.
 - [ ] Luz del escenario → como el ejemplo `Sun()` (target/intensity/color nativos).

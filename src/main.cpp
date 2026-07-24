@@ -839,18 +839,28 @@ int main(int, char**) {
         if (o.phys >= 1 && o.phys <= 4) {
             float c = o.csize > 0.05f ? o.csize : 0.5f;
             float by0 = o.y + c;             // el cuerpo se apoya donde lo colocaste
-            std::string s =
-                "// ===== OBJETO CON FISICA '" + o.name + "' =====\n"
-                "// Creado por el editor con su cuerpo rigido dentro: a partir de aqui es TUYO.\n"
-                "// El motor avanza el mundo fisico una vez por frame; aqui solo se crea el\n"
-                "// cuerpo y se coloca el modelo donde la fisica lo haya llevado.\n"
-                "PROCESS " + o.name + "(int id)\n"
+            char hdr[1400];
+            snprintf(hdr, sizeof(hdr),
+                "// ===== OBJETO CON FISICA '%s' =====\n"
+                "// Proceso BennuGD2: es el objeto. Usa sus variables nativas (x, y, z,\n"
+                "// angle_x/y/z) y el motor lo dibuja solo al hacer FRAME; no hay que\n"
+                "// llamar a set_position. La fisica manda: cada frame se leen las coords\n"
+                "// del cuerpo rigido y se escriben en x, y, z. A partir de aqui es TUYO.\n"
+                "PROCESS %s(int modelo)\n"
                 "PRIVATE\n"
                 "    int cuerpo; int moja; float bx; float by; float bz; float mov;\n"
                 "    float prevx; float prevy; float prevz; float dt; float ript;\n"
                 "END\n"
                 "BEGIN\n"
-                "    dt = 1.0 / 60.0;\n";
+                "    ctype = C_3D; csubtype = C3D_ENTITY;\n"
+                "    x = %.3f; y = %.3f; z = %.3f;   // posicion inicial (vars nativas)\n"
+                "    angle_y = %.3f;                 // giro en milesimas de grado\n"
+                "    size = %.3f;                    // escala en %% (100 = 1.0)\n"
+                "    entity = g3d_model_spawn(scene, modelo, x, y, z, 0.0, 0.0);\n"
+                "    dt = 1.0 / 60.0;\n",
+                o.name.c_str(), o.name.c_str(),
+                o.x, o.y, o.z, o.ry * 57295.78f, o.scale * 100.0f);
+            std::string s = hdr;
             const char* mk =
                 (o.phys == 1) ? "    cuerpo = g3d_rigidbody_create(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n"
               : (o.phys == 2) ? "    cuerpo = g3d_rigidbody_create_sphere(%.3f, %.3f, %.3f, %.3f, %.3f);\n"
@@ -911,13 +921,14 @@ int main(int, char**) {
                      "            moja = 0;\n        END\n"
                      "        prevx = bx; prevy = by; prevz = bz;\n\n";
             }
-            s += "        // colocar el modelo donde lo haya llevado la fisica\n"
-                 "        g3d_entity_set_position(id, g3d_rigidbody_render_x(cuerpo),\n"
-                 "                                    g3d_rigidbody_render_y(cuerpo),\n"
-                 "                                    g3d_rigidbody_render_z(cuerpo));\n"
-                 "        g3d_entity_set_rotation(id, g3d_rigidbody_angle_x(cuerpo),\n"
-                 "                                    g3d_rigidbody_angle_y(cuerpo),\n"
-                 "                                    g3d_rigidbody_angle_z(cuerpo));\n"
+            s += "        // La fisica manda: se escriben sus coords en las vars nativas y\n"
+                 "        // el motor coloca el modelo solo al hacer FRAME (sin set_position).\n"
+                 "        x = g3d_rigidbody_render_x(cuerpo);\n"
+                 "        y = g3d_rigidbody_render_y(cuerpo);\n"
+                 "        z = g3d_rigidbody_render_z(cuerpo);\n"
+                 "        angle_x = g3d_rigidbody_angle_x(cuerpo);\n"
+                 "        angle_y = g3d_rigidbody_angle_y(cuerpo);\n"
+                 "        angle_z = g3d_rigidbody_angle_z(cuerpo);\n"
                  "        FRAME;\n    END\nEND\n";
             return s;
         }
@@ -1393,6 +1404,28 @@ int main(int, char**) {
             const char* loader = "g3d_load_gltf";
             { std::string a=o.asset; for(auto&c:a)c=(char)tolower(c);
               if (a.size()>4 && a.substr(a.size()-4)==".fbx") loader="g3d_load_fbx"; }
+
+            // ¿Este objeto usa ya el idioma nativo (el proceso se crea su propia
+            // entidad)? Solo los objetos con fisica "normales": el jugador, la
+            // camara-objetivo y los enganchados a un hueso todavia necesitan que la
+            // entidad se cree aqui fuera (se migran en su turno del plan).
+            bool es_padre_enganche = false;
+            for (auto& oo : objects) if (oo.attach_to == (int)i) es_padre_enganche = true;
+            bool es_hijo_enganche = false;
+            for (int k : attach_list) if (k == (int)i) es_hijo_enganche = true;
+            bool nativo = (o.phys >= 1 && o.phys <= 4) && !o.is_player &&
+                          (int)i != cam_follow && !es_padre_enganche && !es_hijo_enganche;
+            if (nativo) {
+                // El proceso carga nada: recibe el modelo y hace el spawn dentro.
+                std::string sp = scripts_dir + "/" + o.name + ".prg";
+                FILE* s = fopen(sp.c_str(), "r");
+                if (s) { fclose(s);
+                    fprintf(f, "    m = %s(\"Assets/%s\"); %s(m);\n",
+                            loader, o.asset.c_str(), o.name.c_str());
+                }
+                continue;
+            }
+
             fprintf(f, "    m = %s(\"Assets/%s\"); e = g3d_model_spawn(scene, m, %.3f, %.3f, %.3f, 0.0, %.3f);",
                     loader, o.asset.c_str(), o.x, o.y, o.z, o.ry * 57.29578f);
             fprintf(f, " g3d_entity_set_scale(e, %.3f, %.3f, %.3f);\n", o.scale, o.scale, o.scale);

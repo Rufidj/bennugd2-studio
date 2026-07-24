@@ -55,6 +55,25 @@ END
 ```
 csubtypes: `C3D_ENTITY=1`, `C3D_LIGHT=2`, `C3D_CAMERA=3`.
 
+### Estructura de ficheros (DECIDIDO, ✅ hecho)
+Ya no se genera `__escena.prg` (que además duplicaba los scripts). En su lugar,
+`main.prg` tiene un **bloque marcado** que el editor regenera:
+```bennu
+import ...
+// >>> EDITOR: no toques este bloque, lo regenera el editor >>>
+#include "Scripts/barrel_2.prg"      // un include por objeto, SIN duplicar
+...
+GLOBAL ... END
+FUNCTION escena_iniciar() ... END
+PROCESS escena_motor() ... END
+// <<< EDITOR: fin del bloque >>>
+PROCESS main()                        // esto es TUYO, no se pisa
+BEGIN ... END
+```
+Verificado: se regenera el bloque respetando el código del usuario de fuera (una
+función propia + llamada en `main` sobrevivieron a un regenerado que además quitó
+un objeto); compila y corre.
+
 ### Alcance (todo lo que genera el editor hay que reescribirlo a este estilo)
 - [ ] Objeto con física → proceso con `ctype/csubtype`, `entity` local, x/y/z nativos.
 - [ ] Objeto decorativo y muro invisible.

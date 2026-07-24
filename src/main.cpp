@@ -1195,16 +1195,25 @@ int main(int, char**) {
     // ---- GENERAR JUEGO: main.prg con los componentes + escena + spawns ----
     // Convierte la escena en un juego BennuGD2 jugable: incluye el script de cada
     // objeto (PROCESS) y en el main coloca cada objeto y lanza su proceso.
-    // ---- main.prg: se crea una vez y a partir de ahi es del usuario ----
+    // ---- main.prg: mitad tuya, mitad del editor ----
+    // El editor SOLO toca lo que hay entre estas dos marcas (los #include de cada
+    // objeto y el montaje del escenario). Todo lo de fuera es tuyo y no se pisa.
+    // Asi no hay un __escena.prg aparte y los objetos no se duplican: cada uno vive
+    // en su Scripts/<nombre>.prg y se incluye una sola vez.
+    const char* MK_BEGIN = "// >>> EDITOR: no toques este bloque, lo regenera el editor >>>";
+    const char* MK_END   = "// <<< EDITOR: fin del bloque >>>";
     bool ask_regen_main = false;
-    auto main_template = []() -> std::string {
+    // Arma un main.prg completo alrededor del bloque del editor.
+    auto main_skeleton = [&](const std::string& body) -> std::string {
         return
-            "// ===== main del juego =====\n"
-            "// Este fichero es TUYO: el editor lo crea una vez y no lo vuelve a\n"
-            "// tocar. Lo que cambia con la escena esta en __escena.prg, que si se\n"
-            "// rehace cada vez que generas (y por eso no hay que editarlo).\n\n"
-            "import \"libmod_gfx\"; import \"libmod_misc\"; import \"libmod_input\"; import \"libmod_3d\";\n\n"
-            "#include \"__escena.prg\"\n\n"
+            std::string("// ===== main del juego =====\n"
+            "// Lo de fuera del bloque del editor es TUYO; el editor no lo toca.\n"
+            "// El bloque marcado lleva los objetos y el escenario, y se rehace al\n"
+            "// generar el juego. Escribe tu logica en PROCESS main, mas abajo.\n\n"
+            "import \"libmod_gfx\"; import \"libmod_misc\"; import \"libmod_input\"; import \"libmod_3d\";\n\n")
+            + MK_BEGIN + "\n"
+            + body
+            + MK_END + "\n\n"
             "PROCESS main()\n"
             "BEGIN\n"
             "    escena_iniciar();   // terreno, agua, objetos y camara\n"
@@ -1216,6 +1225,36 @@ int main(int, char**) {
             "        FRAME;\n"
             "    END\n"
             "END\n";
+    };
+    auto main_template = [&]() -> std::string {
+        return main_skeleton("    // (los objetos y el escenario se rellenan al Generar el juego)\n");
+    };
+    // Mete `body` en el bloque marcado. Si main.prg ya tiene el bloque, cambia solo
+    // su interior y respeta el resto. Si no lo tiene (main nuevo o del formato
+    // viejo), guarda copia del viejo y crea uno con el esqueleto.
+    auto update_main_block = [&](const std::string& body) -> bool {
+        std::string mp = project_dir + "/main.prg";
+        std::string cur;
+        { FILE* mf = fopen(mp.c_str(), "r");
+          if (mf) { char b[4096]; size_t n; while ((n = fread(b,1,sizeof(b),mf)) > 0) cur.append(b,n); fclose(mf); } }
+        std::string out;
+        size_t a = cur.find(MK_BEGIN), z = cur.find(MK_END);
+        if (!cur.empty() && a != std::string::npos && z != std::string::npos && z > a) {
+            out = cur.substr(0, a) + MK_BEGIN + "\n" + body + cur.substr(z);
+        } else {
+            if (!cur.empty()) {
+                FILE* bf = fopen((mp + ".anterior").c_str(), "w");
+                if (bf) { fwrite(cur.data(),1,cur.size(),bf); fclose(bf); }
+                console_add("main.prg no tenia el bloque del editor (formato antiguo).\n"
+                            "Copia guardada en main.prg.anterior; puesto uno nuevo con tu\n"
+                            "codigo en PROCESS main.\n");
+            }
+            out = main_skeleton(body);
+        }
+        FILE* mf = fopen(mp.c_str(), "w");
+        if (!mf) return false;
+        fwrite(out.data(), 1, out.size(), mf); fclose(mf);
+        return true;
     };
     auto write_main_prg = [&]() -> bool {
         FILE* mf = fopen((project_dir + "/main.prg").c_str(), "w");
@@ -1249,17 +1288,14 @@ int main(int, char**) {
         std::string rel_relief = rel_scene + ".terrain";
         std::string rel_paint  = rel_scene + ".paint.png";
         std::string rel_zones  = rel_scene + ".zones";
-        // El escenario va en __escena.prg, que SE REHACE SIEMPRE. main.prg se crea
-        // una sola vez y no se vuelve a tocar: es tuyo, para tu codigo de arranque,
-        // menus, estados del juego... Los import van en main.prg (deben ir los
-        // primeros del fichero), asi que aqui no se repiten.
-        std::string mainp  = project_dir + "/main.prg";
-        std::string escenp = project_dir + "/__escena.prg";
-        FILE* f = fopen(escenp.c_str(), "w");
-        if (!f) { status = "ERROR generando __escena.prg"; return; }
-        fputs("// ===== Escenario generado por el editor BennuGD2 =====\n"
-              "// NO EDITES ESTE FICHERO: se rehace entero cada vez que generas el\n"
-              "// juego. Tu codigo va en main.prg, que el editor no toca.\n\n", f);
+        // El montaje (GLOBALs, includes de objetos, escena_iniciar, escena_motor)
+        // se genera aqui y se inserta en el bloque marcado de main.prg. Los import
+        // van fuera del bloque, arriba del todo del main, asi que aqui no se repiten.
+        // El montaje se arma en memoria y luego se inserta en el bloque marcado de
+        // main.prg (con un #include por objeto). No hay __escena.prg aparte.
+        char* setup_buf = NULL; size_t setup_sz = 0;
+        FILE* f = open_memstream(&setup_buf, &setup_sz);
+        if (!f) { status = "ERROR preparando el escenario"; return; }
         fputs("GLOBAL int scene; int camera; int light;\n"
       "    float escena_pitch;   // hacia donde mira en vertical (FPS)\n"
       "    float escena_yaw;     // hacia donde mira en horizontal (FPS)\n"
@@ -1296,17 +1332,16 @@ int main(int, char**) {
                             (o.is_player ? "controles del jugador" : "cuerpo fisico") + ")\n");
         }
 
-        // componentes (scripts de cada objeto)
+        // Un #include por objeto (SIN duplicar: el codigo vive en Scripts/<n>.prg).
+        // Van antes que escena_iniciar, que es quien instancia esos procesos.
         for (auto& o : objects) {
             std::string sp = scripts_dir + "/" + o.name + ".prg";
             FILE* s = fopen(sp.c_str(), "r");
             if (!s) continue;
-            fprintf(f, "// ---- componente: %s ----\n", o.name.c_str());
-            char buf[1024]; size_t n;
-            while ((n = fread(buf, 1, sizeof(buf), s)) > 0) fwrite(buf, 1, n, f);
-            fputs("\n", f);
             fclose(s);
+            fprintf(f, "#include \"Scripts/%s.prg\"\n", o.name.c_str());
         }
+        fputs("\n", f);
         // main
         // Lo que comparten el montaje y el bucle tiene que ser GLOBAL: antes era
         // todo PRIVATE de un unico PROCESS main, y al partirlo en dos deja de valer.
@@ -1490,37 +1525,13 @@ int main(int, char**) {
         fputs(camf.c_str(), f);
         fputs("        FRAME;\n    END\nEND\n", f);
         fclose(f);
+        std::string setup(setup_buf ? setup_buf : "", setup_sz);
+        free(setup_buf);
 
-        // main.prg: se crea la PRIMERA vez y despues no se toca nunca mas. Es el
-        // sitio para tu codigo (menus, estados, lo que sea) sin que el editor lo
-        // pise cada vez que cambias algo en la escena.
-        {
-          // Si ya hay main.prg se respeta... salvo que sea uno de los ANTIGUOS, de
-          // cuando el editor lo reescribia entero. Aquel no incluye __escena.prg,
-          // asi que dejarlo tal cual seria lo peor posible: el juego seguiria
-          // compilando con la escena vieja incrustada dentro y los cambios del
-          // editor no llegarian nunca, sin un solo aviso. Se guarda copia y se
-          // pone el nuevo.
-          std::string viejo;
-          bool existe = false;
-          { FILE* mf = fopen(mainp.c_str(), "r");
-            if (mf) { existe = true; char b[4096]; size_t n;
-                      while ((n = fread(b,1,sizeof(b),mf)) > 0) viejo.append(b,n);
-                      fclose(mf); } }
-          bool incluye = viejo.find("__escena.prg") != std::string::npos;
-          if (!existe) {
-              if (!write_main_prg()) { status = "ERROR creando main.prg"; return; }
-              console_add("Creado main.prg (a partir de ahora es tuyo, el editor no lo toca)\n");
-          } else if (!incluye) {
-              std::string bak = project_dir + "/main.prg.anterior";
-              FILE* bf = fopen(bak.c_str(), "w");
-              if (bf) { fwrite(viejo.data(), 1, viejo.size(), bf); fclose(bf); }
-              if (!write_main_prg()) { status = "ERROR creando main.prg"; return; }
-              console_add("main.prg era del formato antiguo (lo reescribia el editor entero).\n"
-                          "Copia guardada en main.prg.anterior y puesto el nuevo, que incluye\n"
-                          "__escena.prg. A partir de ahora main.prg es tuyo.\n");
-          }
-        }
+        // Volcar el montaje al bloque marcado de main.prg, sin tocar tu codigo.
+        // Y borrar el __escena.prg de versiones anteriores, que ya no se usa.
+        remove((project_dir + "/__escena.prg").c_str());
+        if (!update_main_block(setup)) { status = "ERROR escribiendo main.prg"; return; }
         // bgdc/bgdi localizan los modulos (.so) via PATH/LD_LIBRARY_PATH; el popen
         // no hereda el PATH del perfil -> los fijamos al directorio de los modulos.
         std::string bgdc = ruta_util("lib/bgdc", BGDC_PATH);
@@ -2674,7 +2685,7 @@ int main(int, char**) {
             ImGui::TextWrapped("main.prg volvera a quedar como recien creado.\n"
                                "SE PERDERA todo lo que hayas escrito en el.");
             ImGui::Spacing();
-            ImGui::TextDisabled("El escenario (__escena.prg) no se toca: ese se rehace solo al generar.");
+            ImGui::TextDisabled("El bloque marcado del editor (objetos + escenario) se rehace solo al generar.");
             ImGui::Spacing();
             if (ImGui::Button("Rehacer", ImVec2(140, 0))) {
                 if (write_main_prg()) {

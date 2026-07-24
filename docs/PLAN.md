@@ -123,21 +123,36 @@ que escribiría un programador de BennuGD2 a mano.
 Recorrer los 305 `FUNC(...)` de `libmod_3d_exports.h` agrupando por familia y
 marcar las que hacen lo mismo o casi.
 
-### Candidatas ya detectadas
-- **Sombras:** `G3D_SET_SHADOWS`, `G3D_LIGHT_ENABLE_SHADOW`,
-  `G3D_LIGHT_SET_SHADOW_QUALITY`, `G3D_SET_SHADOW_RESOLUTION`.
-  `SET_SHADOW_QUALITY` es un mando **muerto** (toca un campo por-luz que la pasada
-  direccional ignora) → candidato claro a deprecar o a hacer que funcione.
-- **Rotación/posición:** revisar solapes entre `ENTITY_SET_*`, `CHAR_SET_*`,
-  `RIGIDBODY_*` y las variables nativas nuevas (mucho `set_position` sobra si el
-  proceso usa x/y/z).
-- (Rellenar con el resto al hacer la pasada.)
+### Resultado de la pasada (304 funciones) — ✅ hecho
+La API está **más limpia de lo esperado**: los loaders son uno por formato, los
+`destroy`/`clear` uno por familia, los `SET_*` globales cada uno su efecto,
+`MODEL_HEIGHT` (extensión Y) y `MODEL_SIZE` (mayor de las 3) son distintas. No hay
+duplicados de verdad (dos funciones que hagan lo mismo). Lo que sí hay:
 
-### Decisión de política (por el merge)
-No **borrar** funciones aún: romper la API molesta a quien ya la use y complica el
-merge. Preferir: (1) marcar como obsoletas en un comentario, (2) que las que estén
-rotas funcionen o (3) que las redundantes reenvíen a la buena. Borrado real, solo
-cuando el merge esté hecho y de acuerdo con SplinterGU.
+**Stubs muertos exportados (no hacen nada):**
+- `G3D_PHYSICS_BODY_CREATE` → `return -1`
+- `G3D_PHYSICS_BODY_SET_VELOCITY` → no-op
+- `G3D_PHYSICS_STEP` → no-op
+  Los tres son una API de física vieja, sustituida por `G3D_RIGIDBODY_*`. Peor que
+  duplicados: quien las use tiene física que no funciona en silencio.
+- `G3D_CAMERA_SET_PROJECTION` → no-op. Se usa `G3D_CAMERA_SET_FOV`.
+- (`G3D_CAMERA_FREE`: hay wrapper stub pero NO está exportado, así que no molesta.)
+
+**Mando muerto:**
+- `G3D_LIGHT_SET_SHADOW_QUALITY`: guardaba una resolución por-luz que la pasada
+  direccional ignora → subías la calidad y no cambiaba nada. Solapa con
+  `G3D_SET_SHADOW_RESOLUTION`.
+
+### Qué se hizo (política del merge: no borrar aún, arreglar/deprecar)
+- **`LIGHT_SET_SHADOW_QUALITY` ahora FUNCIONA:** reenvía a la resolución del
+  renderer (además de conservar el campo por-luz por compatibilidad). Deja de ser
+  un mando muerto.
+- **Los 4 stubs marcados como OBSOLETOS** en el código, con comentario que apunta a
+  la función buena y nota de "borrado real cuando se cierre el merge". No se
+  cambia su comportamiento (siguen siendo no-op) para no romper a nadie.
+
+Borrado real de los stubs: cuando la fusión con BennuGD2 esté hecha y de acuerdo
+con SplinterGU.
 
 ---
 

@@ -88,8 +88,15 @@ un objeto); compila y corre.
       (para que `follow_ent` siga válido sin depender del orden de procesos) y el
       proceso la ata a `entity`. Pendiente: cuando haya arma enganchada, migrar
       junto con el enganche a hueso.
-- [ ] Luz del escenario → como el ejemplo `Sun()` (target/intensity/color nativos).
-- [ ] Cámara → `csubtype = C3D_CAMERA`, target_x/y/z nativos.
+- [x] Luz del escenario → proceso `escena_sol()` como el ejemplo `Sun()`
+      (target/intensity/color nativos). ✅
+- [x] Cámara → proceso `escena_camara()`, `csubtype = C3D_CAMERA`, x/y/z (posición)
+      y target_x/y/z (mira) nativos; el follow (3ª/FPS/cenital) va dentro. ✅
+      **Destapó un bug del motor:** el hook usaba `entity==0` como "sin atar", pero
+      cámaras/luces/entidades numeran desde 0, así que la PRIMERA (id 0) no se
+      dibujaba (cámara-proceso → pantalla negra). Arreglado: el default de la local
+      `entity` pasa a -1 y el hook salta con `entity_id < 0`. Verificado en 3ª
+      persona (cámara sigue, luz cálida) y FPS (1401 frames).
 - [ ] `escena_iniciar` / `escena_motor`: revisar si parte del bucle desaparece
       (mucho de lo que hace el motor ahora a mano lo hará el hook).
 - [ ] Enganche de armas a hueso: rehacer en este estilo (además valida el fix de

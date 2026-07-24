@@ -1371,15 +1371,86 @@ int main(int, char**) {
               "    int atc[32]; int atn[32];// enganches a huesos: entidad y nodo\n"
               "    float escena_dt;\n"
               "END\n\n", f);
+        // ---- la luz del sol como proceso BennuGD2 (variables nativas) ----
+        // Igual que cualquier objeto 3D: fija ctype/csubtype y sus datos en las
+        // variables nativas, y el motor las envia a la luz cada FRAME. La direccion
+        // sale de target - origen. Para cambiar la luz en marcha basta con tocar
+        // intensity o color_r/g/b desde aqui.
+        fprintf(f,
+              "PROCESS escena_sol()\n"
+              "BEGIN\n"
+              "    ctype = C_3D; csubtype = C3D_LIGHT;\n"
+              "    x = 0.0; y = 0.0; z = 0.0;\n"
+              "    target_x = -0.45; target_y = -0.75; target_z = -0.35;   // direccion = target - origen\n"
+              "    intensity = 1.5;\n"
+              "    color_r = 255; color_g = 245; color_b = 219;   // 1.0, 0.96, 0.86\n"
+              "    entity = g3d_light_create(0, 1.0, 1.0, 1.0);   // el color lo pone el hook\n"
+              "    g3d_light_enable_shadow(entity, 1); g3d_set_shadows(1);\n"
+              "    g3d_set_shadow_resolution(%d);   // nitidez de las sombras\n"
+              "    LOOP\n"
+              "        FRAME;\n"
+              "    END\n"
+              "END\n\n", shadow_res);
+
+        // ---- la camara como proceso BennuGD2 (variables nativas) ----
+        // La entidad la crea escena_iniciar y la activa (para que no haya un frame
+        // sin camara); aqui se ata a 'entity' y se conduce con x/y/z (posicion) y
+        // target_x/y/z (a donde mira). El hook las envia a la camara cada FRAME.
+        bool follow = (cam_mode != 0 && cam_follow >= 0 && cam_follow < (int)objects.size());
+        {
+            std::string cp =
+                "PROCESS escena_camara(int cam)\n"
+                "PRIVATE float tx; float ty; float tz;\nEND\n"
+                "BEGIN\n"
+                "    ctype = C_3D; csubtype = C3D_CAMERA;\n"
+                "    entity = cam;\n";
+            char b[2048];
+            if (!follow) {
+                snprintf(b, sizeof(b),
+                    "    x = %.3f; y = %.3f; z = %.3f;\n"
+                    "    target_x = %.3f; target_y = %.3f; target_z = %.3f;\n",
+                    cam_pos[0], cam_pos[1], cam_pos[2],
+                    cam_look[0], cam_look[1], cam_look[2]);
+                cp += b;
+            }
+            cp += "    LOOP\n";
+            if (follow) {
+                cp += "        g3d_entity_get_position(follow_ent, &tx, &ty, &tz);\n";
+                if (cam_mode == 1) {          // tercera persona
+                    snprintf(b, sizeof(b),
+                        "        x = tx; y = ty + %.3f; z = tz - %.3f;\n"
+                        "        target_x = tx; target_y = ty + 1.0; target_z = tz;\n",
+                        cam_height, gcam_dist);
+                } else if (cam_mode == 2) {   // primera persona (FPS)
+                    snprintf(b, sizeof(b),
+                        "        // escena_yaw / escena_pitch los escribe el jugador con el raton\n"
+                        "        x = tx + sin(escena_yaw) * %.3f;\n"
+                        "        y = ty + %.3f;\n"
+                        "        z = tz + cos(escena_yaw) * %.3f;\n"
+                        "        target_x = tx + sin(escena_yaw) * %.3f * cos(escena_pitch);\n"
+                        "        target_y = ty + %.3f + sin(escena_pitch) * 10.0;\n"
+                        "        target_z = tz + cos(escena_yaw) * %.3f * cos(escena_pitch);\n",
+                        cam_fwd, cam_height, cam_fwd,
+                        cam_fwd + 10.0f, cam_height, cam_fwd + 10.0f);
+                } else {                      // cenital (top-down)
+                    snprintf(b, sizeof(b),
+                        "        x = tx; y = ty + %.3f; z = tz + 0.5;\n"
+                        "        target_x = tx; target_y = ty; target_z = tz;\n",
+                        gcam_dist);
+                }
+                cp += b;
+            }
+            cp += "        FRAME;\n    END\nEND\n\n";
+            fputs(cp.c_str(), f);
+        }
+
         fputs("// Monta el escenario: terreno, agua, objetos, sus procesos y la camara.\n"
               "FUNCTION escena_iniciar()\n", f);
         fputs("PRIVATE int e; int m; int tex; int mat;\nEND\nBEGIN\n", f);
         fputs("    set_mode(1280,720); set_fps(60,0); window_set_title(\"EDITOR_PLAY\");\n", f);
         fputs("    scene = g3d_scene_create(\"juego\"); g3d_scene_set_active(scene);\n", f);
         fputs("    camera = g3d_camera_create(); g3d_camera_set_active(camera);\n", f);
-        fputs("    light = g3d_light_create(0,1.0,0.96,0.86); g3d_light_set_direction(light,-0.45,-0.75,-0.35);\n", f);
-        fputs("    g3d_light_set_intensity(light,1.5); g3d_light_enable_shadow(light,1); g3d_set_shadows(1);\n", f);
-        fprintf(f, "    g3d_set_shadow_resolution(%d);   // nitidez de las sombras\n", shadow_res);
+        fputs("    escena_sol();   // la luz del sol (proceso con vars nativas)\n", f);
         fputs("    g3d_sky_set_gradient(0.35,0.55,0.85, 0.82,0.88,0.96); g3d_sky_enable(1);\n", f);
         // terreno: mismo grid/worldsize que el editor (160 / 400), plano y luego
         // se le aplica el relieve esculpido y el pintado guardados en la escena.
@@ -1475,50 +1546,10 @@ int main(int, char**) {
                 fprintf(f, "    atn[%d] = g3d_model_node_find(pmodel, \"%s\");\n",
                         (int)k, objects[attach_list[k]].attach_bone.c_str());
         }
-        // ---- CAMARA: modo elegido en el editor ----
-        bool follow = (cam_mode != 0 && cam_follow >= 0 && cam_follow < (int)objects.size());
-        if (!follow) {
-            // Fija (o modo-seguir sin objetivo valido): posicion + mira estaticas
-            fprintf(f, "    g3d_camera_set_position(camera, %.3f, %.3f, %.3f);\n",
-                    cam_pos[0], cam_pos[1], cam_pos[2]);
-            fprintf(f, "    g3d_camera_look_at(camera, %.3f, %.3f, %.3f, 0.0, 1.0, 0.0);\n",
-                    cam_look[0], cam_look[1], cam_look[2]);
-        }
-        // codigo de camara por-frame (vacio si es Fija)
-        std::string camf;
-        if (follow) {
-            camf  = "        g3d_entity_get_position(follow_ent, &tx, &ty, &tz);\n";
-            char b[2048];   // la camara FPS genera bastante texto: con 512 se cortaba
-            if (cam_mode == 1) {          // tercera persona: detras y arriba
-                snprintf(b, sizeof(b),
-                    "        g3d_camera_set_position(camera, tx, ty + %.3f, tz - %.3f);\n"
-                    "        g3d_camera_look_at(camera, tx, ty + 1.0, tz, 0.0, 1.0, 0.0);\n",
-                    cam_height, gcam_dist);
-            } else if (cam_mode == 2) {   // primera persona (FPS)
-                // Mira hacia donde MIRA el personaje. Antes apuntaba siempre a
-                // tz+10, o sea al norte: girabas y la camara seguia mirando igual.
-                // Y va adelantada, porque en el centro del cuerpo se ven las caras
-                // interiores del modelo; asi se ven los brazos y las piernas.
-                // Los angulos salen en milesimas de grado, que es lo que comen
-                // cos() y sin() de BennuGD2.
-                snprintf(b, sizeof(b),
-                    "        // escena_yaw / escena_pitch los escribe el jugador al mover el raton\n"
-                    "        g3d_camera_set_position(camera, tx + sin(escena_yaw) * %.3f,\n"
-                    "                                        ty + %.3f,\n"
-                    "                                        tz + cos(escena_yaw) * %.3f);\n"
-                    "        g3d_camera_look_at(camera, tx + sin(escena_yaw) * %.3f * cos(escena_pitch),\n"
-                    "                                   ty + %.3f + sin(escena_pitch) * 10.0,\n"
-                    "                                   tz + cos(escena_yaw) * %.3f * cos(escena_pitch), 0.0, 1.0, 0.0);\n",
-                    cam_fwd, cam_height, cam_fwd,
-                    cam_fwd + 10.0f, cam_height, cam_fwd + 10.0f);
-            } else {                      // cenital (top-down): justo encima mirando abajo
-                snprintf(b, sizeof(b),
-                    "        g3d_camera_set_position(camera, tx, ty + %.3f, tz + 0.5);\n"
-                    "        g3d_camera_look_at(camera, tx, ty, tz, 0.0, 1.0, 0.0);\n",
-                    gcam_dist);
-            }
-            camf += b;
-        }
+        // ---- CAMARA: se lanza su proceso (definido arriba). follow_ent ya esta
+        //      puesto (el jugador se spawnea antes), asi que la camara ve al
+        //      objetivo desde su primer frame. ----
+        fputs("    escena_camara(camera);\n", f);
         // Aqui acaba el montaje. El bucle por frame va en su propio proceso para
         // que main.prg pueda ser tuyo: arrancas el escenario, lanzas el motor y
         // encima escribes lo que quieras.
@@ -1564,7 +1595,7 @@ int main(int, char**) {
                 fputs(c, f);
             }
         }
-        fputs(camf.c_str(), f);
+        // La camara ya no va aqui: es su propio proceso (escena_camara).
         fputs("        FRAME;\n    END\nEND\n", f);
         fclose(f);
         std::string setup(setup_buf ? setup_buf : "", setup_sz);

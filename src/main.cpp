@@ -81,6 +81,8 @@ extern "C" {
     const char *g3d_model_animation_name(void *model, int i);
     int   g3d_model_bounds(void *model, float *out_min, float *out_max);
     int   g3d_model_node_find(void *model, const char *name);
+    int   g3d_model_node_count(void *model);
+    const char *g3d_model_node_name(void *model, int i);
     float g3d_model_node_axis(void *model, int node, int comp);
     // ---- fisica / personaje / colision (para el PLAY en vivo dentro del editor) ----
     int   g3d_char_create(float x, float y, float z, float radius, float height);
@@ -2735,6 +2737,14 @@ int main(int, char**) {
                 }
             }
             if (ImGui::CollapsingHeader(ICON_FA_HAND "  Enganchar a hueso")) {
+                ImGui::TextWrapped("Engancha ESTE objeto ('%s') a un hueso de otro. "
+                                   "Para un arma en la mano: selecciona el ARMA y en 'Pegar a' "
+                                   "pon el personaje.", o.name.c_str());
+                if (o.is_player)
+                    ImGui::TextColored(ImVec4(1,0.7f,0.2f,1),
+                        "Tienes seleccionado el JUGADOR. Normalmente el jugador es el PADRE: "
+                        "para ponerle algo en la mano, selecciona el arma/antorcha, no el jugador.");
+                ImGui::Spacing();
                 const char* pcur = (o.attach_to >= 0 && o.attach_to < (int)objects.size())
                                    ? objects[o.attach_to].name.c_str() : "(ninguno)";
                 if (ImGui::BeginCombo("Pegar a", pcur)) {
@@ -2745,9 +2755,31 @@ int main(int, char**) {
                     ImGui::EndCombo();
                 }
                 if (o.attach_to >= 0) {
+                    // Lista de huesos del modelo PADRE, para no tener que adivinarlos.
+                    void* pm = load_model(objects[o.attach_to].asset);
+                    int nb = pm ? g3d_model_node_count(pm) : 0;
+                    if (nb > 0) {
+                        const char* cur = o.attach_bone.empty() ? "(elige un hueso)" : o.attach_bone.c_str();
+                        if (ImGui::BeginCombo("Hueso", cur)) {
+                            for (int b = 0; b < nb; b++) {
+                                const char* bn = g3d_model_node_name(pm, b);
+                                if (bn && bn[0] && ImGui::Selectable(bn, o.attach_bone == bn))
+                                    o.attach_bone = bn;
+                            }
+                            ImGui::EndCombo();
+                        }
+                        ImGui::TextDisabled("%d huesos en '%s'. La mano suele ser Hand/Mano_R.",
+                                            nb, objects[o.attach_to].asset.c_str());
+                    } else {
+                        ImGui::TextColored(ImVec4(1,0.7f,0.2f,1),
+                            "'%s' no tiene huesos (es un prop, no un personaje).",
+                            objects[o.attach_to].name.c_str());
+                        ImGui::TextWrapped("Puede que lo tengas al reves: en 'Pegar a' va el "
+                                           "PERSONAJE (con esqueleto), no un barril ni una antorcha.");
+                    }
+                    // Y por si prefieres escribirlo (subcadena del nombre):
                     char bonebuf[256]; strncpy(bonebuf, o.attach_bone.c_str(), 255); bonebuf[255] = 0;
-                    if (ImGui::InputText("Hueso", bonebuf, sizeof(bonebuf))) o.attach_bone = bonebuf;
-                    ImGui::TextDisabled("Parte del nombre: RightHand, Hand_R, mano...");
+                    if (ImGui::InputText("Hueso (texto)", bonebuf, sizeof(bonebuf))) o.attach_bone = bonebuf;
                     ImGui::DragFloat3("Offset", o.att_off, 0.01f);
                     ImGui::DragFloat("Escala", &o.att_scale, 0.01f, 0.01f, 20.0f);
                     ImGui::DragFloat("Giro", &o.att_yaw, 1.0f, -180.0f, 180.0f, "%.0f");

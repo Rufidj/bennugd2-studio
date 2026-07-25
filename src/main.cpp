@@ -455,13 +455,18 @@ int main(int, char**) {
         out_xyz.clear(); junctions.clear();
         int n = (int)rv.pts.size() / 2;
         if (n < 2 || !terrain) return;
-        std::vector<float> surfY(n), lvlAt(n);
+        std::vector<float> surfY(n), lvlAt(n), bed(n);
         for (int k = 0; k < n; k++) {
             float x = rv.pts[k*2], z = rv.pts[k*2+1];
-            surfY[k] = g3d_editor_terrain_height(terrain, x, z) + rv.depth*0.8f;
+            bed[k]   = g3d_editor_terrain_height(terrain, x, z);
+            surfY[k] = bed[k] + rv.depth*0.8f;
             lvlAt[k] = g3d_water_level_at(x, z);   // lagos/mar/rios ya anadidos
         }
-        auto covered = [&](int k){ return lvlAt[k] > surfY[k] - 0.5f; };
+        // "En un lago" = hay agua permanente por ENCIMA del suelo aqui (nivel del
+        // agua existente > terreno). Es lo robusto (como la mascara del scenefile):
+        // no depende de que la superficie del rio sobresalga, y la caja del lago no
+        // sobre-recorta tierra seca (ahi nivel<suelo -> no cubierto).
+        auto covered = [&](int k){ return lvlAt[k] > bed[k] + 0.3f; };
         int s = 0;     while (s < n  && covered(s)) s++;
         int e = n - 1; while (e >= 0 && covered(e)) e--;
         if (s > e) return;   // el rio va entero bajo un lago -> no se dibuja

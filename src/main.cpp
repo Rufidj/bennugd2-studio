@@ -152,6 +152,12 @@ extern "C" {
                                   float dr, float dg, float db, float sr, float sg, float sb);
     void  g3d_editor_water_set_texture(void *tex);
     void  g3d_editor_fluid_set_texture(void *tex);
+    int   g3d_editor_terrain_vcount(void *mesh);
+    void  g3d_editor_terrain_snapshot(void *mesh, float *out);
+    void  g3d_editor_terrain_restore(void *mesh, const float *in);
+    float g3d_water_level_at(float x, float z);
+    void  g3d_water_add_ripple_source(float x, float z, float strength);
+    void  g3d_water_clear_ripple_sources(void);
     // ---- lagos por flood-fill (agua colocada donde quieras, con la forma del hoyo) ----
     int   g3d_lake_add(float seed_x, float seed_z, float surface_y, float depth);
     float g3d_lake_spill_level(float seed_x, float seed_z);
@@ -346,7 +352,10 @@ int main(int, char**) {
     float lake_level = -1.0f;   // nivel manual del agua
     float lake_depth = 4.0f;    // profundidad (para el tinte y la fisica)
     // ---- rios (agua por un camino de puntos clicados) ----
-    struct River { std::vector<float> pts; float width, depth; WaterFX fx; };   // pts = pares x,z
+    // terrain_before = relieve del terreno JUSTO ANTES de excavar este rio, para
+    // restaurarlo (rellenar el cauce) si el rio se borra.
+    struct River { std::vector<float> pts; float width, depth; WaterFX fx;
+                   std::vector<float> terrain_before; };   // pts = pares x,z
     std::vector<River> rivers;
     std::vector<float> river_draft;   // rio que se esta trazando (pares x,z)
     float river_width = 6.0f;
@@ -379,6 +388,17 @@ int main(int, char**) {
         }
         for (int seg = 0; seg < n; seg++)
             g3d_editor_terrain_smooth(terrain, pts[seg*2], pts[seg*2+1], width, 0.5f);
+    };
+
+    // Copia el relieve actual del terreno (para poder deshacer un cauce despues).
+    auto snapshot_terrain = [&]() {
+        std::vector<float> snap;
+        if (terrain) {
+            int nv = g3d_editor_terrain_vcount(terrain);
+            snap.resize(nv);
+            if (nv) g3d_editor_terrain_snapshot(terrain, snap.data());
+        }
+        return snap;
     };
 
     // Reconstruye TODO el agua colocada (lagos + rios) en el motor, para el
@@ -424,9 +444,58 @@ int main(int, char**) {
         return ch;
     };
 
+    // Recorta un rio al tramo que NO esta cubierto por un lago/mar y suaviza sus
+    // extremos hasta el nivel del agua que toca. Esto EVITA de raiz el parche feo de
+    // dos superficies de agua transparentes solapadas (que buceando se veria fatal),
+    // en vez de taparlo. Devuelve los triples xyz del tramo y los puntos de union
+    // (donde el rio entra/sale del lago) para poner hondas ahi. Requiere que los
+    // lagos ya esten en el motor (g3d_water_level_at los consulta).
+    auto river_trimmed = [&](const River& rv, std::vector<float>& out_xyz,
+                             std::vector<std::pair<float,float>>& junctions) {
+        out_xyz.clear(); junctions.clear();
+        int n = (int)rv.pts.size() / 2;
+        if (n < 2 || !terrain) return;
+        std::vector<float> surfY(n), lvlAt(n);
+        for (int k = 0; k < n; k++) {
+            float x = rv.pts[k*2], z = rv.pts[k*2+1];
+            surfY[k] = g3d_editor_terrain_height(terrain, x, z) + rv.depth*0.8f;
+            lvlAt[k] = g3d_water_level_at(x, z);   // lagos/mar/rios ya anadidos
+        }
+        auto covered = [&](int k){ return lvlAt[k] > surfY[k] - 0.5f; };
+        int s = 0;     while (s < n  && covered(s)) s++;
+        int e = n - 1; while (e >= 0 && covered(e)) e--;
+        if (s > e) return;   // el rio va entero bajo un lago -> no se dibuja
+        int m = e - s + 1;
+        out_xyz.resize((size_t)m * 3);
+        for (int k = 0; k < m; k++) {
+            out_xyz[k*3]   = rv.pts[(s+k)*2];
+            out_xyz[k*3+1] = surfY[s+k];
+            out_xyz[k*3+2] = rv.pts[(s+k)*2+1];
+        }
+        if (s > 0) {           // emerge de un lago: suaviza el arranque a su nivel
+            float lakeY = lvlAt[s-1];
+            junctions.push_back({ out_xyz[0], out_xyz[2] });
+            int bn = m < 6 ? m : 6;
+            for (int i = 0; i < bn; i++) {
+                float t = (bn > 1) ? (float)i/(bn-1) : 1.0f;
+                out_xyz[i*3+1] = lakeY*(1.0f-t) + out_xyz[i*3+1]*t;
+            }
+        }
+        if (e < n - 1) {       // desemboca en un lago: suaviza el final a su nivel
+            float lakeY = lvlAt[e+1];
+            junctions.push_back({ out_xyz[(m-1)*3], out_xyz[(m-1)*3+2] });
+            int bn = m < 6 ? m : 6;
+            for (int i = m - bn; i < m; i++) {
+                float t = (bn > 1) ? (float)(i-(m-bn))/(bn-1) : 1.0f;
+                out_xyz[i*3+1] = out_xyz[i*3+1]*(1.0f-t) + lakeY*t;
+            }
+        }
+    };
+
     auto rebuild_water = [&]() {
         g3d_fluid_clear();
         g3d_flow_clear();
+        g3d_water_clear_ripple_sources();
         if (lakes.empty() && rivers.empty()) return;
         g3d_scene_set_terrain_collider(terrain);   // refresca el heightfield
         for (auto& lk : lakes) {
@@ -435,19 +504,39 @@ int main(int, char**) {
         }
         for (auto& rv : rivers) {
             apply_fx(rv.fx);   // cada rio captura SUS efectos
-            int n = (int)rv.pts.size() / 2;
-            if (n < 2) continue;
-            // El lecho ya esta excavado en el terreno; la superficie del agua se pone
-            // dentro del cauce, casi hasta las orillas (lecho + casi toda la
-            // profundidad), leyendo la altura ACTUAL del terreno (el lecho).
-            std::vector<float> xyz(n * 3);
-            for (int k = 0; k < n; k++) {
-                float x = rv.pts[k*2], z = rv.pts[k*2+1];
-                float bed = g3d_editor_terrain_height(terrain, x, z);
-                xyz[k*3]=x; xyz[k*3+1]=bed + rv.depth*0.8f; xyz[k*3+2]=z;
-            }
-            g3d_river_add(xyz.data(), n, rv.width);
+            // Recorta el tramo cubierto por un lago (evita el parche solapado) y
+            // pon hondas en la union rio-lago.
+            std::vector<float> xyz;
+            std::vector<std::pair<float,float>> jn;
+            river_trimmed(rv, xyz, jn);
+            if ((int)xyz.size() >= 6)
+                g3d_river_add(xyz.data(), (int)xyz.size()/3, rv.width);
+            for (auto& j : jn) g3d_water_add_ripple_source(j.first, j.second, 0.9f);
         }
+    };
+
+    // Borra un rio Y rellena su cauce: restaura el terreno a como estaba antes de
+    // excavarlo. Los rios posteriores se excavaron encima, asi que se recavan sobre
+    // el terreno restaurado (y se actualiza su snapshot) para que sigan siendo
+    // deshacibles. Nota: solo funciona en la sesion actual (el snapshot no se guarda).
+    auto remove_river = [&](int idx) {
+        if (idx < 0 || idx >= (int)rivers.size()) return;
+        int nv = terrain ? g3d_editor_terrain_vcount(terrain) : 0;
+        if (terrain && (int)rivers[idx].terrain_before.size() == nv && nv > 0)
+            g3d_editor_terrain_restore(terrain, rivers[idx].terrain_before.data());
+        for (int j = idx + 1; j < (int)rivers.size(); j++) {
+            rivers[j].terrain_before = snapshot_terrain();
+            carve_river(rivers[j].pts, rivers[j].width, rivers[j].depth);
+        }
+        rivers.erase(rivers.begin() + idx);
+        rebuild_water();
+    };
+    auto remove_all_rivers = [&]() {
+        int nv = terrain ? g3d_editor_terrain_vcount(terrain) : 0;
+        if (!rivers.empty() && terrain && (int)rivers[0].terrain_before.size() == nv && nv > 0)
+            g3d_editor_terrain_restore(terrain, rivers[0].terrain_before.data());
+        rivers.clear();
+        rebuild_water();
     };
 
     // ---- ImGui ----
@@ -1748,20 +1837,34 @@ int main(int, char**) {
                 else
                     fputs("    g3d_fluid_set_texture(0);\n", f);
             };
+            // Secuencia el estado del motor igual que el preview para poder recortar
+            // cada rio contra los lagos + rios YA anadidos (no contra si mismo). Al
+            // final se restaura con rebuild_water().
+            g3d_fluid_clear(); g3d_flow_clear(); g3d_water_clear_ripple_sources();
             for (auto& lk : lakes) {
                 emit_fx(lk.fx);
                 fprintf(f, "    g3d_lake_add(%.3f, %.3f, %.3f, %.3f);   // lago con la forma del hoyo\n",
                         lk.sx, lk.sz, lk.level, lk.depth);
+                apply_fx(lk.fx); g3d_lake_add(lk.sx, lk.sz, lk.level, lk.depth);   // motor
             }
             for (auto& rv : rivers) {
-                int n = (int)rv.pts.size() / 2;
-                if (n < 2) continue;
-                emit_fx(rv.fx);
-                fprintf(f, "    g3d_river_begin(%.3f, %.3f);\n", rv.width, rv.depth*0.8f);
-                for (int k = 0; k < n; k++)
-                    fprintf(f, "    g3d_river_point(%.3f, %.3f);\n", rv.pts[k*2], rv.pts[k*2+1]);
-                fputs("    g3d_river_end();   // rio: agua + flujo + cascadas\n", f);
+                std::vector<float> xyz;
+                std::vector<std::pair<float,float>> jn;
+                river_trimmed(rv, xyz, jn);   // recorta el tramo cubierto por un lago
+                int m = (int)xyz.size() / 3;
+                if (m >= 2) {
+                    emit_fx(rv.fx);
+                    fprintf(f, "    g3d_river_begin(%.3f, %.3f);\n", rv.width, rv.depth*0.8f);
+                    for (int k = 0; k < m; k++)
+                        fprintf(f, "    g3d_river_point(%.3f, %.3f);\n", xyz[k*3], xyz[k*3+2]);
+                    fputs("    g3d_river_end();   // rio: agua + flujo + cascadas\n", f);
+                    for (auto& j : jn)
+                        fprintf(f, "    g3d_water_add_ripple_source(%.3f, %.3f, 0.9);   // honda en la union con el lago\n",
+                                j.first, j.second);
+                    apply_fx(rv.fx); g3d_river_add(xyz.data(), m, rv.width);   // motor, para el siguiente rio
+                }
             }
+            rebuild_water();   // restaura el preview (deshace el secuenciado de arriba)
         }
         // objetos + sus componentes (+ cuerpos fisicos Jolt)
         fputs("    escena_dt = 1.0 / 60.0;\n", f);
@@ -2656,8 +2759,10 @@ int main(int, char**) {
                 // RIO: cada clic anade un punto del cauce; doble clic lo termina.
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                     if ((int)river_draft.size() >= 4) {   // al menos 2 puntos
+                        River nr{ river_draft, river_width, river_depth, current_fx(), {} };
+                        nr.terrain_before = snapshot_terrain();               // ANTES de excavar
                         carve_river(river_draft, river_width, river_depth);   // excava el lecho
-                        rivers.push_back({ river_draft, river_width, river_depth, current_fx() });
+                        rivers.push_back(std::move(nr));
                         rebuild_water();
                         status = "Rio anadido (" + std::to_string(river_draft.size()/2) + " puntos)";
                     }
@@ -2968,9 +3073,9 @@ int main(int, char**) {
             ImGui::Text("Rios: %d    Trazando: %d puntos", (int)rivers.size(), (int)river_draft.size()/2);
             if (!river_draft.empty() && ImGui::Button("Cancelar el trazo actual")) river_draft.clear();
             if (!rivers.empty()) {
-                if (ImGui::Button("Quitar el ultimo rio")) { rivers.pop_back(); rebuild_water(); }
+                if (ImGui::Button("Quitar el ultimo rio")) remove_river((int)rivers.size() - 1);
                 ImGui::SameLine();
-                if (ImGui::Button("Quitar todos##rios")) { rivers.clear(); rebuild_water(); }
+                if (ImGui::Button("Quitar todos##rios")) remove_all_rivers();
             }
             ImGui::TextDisabled("Los nuevos rios toman los efectos del panel Entorno (agua);\n"
                                 "aqui abajo cada rio tiene los SUYOS propios.");
@@ -2979,7 +3084,7 @@ int main(int, char**) {
                 if (ImGui::TreeNode(hdr)) {
                     if (water_fx_editor(rivers[i].fx, 6000 + i)) water_fx_dirty = true;
                     if (ImGui::SmallButton("Quitar este rio")) {
-                        rivers.erase(rivers.begin() + i); rebuild_water();
+                        remove_river(i);
                         ImGui::TreePop(); break;
                     }
                     ImGui::TreePop();

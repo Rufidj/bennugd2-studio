@@ -206,6 +206,24 @@ void g3d_editor_terrain_hole(void *mesh, float x, float z, float r, int on) {
 float g3d_editor_terrain_height(void *mesh, float x, float z) {
     return mesh ? g3d_terrain_get_height((G3DMesh *)mesh, x, z) : 0.0f;
 }
+/* Snapshot/restore de las alturas del terreno (para deshacer el cauce de un rio
+   al borrarlo). vcount da el tamano del buffer necesario. */
+int g3d_editor_terrain_vcount(void *mesh) {
+    G3DMesh *m = (G3DMesh *)mesh;
+    return m ? (int)m->vertex_count : 0;
+}
+void g3d_editor_terrain_snapshot(void *mesh, float *out) {
+    G3DMesh *m = (G3DMesh *)mesh;
+    if (!m || !out) return;
+    for (uint32_t i = 0; i < m->vertex_count; i++) out[i] = m->vertices[i].position[1];
+}
+void g3d_editor_terrain_restore(void *mesh, const float *in) {
+    G3DMesh *m = (G3DMesh *)mesh;
+    if (!m || !in) return;
+    for (uint32_t i = 0; i < m->vertex_count; i++) m->vertices[i].position[1] = in[i];
+    g3d_terrain_update(m);   /* recomputa normales + sube a GPU */
+}
+
 /* Guardar/cargar el relieve del terreno (dump binario de la Y de cada vertice). */
 void g3d_editor_terrain_save(void *mesh, const char *path) {
     G3DMesh *m = (G3DMesh *)mesh;

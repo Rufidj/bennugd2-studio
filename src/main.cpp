@@ -331,17 +331,27 @@ int main(int, char**) {
     g3d_zone_init(161, 400.0f);   // mascara de zonas: misma extension que el terreno (grid 160)
 
     // ---- lagos colocados (agua con la forma de un hoyo del terreno) ----
-    struct Lake { float sx, sz, level, depth; };
+    // Efectos PROPIOS de cada masa de agua (olas, color, textura). Cada lago/rio
+    // guarda los suyos; se siembran con los del panel Entorno al crearse y luego
+    // se editan por separado en el Inspector.
+    struct WaterFX {
+        float amp = 0.12f, len = 5.0f, speed = 1.1f;
+        float deep[3]    = { 0.02f, 0.11f, 0.20f };
+        float shallow[3] = { 0.10f, 0.34f, 0.44f };
+        int   tex = -1;   // indice en paints, -1 = ninguna
+    };
+    struct Lake { float sx, sz, level, depth; WaterFX fx; };
     std::vector<Lake> lakes;
     bool  lake_auto  = true;    // nivel automatico (justo antes de desbordar)
     float lake_level = -1.0f;   // nivel manual del agua
     float lake_depth = 4.0f;    // profundidad (para el tinte y la fisica)
     // ---- rios (agua por un camino de puntos clicados) ----
-    struct River { std::vector<float> pts; float width, depth; };   // pts = pares x,z
+    struct River { std::vector<float> pts; float width, depth; WaterFX fx; };   // pts = pares x,z
     std::vector<River> rivers;
     std::vector<float> river_draft;   // rio que se esta trazando (pares x,z)
     float river_width = 6.0f;
     float river_depth = 3.0f;    // cuanto se excava el lecho bajo el terreno
+    bool  water_fx_dirty = false; // hay cambios de efectos pendientes de reconstruir
 
     // Excava un cauce en el terreno siguiendo un camino de puntos (pares x,z): baja
     // el terreno a un lecho `depth` por debajo del relieve original, con pendiente
@@ -374,20 +384,57 @@ int main(int, char**) {
     // Reconstruye TODO el agua colocada (lagos + rios) en el motor, para el
     // preview del viewport. Se llama al colocar/borrar y tras esculpir el terreno,
     // porque el agua sigue la forma del relieve y hay que rehacerla.
+    // Fija en el motor el estilo (olas + color) y la textura de UNA masa de agua,
+    // justo antes de crearla, para que la zona capture ESE estilo como suyo.
+    auto apply_fx = [&](const WaterFX& fx) {
+        g3d_fluid_set_style(fx.amp, fx.len, fx.speed,
+                            fx.deep[0], fx.deep[1], fx.deep[2],
+                            fx.shallow[0], fx.shallow[1], fx.shallow[2], 0, 0.88f);
+        g3d_editor_fluid_set_texture((fx.tex >= 0 && fx.tex < (int)paints.size())
+                                     ? paint_tex(fx.tex) : nullptr);
+    };
+    // FX por defecto para una masa de agua NUEVA: los del panel Entorno (agua).
+    auto current_fx = [&]() {
+        WaterFX fx;
+        fx.amp = w_amp; fx.len = w_len; fx.speed = w_speed;
+        fx.deep[0]=w_deep[0]; fx.deep[1]=w_deep[1]; fx.deep[2]=w_deep[2];
+        fx.shallow[0]=w_shallow[0]; fx.shallow[1]=w_shallow[1]; fx.shallow[2]=w_shallow[2];
+        fx.tex = water_tex_sel;
+        return fx;
+    };
+    // Controles de efectos (textura + olas + color) de UNA masa de agua. uid da
+    // IDs unicos por lago/rio. Devuelve true si algo cambio este frame.
+    auto water_fx_editor = [&](WaterFX& fx, int uid) -> bool {
+        bool ch = false;
+        ImGui::PushID(uid);
+        const char* cur = (fx.tex >= 0 && fx.tex < (int)paints.size())
+                          ? paints[fx.tex].file.c_str() : "(ninguna)";
+        if (ImGui::BeginCombo("Textura", cur)) {
+            if (ImGui::Selectable("(ninguna)", fx.tex < 0)) { fx.tex = -1; ch = true; }
+            for (int i = 0; i < (int)paints.size(); i++)
+                if (ImGui::Selectable(paints[i].file.c_str(), fx.tex == i)) { fx.tex = i; ch = true; }
+            ImGui::EndCombo();
+        }
+        ch |= ImGui::SliderFloat("Amplitud",  &fx.amp,   0.0f, 1.0f,  "%.2f");
+        ch |= ImGui::SliderFloat("Longitud",  &fx.len,   1.0f, 40.0f, "%.1f");
+        ch |= ImGui::SliderFloat("Velocidad", &fx.speed, 0.0f, 4.0f,  "%.2f");
+        ch |= ImGui::ColorEdit3("Profundo",   fx.deep);
+        ch |= ImGui::ColorEdit3("Superficie", fx.shallow);
+        ImGui::PopID();
+        return ch;
+    };
+
     auto rebuild_water = [&]() {
         g3d_fluid_clear();
         g3d_flow_clear();
         if (lakes.empty() && rivers.empty()) return;
         g3d_scene_set_terrain_collider(terrain);   // refresca el heightfield
-        // mismos parametros que el agua global (panel Entorno): olas, color, textura
-        g3d_fluid_set_style(w_amp, w_len, w_speed,
-                            w_deep[0], w_deep[1], w_deep[2],
-                            w_shallow[0], w_shallow[1], w_shallow[2], 0, 0.88f);
-        g3d_editor_fluid_set_texture((water_tex_sel >= 0 && water_tex_sel < (int)paints.size())
-                                     ? paint_tex(water_tex_sel) : nullptr);
-        for (auto& lk : lakes)
+        for (auto& lk : lakes) {
+            apply_fx(lk.fx);   // cada lago captura SUS efectos
             g3d_lake_add(lk.sx, lk.sz, lk.level, lk.depth);
+        }
         for (auto& rv : rivers) {
+            apply_fx(rv.fx);   // cada rio captura SUS efectos
             int n = (int)rv.pts.size() / 2;
             if (n < 2) continue;
             // El lecho ya esta excavado en el terreno; la superficie del agua se pone
@@ -1186,12 +1233,19 @@ int main(int, char**) {
                 cam_mode, cam_follow, cam_pos[0], cam_pos[1], cam_pos[2],
                 cam_look[0], cam_look[1], cam_look[2], gcam_dist, cam_height, cam_fwd, cam_sens,
                 shadow_res);
-        for (auto& lk : lakes)
-            fprintf(f, "LAKE %.4f %.4f %.4f %.4f\n", lk.sx, lk.sz, lk.level, lk.depth);
+        auto fprint_fx = [&](const WaterFX& x) {
+            fprintf(f, " FX %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %d",
+                    x.amp, x.len, x.speed, x.deep[0], x.deep[1], x.deep[2],
+                    x.shallow[0], x.shallow[1], x.shallow[2], x.tex);
+        };
+        for (auto& lk : lakes) {
+            fprintf(f, "LAKE %.4f %.4f %.4f %.4f", lk.sx, lk.sz, lk.level, lk.depth);
+            fprint_fx(lk.fx); fputc('\n', f);
+        }
         for (auto& rv : rivers) {
             fprintf(f, "RIVER %.3f %.3f %d", rv.width, rv.depth, (int)rv.pts.size()/2);
             for (float c : rv.pts) fprintf(f, " %.3f", c);
-            fprintf(f, "\n");
+            fprint_fx(rv.fx); fputc('\n', f);
         }
         for (auto& o : objects) {
             fprintf(f, "OBJECT %s %.4f %.4f %.4f %.4f %.4f SCRIPT %s PHYS %d %.3f %.3f %.3f %d %.3f %.3f",
@@ -1246,9 +1300,25 @@ int main(int, char**) {
                                 w_shallow[0]=s0;w_shallow[1]=s1;w_shallow[2]=s2; }
                 continue;
             }
+            // Lee un sufijo opcional "FX amp len speed d0 d1 d2 s0 s1 s2 tex" del
+            // cursor p (si esta). Deja fx con los valores por defecto si no hay.
+            auto parse_fx = [](char* p, WaterFX& fx) {
+                char* q = strstr(p, "FX ");
+                if (!q) return;
+                float v[9]; int tex = -1;
+                if (sscanf(q, "FX %f %f %f %f %f %f %f %f %f %d",
+                           &v[0],&v[1],&v[2],&v[3],&v[4],&v[5],&v[6],&v[7],&v[8],&tex) == 10) {
+                    fx.amp=v[0]; fx.len=v[1]; fx.speed=v[2];
+                    fx.deep[0]=v[3]; fx.deep[1]=v[4]; fx.deep[2]=v[5];
+                    fx.shallow[0]=v[6]; fx.shallow[1]=v[7]; fx.shallow[2]=v[8];
+                    fx.tex = tex;
+                }
+            };
             { float lsx, lsz, llv, ldp;
               if (sscanf(line, "LAKE %f %f %f %f", &lsx,&lsz,&llv,&ldp) == 4) {
-                  lakes.push_back({ lsx, lsz, llv, ldp }); continue; } }
+                  Lake lk{ lsx, lsz, llv, ldp, {} };
+                  parse_fx(line, lk.fx);
+                  lakes.push_back(lk); continue; } }
             if (strncmp(line, "RIVER ", 6) == 0) {
                 char* p = line + 6; char* end;
                 float rw = strtof(p, &end);
@@ -1264,6 +1334,7 @@ int main(int, char**) {
                             if (end == p) break;
                             rv.pts.push_back(val); p = end;
                         }
+                        parse_fx(p, rv.fx);
                         if ((int)rv.pts.size() == (int)rn*2) rivers.push_back(rv);
                     }
                 }
@@ -1664,19 +1735,28 @@ int main(int, char**) {
             fputs("    g3d_water_set_enabled(1);\n", f);
         }
         // ---- lagos y rios: agua colocada (flood-fill / camino), no un mar global ----
+        // Cada masa de agua fija SU estilo (olas/color/textura) justo antes de
+        // crearse, para que el motor lo capture como propio de esa zona.
         if (!lakes.empty() || !rivers.empty()) {
-            fprintf(f, "    g3d_fluid_style(%.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, 0.88);\n",
-                    w_amp, w_len, w_speed,
-                    w_deep[0], w_deep[1], w_deep[2], w_shallow[0], w_shallow[1], w_shallow[2]);
-            if (water_tex_sel >= 0 && water_tex_sel < (int)paints.size())
-                fprintf(f, "    g3d_fluid_set_texture(g3d_load_texture(\"Assets/%s\"));\n",
-                        paints[water_tex_sel].file.c_str());
-            for (auto& lk : lakes)
+            auto emit_fx = [&](const WaterFX& x) {
+                fprintf(f, "    g3d_fluid_style(%.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, 0.88);\n",
+                        x.amp, x.len, x.speed,
+                        x.deep[0], x.deep[1], x.deep[2], x.shallow[0], x.shallow[1], x.shallow[2]);
+                if (x.tex >= 0 && x.tex < (int)paints.size())
+                    fprintf(f, "    g3d_fluid_set_texture(g3d_load_texture(\"Assets/%s\"));\n",
+                            paints[x.tex].file.c_str());
+                else
+                    fputs("    g3d_fluid_set_texture(0);\n", f);
+            };
+            for (auto& lk : lakes) {
+                emit_fx(lk.fx);
                 fprintf(f, "    g3d_lake_add(%.3f, %.3f, %.3f, %.3f);   // lago con la forma del hoyo\n",
                         lk.sx, lk.sz, lk.level, lk.depth);
+            }
             for (auto& rv : rivers) {
                 int n = (int)rv.pts.size() / 2;
                 if (n < 2) continue;
+                emit_fx(rv.fx);
                 fprintf(f, "    g3d_river_begin(%.3f, %.3f);\n", rv.width, rv.depth*0.8f);
                 for (int k = 0; k < n; k++)
                     fprintf(f, "    g3d_river_point(%.3f, %.3f);\n", rv.pts[k*2], rv.pts[k*2+1]);
@@ -2577,7 +2657,7 @@ int main(int, char**) {
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                     if ((int)river_draft.size() >= 4) {   // al menos 2 puntos
                         carve_river(river_draft, river_width, river_depth);   // excava el lecho
-                        rivers.push_back({ river_draft, river_width, river_depth });
+                        rivers.push_back({ river_draft, river_width, river_depth, current_fx() });
                         rebuild_water();
                         status = "Rio anadido (" + std::to_string(river_draft.size()/2) + " puntos)";
                     }
@@ -2595,7 +2675,7 @@ int main(int, char**) {
                     float lvl = lake_auto
                         ? g3d_lake_spill_level(hit[0], hit[2]) - 0.3f   // por debajo del borde
                         : lake_level;
-                    lakes.push_back({ hit[0], hit[2], lvl, lake_depth });
+                    lakes.push_back({ hit[0], hit[2], lvl, lake_depth, current_fx() });
                     rebuild_water();
                     status = "Lago anadido (nivel " + std::to_string((int)lvl) + ")";
                 }
@@ -2861,9 +2941,20 @@ int main(int, char**) {
                 ImGui::SameLine();
                 if (ImGui::Button("Quitar todos")) { lakes.clear(); rebuild_water(); }
             }
-            ImGui::TextDisabled("El color, el oleaje y la TEXTURA salen del panel Entorno (agua),\n"
-                                "igual que para el mar. El agua global y los lagos conviven;\n"
-                                "apaga la global si solo quieres lagos/rios.");
+            ImGui::TextDisabled("Los nuevos lagos toman los efectos del panel Entorno (agua);\n"
+                                "aqui abajo cada lago tiene los SUYOS propios.");
+            // Efectos propios de cada lago (textura, olas, color)
+            for (int i = 0; i < (int)lakes.size(); i++) {
+                char hdr[64]; snprintf(hdr, sizeof(hdr), ICON_FA_DROPLET "  Lago %d##lkfx%d", i + 1, i);
+                if (ImGui::TreeNode(hdr)) {
+                    if (water_fx_editor(lakes[i].fx, 5000 + i)) water_fx_dirty = true;
+                    if (ImGui::SmallButton("Quitar este lago")) {
+                        lakes.erase(lakes.begin() + i); rebuild_water();
+                        ImGui::TreePop(); break;
+                    }
+                    ImGui::TreePop();
+                }
+            }
             ImGui::Separator();
         }
         if (tool == T_RIVER) {
@@ -2881,7 +2972,25 @@ int main(int, char**) {
                 ImGui::SameLine();
                 if (ImGui::Button("Quitar todos##rios")) { rivers.clear(); rebuild_water(); }
             }
+            ImGui::TextDisabled("Los nuevos rios toman los efectos del panel Entorno (agua);\n"
+                                "aqui abajo cada rio tiene los SUYOS propios.");
+            for (int i = 0; i < (int)rivers.size(); i++) {
+                char hdr[64]; snprintf(hdr, sizeof(hdr), ICON_FA_WATER "  Rio %d##rvfx%d", i + 1, i);
+                if (ImGui::TreeNode(hdr)) {
+                    if (water_fx_editor(rivers[i].fx, 6000 + i)) water_fx_dirty = true;
+                    if (ImGui::SmallButton("Quitar este rio")) {
+                        rivers.erase(rivers.begin() + i); rebuild_water();
+                        ImGui::TreePop(); break;
+                    }
+                    ImGui::TreePop();
+                }
+            }
             ImGui::Separator();
+        }
+        // Reconstruye el agua UNA vez cuando se suelta el raton tras editar efectos,
+        // para no rehacer las mallas en cada frame del arrastre.
+        if (water_fx_dirty && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            rebuild_water(); water_fx_dirty = false;
         }
         if (tool == T_PAINT) {
             ImGui::SeparatorText("Pintar terreno");

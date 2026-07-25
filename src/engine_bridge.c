@@ -195,6 +195,10 @@ void g3d_editor_terrain_flatten(void *mesh, float x, float z, float r, float amt
     float th = g3d_terrain_get_height((G3DMesh *)mesh, x, z);
     g3d_terrain_flatten((G3DMesh *)mesh, x, z, r, th, amt);
 }
+/* Nivelar hacia una altura DADA (para excavar un cauce de rio a un lecho). */
+void g3d_editor_terrain_flatten_to(void *mesh, float x, float z, float r, float target_h, float amt) {
+    if (mesh) g3d_terrain_flatten((G3DMesh *)mesh, x, z, r, target_h, amt);
+}
 /* Agujero de terreno (on=1 perfora, on=0 rellena) -> ver la cueva por debajo. */
 void g3d_editor_terrain_hole(void *mesh, float x, float z, float r, int on) {
     if (mesh) g3d_terrain_set_hole((G3DMesh *)mesh, x, z, r, on);

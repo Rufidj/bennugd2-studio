@@ -137,6 +137,7 @@ extern "C" {
     void  g3d_editor_terrain_raise(void *mesh, float x, float z, float r, float amt);
     void  g3d_editor_terrain_smooth(void *mesh, float x, float z, float r, float amt);
     void  g3d_editor_terrain_flatten(void *mesh, float x, float z, float r, float amt);
+    void  g3d_editor_terrain_flatten_to(void *mesh, float x, float z, float r, float target_h, float amt);
     void  g3d_editor_terrain_hole(void *mesh, float x, float z, float r, int on);
     float g3d_editor_terrain_height(void *mesh, float x, float z);
     int   g3d_editor_world_to_screen(float wx, float wy, float wz, float w, float h, float *out2);
@@ -335,10 +336,39 @@ int main(int, char**) {
     float lake_level = -1.0f;   // nivel manual del agua
     float lake_depth = 4.0f;    // profundidad (para el tinte y la fisica)
     // ---- rios (agua por un camino de puntos clicados) ----
-    struct River { std::vector<float> pts; float width; };   // pts = pares x,z
+    struct River { std::vector<float> pts; float width, depth; };   // pts = pares x,z
     std::vector<River> rivers;
     std::vector<float> river_draft;   // rio que se esta trazando (pares x,z)
     float river_width = 6.0f;
+    float river_depth = 3.0f;    // cuanto se excava el lecho bajo el terreno
+
+    // Excava un cauce en el terreno siguiendo un camino de puntos (pares x,z): baja
+    // el terreno a un lecho `depth` por debajo del relieve original, con pendiente
+    // entre puntos. Se llama UNA vez al crear el rio (modifica el terreno, que se
+    // guarda). Asi el agua tiene un lecho de verdad y se ve como un rio.
+    auto carve_river = [&](const std::vector<float>& pts, float width, float depth) {
+        if (!terrain || (int)pts.size() < 4) return;
+        int n = (int)pts.size() / 2;
+        // alturas ORIGINALES en cada punto (antes de excavar), para que el lecho no
+        // se hunda mas y mas al solaparse los pinceles.
+        std::vector<float> h0(n);
+        for (int k = 0; k < n; k++) h0[k] = g3d_editor_terrain_height(terrain, pts[k*2], pts[k*2+1]);
+        float r = width * 0.6f;
+        for (int seg = 0; seg < n - 1; seg++) {
+            float ax = pts[seg*2], az = pts[seg*2+1];
+            float bx = pts[(seg+1)*2], bz = pts[(seg+1)*2+1];
+            float dx = bx-ax, dz = bz-az; float len = sqrtf(dx*dx+dz*dz);
+            int steps = (int)(len / (r * 0.5f)); if (steps < 1) steps = 1;
+            for (int s = 0; s <= steps; s++) {
+                float t = (float)s / steps;
+                float x = ax + dx*t, z = az + dz*t;
+                float bed = (h0[seg]*(1.0f-t) + h0[seg+1]*t) - depth;   // lecho con pendiente
+                g3d_editor_terrain_flatten_to(terrain, x, z, r, bed, 1.0f);
+            }
+        }
+        for (int seg = 0; seg < n; seg++)
+            g3d_editor_terrain_smooth(terrain, pts[seg*2], pts[seg*2+1], width, 0.5f);
+    };
 
     // Reconstruye TODO el agua colocada (lagos + rios) en el motor, para el
     // preview del viewport. Se llama al colocar/borrar y tras esculpir el terreno,
@@ -357,8 +387,15 @@ int main(int, char**) {
         for (auto& rv : rivers) {
             int n = (int)rv.pts.size() / 2;
             if (n < 2) continue;
-            std::vector<float> xyz(n * 3);   // el motor quiere x,y,z; la y la recalcula del terreno
-            for (int k = 0; k < n; k++) { xyz[k*3]=rv.pts[k*2]; xyz[k*3+1]=0.0f; xyz[k*3+2]=rv.pts[k*2+1]; }
+            // El lecho ya esta excavado en el terreno; la superficie del agua se pone
+            // dentro del cauce, casi hasta las orillas (lecho + casi toda la
+            // profundidad), leyendo la altura ACTUAL del terreno (el lecho).
+            std::vector<float> xyz(n * 3);
+            for (int k = 0; k < n; k++) {
+                float x = rv.pts[k*2], z = rv.pts[k*2+1];
+                float bed = g3d_editor_terrain_height(terrain, x, z);
+                xyz[k*3]=x; xyz[k*3+1]=bed + rv.depth*0.8f; xyz[k*3+2]=z;
+            }
             g3d_river_add(xyz.data(), n, rv.width);
         }
     };
@@ -1149,7 +1186,7 @@ int main(int, char**) {
         for (auto& lk : lakes)
             fprintf(f, "LAKE %.4f %.4f %.4f %.4f\n", lk.sx, lk.sz, lk.level, lk.depth);
         for (auto& rv : rivers) {
-            fprintf(f, "RIVER %.3f %d", rv.width, (int)rv.pts.size()/2);
+            fprintf(f, "RIVER %.3f %.3f %d", rv.width, rv.depth, (int)rv.pts.size()/2);
             for (float c : rv.pts) fprintf(f, " %.3f", c);
             fprintf(f, "\n");
         }
@@ -1214,10 +1251,11 @@ int main(int, char**) {
                 float rw = strtof(p, &end);
                 if (end != p) {
                     p = end;
+                    float rd = strtof(p, &end); p = end;
                     long rn = strtol(p, &end, 10);
                     if (end != p && rn >= 2 && rn < 256) {
                         p = end;
-                        River rv; rv.width = rw;
+                        River rv; rv.width = rw; rv.depth = (rd > 0.1f ? rd : 3.0f);
                         for (int k = 0; k < (int)rn*2; k++) {
                             float val = strtof(p, &end);
                             if (end == p) break;
@@ -1634,7 +1672,7 @@ int main(int, char**) {
             for (auto& rv : rivers) {
                 int n = (int)rv.pts.size() / 2;
                 if (n < 2) continue;
-                fprintf(f, "    g3d_river_begin(%.3f);\n", rv.width);
+                fprintf(f, "    g3d_river_begin(%.3f, %.3f);\n", rv.width, rv.depth*0.8f);
                 for (int k = 0; k < n; k++)
                     fprintf(f, "    g3d_river_point(%.3f, %.3f);\n", rv.pts[k*2], rv.pts[k*2+1]);
                 fputs("    g3d_river_end();   // rio: agua + flujo + cascadas\n", f);
@@ -2533,7 +2571,8 @@ int main(int, char**) {
                 // RIO: cada clic anade un punto del cauce; doble clic lo termina.
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                     if ((int)river_draft.size() >= 4) {   // al menos 2 puntos
-                        rivers.push_back({ river_draft, river_width });
+                        carve_river(river_draft, river_width, river_depth);   // excava el lecho
+                        rivers.push_back({ river_draft, river_width, river_depth });
                         rebuild_water();
                         status = "Rio anadido (" + std::to_string(river_draft.size()/2) + " puntos)";
                     }
@@ -2828,6 +2867,7 @@ int main(int, char**) {
                                "a la desembocadura). Doble clic para terminar el rio. El agua baja "
                                "siguiendo el relieve; donde cae un desnivel fuerte sale una cascada.");
             ImGui::SliderFloat("Ancho", &river_width, 1.0f, 30.0f, "%.1f");
+            ImGui::SliderFloat("Profundidad del cauce", &river_depth, 0.5f, 10.0f, "%.1f");
             ImGui::Separator();
             ImGui::Text("Rios: %d    Trazando: %d puntos", (int)rivers.size(), (int)river_draft.size()/2);
             if (!river_draft.empty() && ImGui::Button("Cancelar el trazo actual")) river_draft.clear();

@@ -781,7 +781,7 @@ int main(int, char**) {
                 "PROCESS " + o.name + "(int id, int modelo)\n"
                 "PRIVATE\n"
                 "    int ch; int gnd; int inw; int moja;\n"
-                "    float wx; float wz; float wl; float spd; float t; float facing;\n"
+                "    float wx; float wz; float wl; float spd; float t; float facing; float wlev;\n"
                 "    float mirax; float miray; float adel; float lat;\n"
                 "    float px; float py; float pz; float prevx; float prevz; float dt; float ript;\n"
                 "END\n"
@@ -867,14 +867,28 @@ int main(int, char**) {
                 o.x, o.y, o.z, o.char_radius, o.char_height, o.walk_speed, o.run_speed, o.jump_force);
             s += b;
 
-            if (water_on && o.buoyant) {
-                snprintf(b, sizeof(b),
-                    "\n        // ---------- AGUA: flota y nada ----------\n"
-                    "        inw = 0;\n"
-                    "        IF (py < %.3f) inw = 1; END\n"
-                    "        g3d_char_set_water(ch, inw, %.3f);\n",
-                    water_level - 1.2f, water_level);
-                s += b;
+            {
+                // Nado + ondas en el agua que haya DEBAJO (mar, lago o rio). Cada
+                // frame se consulta el nivel en su posicion; si no hay agua, muy
+                // negativo y no pasa nada. wl aqui es la velocidad de movimiento.
+                s += "\n        // ---------- AGUA: nada y hace ondas (mar / lago / rio) ----------\n"
+                     "        wlev = g3d_water_level_at(px, pz);\n"
+                     "        inw = 0;\n"
+                     "        IF (wlev > -100000.0)\n"
+                     "            IF (py < wlev - 1.2) inw = 1; END\n"
+                     "            g3d_char_set_water(ch, inw, wlev);\n"
+                     "            IF (py < wlev)\n"
+                     "                IF (moja == 0) g3d_water_splash(px, wlev, pz, 1.0); END   // chapuzon\n"
+                     "                moja = 1;\n"
+                     "                ript = ript + dt;\n"
+                     "                IF (ript > 0.12 AND wl > 0.001) g3d_water_ripple(px, pz, 0.6); ript = 0.0; END\n"
+                     "            ELSE\n"
+                     "                moja = 0;\n"
+                     "            END\n"
+                     "        ELSE\n"
+                     "            g3d_char_set_water(ch, 0, 0.0);   // fuera del agua: anda normal\n"
+                     "            moja = 0;\n"
+                     "        END\n";
             }
             if (o.zone_layer >= 0) {
                 snprintf(b, sizeof(b),
@@ -883,22 +897,6 @@ int main(int, char**) {
                     "            g3d_char_set_position(ch, prevx, py, prevz);\n"
                     "            px = prevx; pz = prevz;\n"
                     "        END\n", o.zone_layer + 1, o.zone_layer);
-                s += b;
-            }
-            if (water_on) {   // ondas al andar/nadar por el agua + chapuzon al entrar
-                snprintf(b, sizeof(b),
-                    "\n        // ---------- ONDAS EN EL AGUA ----------\n"
-                    "        IF (py < %.3f)\n"
-                    "            IF (moja == 0) g3d_water_splash(px, %.3f, pz, 1.0); END   // chapuzon al entrar\n"
-                    "            moja = 1;\n"
-                    "            ript = ript + dt;\n"
-                    "            IF (ript > 0.12 AND wl > 0.001)\n"
-                    "                g3d_water_ripple(px, pz, 0.6);   // estela mientras se mueve\n"
-                    "                ript = 0.0;\n"
-                    "            END\n"
-                    "        ELSE\n"
-                    "            moja = 0;\n"
-                    "        END\n", water_level, water_level);
                 s += b;
             }
 
@@ -922,11 +920,11 @@ int main(int, char**) {
                     "                g3d_model_animate(modelo, %d, t, 1);      // quieto\n"
                     "            END\n"
                     "        END\n%s",
-                    (water_on && o.buoyant && o.anim_swim >= 0) ? "        IF (inw == 0)\n" : "",
+                    (o.anim_swim >= 0) ? "        IF (inw == 0)\n" : "",
                     o.anim_jump, o.anim_run, o.anim_walk, o.anim_idle,
-                    (water_on && o.buoyant && o.anim_swim >= 0) ? "        END\n" : "");
+                    (o.anim_swim >= 0) ? "        END\n" : "");
                 s += b;
-                if (water_on && o.buoyant && o.anim_swim >= 0) {
+                if (o.anim_swim >= 0) {
                     snprintf(b, sizeof(b),
                         "        IF (inw) g3d_model_animate(modelo, %d, t, 1); END   // nadando\n", o.anim_swim);
                     s += b;
@@ -1839,7 +1837,7 @@ int main(int, char**) {
     // FUERA del frame de ImGui: play_start hace popen(fork) y carga modulos que
     // reinicializan SDL; hacerlo en mitad del frame se lleva por delante el contexto GL.
     int  play_req = 0;   // 0=nada 1=arrancar 2=parar
-    struct SimBody { int ent, bid, buoy, wet; float half, mass, bk, prevx, prevy, prevz, ript; };
+    struct SimBody { int ent, bid, buoy, wet; float half, mass, bk, prevx, prevy, prevz, ript, dens; };
     std::vector<SimBody> sim_bodies;
     struct SimAttach { int ent, node; float ox, oy, oz, sc, yaw; };
     std::vector<SimAttach> sim_attach;
@@ -1876,12 +1874,11 @@ int main(int, char**) {
                 else if(o.phys==3) bid=g3d_rigidbody_create_capsule(o.x,by0,o.z,c,c,o.mass);
                 else bid=g3d_rigidbody_create_cylinder(o.x,by0,o.z,c,c,o.mass);
                 g3d_rigidbody_set_bounce(bid,o.bounce,o.friction);
-                int buoy=(water_on&&o.buoyant&&o.mass>0.0f)?1:0; float bk=0.0f;
-                // flotacion real: la hace el motor repartiendo el empuje por el
-                // volumen sumergido (profundidad, adrizamiento y vuelco salen solos)
-                if(buoy) g3d_rigidbody_set_buoyancy(bid, water_level,
-                                                    o.density>0.05f?o.density:0.05f);
-                sim_bodies.push_back({ o.entity, bid, buoy, 0, c, o.mass, bk, o.x, by0, o.z, 0.0f });
+                // flota si esta marcado (da igual que el agua sea mar, lago o rio;
+                // el nivel se consulta por frame con g3d_water_level_at).
+                int buoy=(o.buoyant&&o.mass>0.0f)?1:0; float bk=0.0f;
+                float dens=o.density>0.05f?o.density:0.05f;
+                sim_bodies.push_back({ o.entity, bid, buoy, 0, c, o.mass, bk, o.x, by0, o.z, 0.0f, dens });
             }
         }
         if (sim_player_idx>=0 && sim_player_model)
@@ -1918,24 +1915,30 @@ int main(int, char**) {
         for (auto& b : sim_bodies){
             g3d_entity_impl_set_position(b.ent, g3d_rigidbody_render_x(b.bid), g3d_rigidbody_render_y(b.bid), g3d_rigidbody_render_z(b.bid));
             g3d_entity_impl_set_rotation(b.ent, g3d_rigidbody_angle_x(b.bid), g3d_rigidbody_angle_y(b.bid), g3d_rigidbody_angle_z(b.bid));
-            // Agua: chapuzon y estela por CONTACTO (flote o no); la flotacion aparte.
-            if (water_on) {
+            // Agua: flota/salpica/ondas en el agua que tenga DEBAJO (mar, lago o
+            // rio). Cada frame se consulta el nivel local, igual que en el juego.
+            {
                 float bx = g3d_rigidbody_x(b.bid), by = g3d_rigidbody_y(b.bid), bz = g3d_rigidbody_z(b.bid);
-                if (by - b.half < water_level) {
-                    if (!b.wet) {
-                        g3d_water_splash(bx, water_level, bz, 1.0f); b.wet = 1;
-                        // el agua frena: si no, lo que flota patina por el lago sin parar
-                        g3d_rigidbody_set_damping(b.bid, 2.5f, 3.0f);
-                    }
-                    // solo agita el agua mientras SE MUEVE cerca de la superficie:
-                    // hundido y en reposo, las ondas paran; flotando, el oleaje lo mece
-                    float dx=bx-b.prevx, dy=by-b.prevy, dz=bz-b.prevz;
-                    if (dx*dx+dy*dy+dz*dz > 0.0004f && by + b.half > water_level - 1.0f) {
-                        b.ript += dt;
-                        if (b.ript > 0.15f) { g3d_water_ripple(bx, bz, 0.4f); b.ript = 0.0f; }
+                float wlev = g3d_water_level_at(bx, bz);
+                if (wlev > -100000.0f) {
+                    if (b.buoy) g3d_rigidbody_set_buoyancy(b.bid, wlev, b.dens);
+                    if (by - b.half < wlev) {
+                        if (!b.wet) {
+                            g3d_water_splash(bx, wlev, bz, 1.0f); b.wet = 1;
+                            g3d_rigidbody_set_damping(b.bid, 2.5f, 3.0f);   // el agua frena
+                        }
+                        float dx=bx-b.prevx, dy=by-b.prevy, dz=bz-b.prevz;
+                        if (dx*dx+dy*dy+dz*dz > 0.0004f && by + b.half > wlev - 1.0f) {
+                            b.ript += dt;
+                            if (b.ript > 0.15f) { g3d_water_ripple(bx, bz, 0.4f); b.ript = 0.0f; }
+                        }
+                    } else {
+                        if (b.wet) g3d_rigidbody_set_damping(b.bid, 0.05f, 0.05f);
+                        b.wet = 0;
                     }
                 } else {
-                    if (b.wet) g3d_rigidbody_set_damping(b.bid, 0.05f, 0.05f);   // fuera del agua
+                    if (b.buoy) g3d_rigidbody_set_buoyancy(b.bid, wlev, 0.0f);   // sin agua
+                    if (b.wet) g3d_rigidbody_set_damping(b.bid, 0.05f, 0.05f);
                     b.wet = 0;
                 }
                 b.prevx = bx; b.prevy = by; b.prevz = bz;
@@ -1960,7 +1963,11 @@ int main(int, char**) {
             if (!io.WantTextInput && ImGui::IsKeyDown(ImGuiKey_Space)) g3d_char_jump(sim_pch,p.jump_force);
             g3d_char_update(sim_pch,dt);
             px=g3d_char_x(sim_pch); py=g3d_char_y(sim_pch); pz=g3d_char_z(sim_pch);
-            if (water_on && p.buoyant){ if (py<water_level-1.2f) inw=1; g3d_char_set_water(sim_pch,inw,water_level); }
+            { float wlev = g3d_water_level_at(px, pz);   // mar, lago o rio bajo el jugador
+              if (wlev > -100000.0f) { if (py < wlev - 1.2f) inw = 1; g3d_char_set_water(sim_pch, inw, wlev);
+                  if (py < wlev) { if (wl > 0.001f) { sim_ript += dt;
+                      if (sim_ript > 0.12f) { g3d_water_ripple(px, pz, 0.6f); sim_ript = 0.0f; } } } }
+              else g3d_char_set_water(sim_pch, 0, 0.0f); }
             if (p.zone_layer>=0 && g3d_zone_blocked(px,pz,p.zone_layer)){
                 g3d_char_set_position(sim_pch,sim_pprevx,py,sim_pprevz); px=sim_pprevx; pz=sim_pprevz;
             }

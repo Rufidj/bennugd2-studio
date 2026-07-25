@@ -156,6 +156,11 @@ extern "C" {
     void  g3d_fluid_clear(void);
     void  g3d_fluid_set_style(float amp, float len, float speed, float dr, float dg, float db,
                               float sr, float sg, float sb, unsigned int tex, float opacity);
+    // ---- rios (agua por un camino de puntos + cascadas) ----
+    int   g3d_river_add(const float* pts_xyz, int n, float width);
+    void  g3d_flow_clear(void);
+    void  g3d_flow_set_color(float r, float g, float b);
+    float g3d_water_level_at(float x, float z);   // nivel del agua (mar/lago/rio) en un punto
     void  g3d_water_ripple(float x, float z, float strength);
     void  g3d_water_splash(float x, float y, float z, float strength);
     int   g3d_editor_cave_enter(int scene, void *terrain, float world_size);
@@ -329,19 +334,33 @@ int main(int, char**) {
     bool  lake_auto  = true;    // nivel automatico (justo antes de desbordar)
     float lake_level = -1.0f;   // nivel manual del agua
     float lake_depth = 4.0f;    // profundidad (para el tinte y la fisica)
+    // ---- rios (agua por un camino de puntos clicados) ----
+    struct River { std::vector<float> pts; float width; };   // pts = pares x,z
+    std::vector<River> rivers;
+    std::vector<float> river_draft;   // rio que se esta trazando (pares x,z)
+    float river_width = 6.0f;
 
-    // Reconstruye TODOS los lagos en el motor (para el preview del viewport).
-    // Se llama al colocar/borrar un lago y tras esculpir el terreno, porque el
-    // lago sigue la forma del hueco y hay que rehacerlo con el relieve actual.
-    auto rebuild_lakes = [&]() {
+    // Reconstruye TODO el agua colocada (lagos + rios) en el motor, para el
+    // preview del viewport. Se llama al colocar/borrar y tras esculpir el terreno,
+    // porque el agua sigue la forma del relieve y hay que rehacerla.
+    auto rebuild_water = [&]() {
         g3d_fluid_clear();
-        if (lakes.empty()) return;
-        g3d_scene_set_terrain_collider(terrain);   // refresca el heightfield que lee g3d_lake_add
+        g3d_flow_clear();
+        if (lakes.empty() && rivers.empty()) return;
+        g3d_scene_set_terrain_collider(terrain);   // refresca el heightfield
         g3d_fluid_set_style(0.12f, 5.0f, 1.1f,
                             w_deep[0], w_deep[1], w_deep[2],
                             w_shallow[0], w_shallow[1], w_shallow[2], 0, 0.88f);
+        g3d_flow_set_color(w_shallow[0] + 0.25f, w_shallow[1] + 0.25f, w_shallow[2] + 0.25f);
         for (auto& lk : lakes)
             g3d_lake_add(lk.sx, lk.sz, lk.level, lk.depth);
+        for (auto& rv : rivers) {
+            int n = (int)rv.pts.size() / 2;
+            if (n < 2) continue;
+            std::vector<float> xyz(n * 3);   // el motor quiere x,y,z; la y la recalcula del terreno
+            for (int k = 0; k < n; k++) { xyz[k*3]=rv.pts[k*2]; xyz[k*3+1]=0.0f; xyz[k*3+2]=rv.pts[k*2+1]; }
+            g3d_river_add(xyz.data(), n, rv.width);
+        }
     };
 
     // ---- ImGui ----
@@ -441,7 +460,7 @@ int main(int, char**) {
     std::string script_title;   // como se llama en la barra del editor
     // ---- herramienta activa (toolbar con iconos) ----
     enum Tool { T_SELECT, T_MOVE, T_ROTATE, T_SCALE, T_PLACE, T_RAISE, T_LOWER, T_SMOOTH, T_FLATTEN, T_PAINT,
-                T_HOLE, T_ZONE, T_LAKE };
+                T_HOLE, T_ZONE, T_LAKE, T_RIVER };
     bool hole_fill = false;   // T_HOLE: false=perforar, true=rellenar
     int tool = T_SELECT;
     int  zone_layer = 0;      // T_ZONE: capa (0..3) que se pinta
@@ -930,7 +949,7 @@ int main(int, char**) {
                 "// del cuerpo rigido y se escriben en x, y, z. A partir de aqui es TUYO.\n"
                 "PROCESS %s(int modelo)\n"
                 "PRIVATE\n"
-                "    int cuerpo; int moja; float bx; float by; float bz; float mov;\n"
+                "    int cuerpo; int moja; float bx; float by; float bz; float mov; float wl;\n"
                 "    float prevx; float prevy; float prevz; float dt; float ript;\n"
                 "END\n"
                 "BEGIN\n"
@@ -959,52 +978,53 @@ int main(int, char**) {
             snprintf(b, sizeof(b), "    g3d_rigidbody_set_bounce(cuerpo, %.3f, %.3f);   // rebote, friccion\n",
                      o.bounce, o.friction);
             s += b;
-            if (water_on && o.buoyant && o.mass > 0.0f) {
-                // Flotacion real: el motor reparte el empuje por el volumen sumergido,
-                // no lo aplica en el centro. De ahi salen solas la profundidad a la que
-                // queda, que se enderece, y que vuelque si la forma es inestable o el
-                // golpe es bastante fuerte. Nada de eso hay que programarlo aqui.
-                snprintf(b, sizeof(b),
-                         "    g3d_rigidbody_set_buoyancy(cuerpo, %.3f, %.3f);   // nivel del agua, densidad\n",
-                         water_level, o.density > 0.05f ? o.density : 0.05f);
-                s += b;
-            }
             s += "\n    LOOP\n";
 
-            // Agua: el chapuzon y la estela son por CONTACTO, flote o no. Un barril
-            // que rueda al agua y se hunde tambien salpica. La flotacion es aparte.
-            // Un cuerpo fijo no se mueve, asi que nada de esto le aplica.
-            if (water_on && o.mass > 0.0f) {
+            // Agua: el objeto flota y salpica en el agua que tenga DEBAJO, sea el
+            // mar, un lago o un rio. Cada frame se consulta el nivel de agua en su
+            // posicion (g3d_water_level_at); si no hay agua ahi, devuelve un valor
+            // muy negativo y no pasa nada. Un cuerpo fijo (masa 0) no se mueve, asi
+            // que esto solo se genera para los que si.
+            if (o.mass > 0.0f) {
+                float dens = o.density > 0.05f ? o.density : 0.05f;
                 snprintf(b, sizeof(b),
-                    "        // ---------- CONTACTO CON EL AGUA ----------\n"
+                    "        // ---------- AGUA BAJO EL OBJETO (mar / lago / rio) ----------\n"
                     "        bx = g3d_rigidbody_x(cuerpo); by = g3d_rigidbody_y(cuerpo);\n"
                     "        bz = g3d_rigidbody_z(cuerpo);\n"
-                    "        IF (by - %.3f < %.3f)\n"
-                    "            IF (moja == 0)\n"
-                    "                g3d_water_splash(bx, %.3f, bz, 1.0);   // chapuzon al entrar\n"
-                    "                // El agua frena. Sin esto, un objeto que flota conserva su\n"
-                    "                // velocidad para siempre y cruza el lago patinando como una tabla.\n"
-                    "                g3d_rigidbody_set_damping(cuerpo, 2.5, 3.0);\n"
-                    "            END\n"
-                    "            moja = 1;\n"
-                    "            // Solo agita el agua mientras SE MUEVE y esta cerca de la\n"
-                    "            // superficie: si se hunde y se queda quieto en el fondo, las\n"
-                    "            // ondas paran. Si flota, el oleaje lo mece y siguen.\n"
-                    "            mov = (bx-prevx)*(bx-prevx) + (by-prevy)*(by-prevy) + (bz-prevz)*(bz-prevz);\n"
-                    "            IF (mov > 0.0004 AND by + %.3f > %.3f)\n"
-                    "                ript = ript + dt;\n"
-                    "                IF (ript > 0.15)\n"
-                    "                    g3d_water_ripple(bx, bz, 0.4);\n"
-                    "                    ript = 0.0;\n"
-                    "                END\n"
-                    "            END\n",
-                    c, water_level, water_level, c, water_level - 1.0f);
+                    "        wl = g3d_water_level_at(bx, bz);   // nivel del agua aqui (o muy negativo)\n"
+                    "        IF (wl > -100000.0)\n", 0);
                 s += b;
-
-                s += "        ELSE\n"
-                     "            // al salir del agua se recupera la resistencia del aire\n"
-                     "            IF (moja == 1) g3d_rigidbody_set_damping(cuerpo, 0.05, 0.05); END\n"
-                     "            moja = 0;\n        END\n"
+                if (o.buoyant) {
+                    snprintf(b, sizeof(b),
+                    "            // flota en ESTE nivel (el motor reparte el empuje por el volumen\n"
+                    "            // sumergido: profundidad, enderezado y vuelco salen solos)\n"
+                    "            g3d_rigidbody_set_buoyancy(cuerpo, wl, %.3f);\n", dens);
+                    s += b;
+                }
+                snprintf(b, sizeof(b),
+                    "            IF (by - %.3f < wl)\n"
+                    "                IF (moja == 0)\n"
+                    "                    g3d_water_splash(bx, wl, bz, 1.0);   // chapuzon al entrar\n"
+                    "                    g3d_rigidbody_set_damping(cuerpo, 2.5, 3.0);   // el agua frena\n"
+                    "                END\n"
+                    "                moja = 1;\n"
+                    "                // agita el agua solo mientras SE MUEVE cerca de la superficie\n"
+                    "                mov = (bx-prevx)*(bx-prevx) + (by-prevy)*(by-prevy) + (bz-prevz)*(bz-prevz);\n"
+                    "                IF (mov > 0.0004 AND by + %.3f > wl - 1.0)\n"
+                    "                    ript = ript + dt;\n"
+                    "                    IF (ript > 0.15) g3d_water_ripple(bx, bz, 0.4); ript = 0.0; END\n"
+                    "                END\n"
+                    "            ELSE\n"
+                    "                IF (moja == 1) g3d_rigidbody_set_damping(cuerpo, 0.05, 0.05); END\n"
+                    "                moja = 0;\n"
+                    "            END\n"
+                    "        ELSE\n"
+                    "            IF (moja == 1) g3d_rigidbody_set_damping(cuerpo, 0.05, 0.05); END\n"
+                    "            moja = 0;\n", c, c);
+                s += b;
+                if (o.buoyant)
+                    s += "            g3d_rigidbody_set_buoyancy(cuerpo, wl, 0.0);   // sin agua: sin flotacion\n";
+                s += "        END\n"
                      "        prevx = bx; prevy = by; prevz = bz;\n\n";
             }
             s += "        // La fisica manda: se escriben sus coords en las vars nativas y\n"
@@ -1130,6 +1150,11 @@ int main(int, char**) {
                 shadow_res);
         for (auto& lk : lakes)
             fprintf(f, "LAKE %.4f %.4f %.4f %.4f\n", lk.sx, lk.sz, lk.level, lk.depth);
+        for (auto& rv : rivers) {
+            fprintf(f, "RIVER %.3f %d", rv.width, (int)rv.pts.size()/2);
+            for (float c : rv.pts) fprintf(f, " %.3f", c);
+            fprintf(f, "\n");
+        }
         for (auto& o : objects) {
             fprintf(f, "OBJECT %s %.4f %.4f %.4f %.4f %.4f SCRIPT %s PHYS %d %.3f %.3f %.3f %d %.3f %.3f",
                     o.asset.c_str(), o.x, o.y, o.z, o.ry, o.scale, o.name.c_str(),
@@ -1166,7 +1191,7 @@ int main(int, char**) {
         undo_reset();
         for (auto& o : objects) if (o.entity >= 0) g3d_entity_impl_destroy(o.entity);
         objects.clear(); obj_sel = -1;
-        lakes.clear();
+        lakes.clear(); rivers.clear(); river_draft.clear();
         // terreno primero: las cuevas/objetos se apoyan en su altura
         if (terrain) g3d_editor_terrain_load(terrain, (path + ".terrain").c_str());
         g3d_editor_paint_load((path + ".paint.png").c_str());
@@ -1186,6 +1211,25 @@ int main(int, char**) {
             { float lsx, lsz, llv, ldp;
               if (sscanf(line, "LAKE %f %f %f %f", &lsx,&lsz,&llv,&ldp) == 4) {
                   lakes.push_back({ lsx, lsz, llv, ldp }); continue; } }
+            if (strncmp(line, "RIVER ", 6) == 0) {
+                char* p = line + 6; char* end;
+                float rw = strtof(p, &end);
+                if (end != p) {
+                    p = end;
+                    long rn = strtol(p, &end, 10);
+                    if (end != p && rn >= 2 && rn < 256) {
+                        p = end;
+                        River rv; rv.width = rw;
+                        for (int k = 0; k < (int)rn*2; k++) {
+                            float val = strtof(p, &end);
+                            if (end == p) break;
+                            rv.pts.push_back(val); p = end;
+                        }
+                        if ((int)rv.pts.size() == (int)rn*2) rivers.push_back(rv);
+                    }
+                }
+                continue;
+            }
             int cm, cfol, sres = 2048; float px,py,pz, lx,ly,lz, cd, ch, cf = 0.45f, cs = 120.0f;
             int nleidos = sscanf(line, "CAMERA %d %d %f %f %f %f %f %f %f %f %f %f %d",
                        &cm, &cfol, &px,&py,&pz, &lx,&ly,&lz, &cd, &ch, &cf, &cs, &sres);
@@ -1241,7 +1285,7 @@ int main(int, char**) {
             }
         }
         fclose(f);
-        rebuild_lakes();   // dibujar los lagos cargados (con el relieve ya puesto)
+        rebuild_water();   // dibujar los lagos cargados (con el relieve ya puesto)
         status = "Escena cargada (" + std::to_string(objects.size()) + " objetos)";
     };
 
@@ -1580,13 +1624,23 @@ int main(int, char**) {
                         paints[water_tex_sel].file.c_str());
             fputs("    g3d_water_set_enabled(1);\n", f);
         }
-        // ---- lagos: agua con la forma de un hoyo del terreno (flood-fill) ----
-        if (!lakes.empty()) {
+        // ---- lagos y rios: agua colocada (flood-fill / camino), no un mar global ----
+        if (!lakes.empty() || !rivers.empty()) {
             fprintf(f, "    g3d_fluid_style(0.12, 5.0, 1.1, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, 0.88);\n",
                     w_deep[0], w_deep[1], w_deep[2], w_shallow[0], w_shallow[1], w_shallow[2]);
+            fprintf(f, "    g3d_flow_set_color(%.4f, %.4f, %.4f);\n",
+                    w_shallow[0] + 0.25f, w_shallow[1] + 0.25f, w_shallow[2] + 0.25f);
             for (auto& lk : lakes)
                 fprintf(f, "    g3d_lake_add(%.3f, %.3f, %.3f, %.3f);   // lago con la forma del hoyo\n",
                         lk.sx, lk.sz, lk.level, lk.depth);
+            for (auto& rv : rivers) {
+                int n = (int)rv.pts.size() / 2;
+                if (n < 2) continue;
+                fprintf(f, "    g3d_river_begin(%.3f);\n", rv.width);
+                for (int k = 0; k < n; k++)
+                    fprintf(f, "    g3d_river_point(%.3f, %.3f);\n", rv.pts[k*2], rv.pts[k*2+1]);
+                fputs("    g3d_river_end();   // rio: agua + flujo + cascadas\n", f);
+            }
         }
         // objetos + sus componentes (+ cuerpos fisicos Jolt)
         fputs("    escena_dt = 1.0 / 60.0;\n", f);
@@ -2175,6 +2229,7 @@ int main(int, char**) {
             ImGui::SameLine(0, 12); ImGui::TextDisabled("|"); ImGui::SameLine(0, 12);
             toolBtn(ICON_FA_DRAW_POLYGON,        T_ZONE,    "Pintar ZONAS de barrera (por donde no pasan ciertos objetos)");
             toolBtn(ICON_FA_DROPLET,             T_LAKE,    "Lago: clic en un hoyo del terreno para llenarlo de agua");
+            toolBtn(ICON_FA_WATER,               T_RIVER,   "Rio: clic para poner puntos del cauce, doble clic para terminar");
 
             // ---- PLAY: compila el juego y lo ejecuta en su propia ventana ----
             // Es un proceso BennuGD2 normal, con todos sus hooks: fidelidad total
@@ -2462,10 +2517,24 @@ int main(int, char**) {
                     if (tool == T_ZONE)
                         g3d_zone_paint(hit[0], hit[2], brush_r, zone_layer, zone_erase ? 0 : 1);
                 }
-                // al soltar una pincelada, si hay lagos hay que rehacerlos: siguen
-                // la forma del hoyo y el relieve acaba de cambiar.
-                if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && !lakes.empty())
-                    rebuild_lakes();
+                // al soltar una pincelada, si hay agua hay que rehacerla: sigue
+                // la forma del relieve y este acaba de cambiar.
+                if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && (!lakes.empty() || !rivers.empty()))
+                    rebuild_water();
+            } else if (tool == T_RIVER && terrain &&
+                       g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
+                // RIO: cada clic anade un punto del cauce; doble clic lo termina.
+                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    if ((int)river_draft.size() >= 4) {   // al menos 2 puntos
+                        rivers.push_back({ river_draft, river_width });
+                        rebuild_water();
+                        status = "Rio anadido (" + std::to_string(river_draft.size()/2) + " puntos)";
+                    }
+                    river_draft.clear();
+                } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    river_draft.push_back(hit[0]);
+                    river_draft.push_back(hit[2]);
+                }
             } else if (tool == T_LAKE && terrain &&
                        g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
                 // LAGO: clic en un hoyo -> se rellena de agua con la forma del hueco.
@@ -2476,10 +2545,10 @@ int main(int, char**) {
                         ? g3d_lake_spill_level(hit[0], hit[2]) - 0.3f   // por debajo del borde
                         : lake_level;
                     lakes.push_back({ hit[0], hit[2], lvl, lake_depth });
-                    rebuild_lakes();
+                    rebuild_water();
                     status = "Lago anadido (nivel " + std::to_string((int)lvl) + ")";
                 }
-            } else if (!terr_tool && tool != T_LAKE && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            } else if (!terr_tool && tool != T_LAKE && tool != T_RIVER && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 // punto: sobre agua->superficie, si no sobre el terreno/fondo
                 int ok = place_point(sx, sy, hit);
                 if (ok) {
@@ -2502,6 +2571,23 @@ int main(int, char**) {
                         }
                         if (bi >= 0 && best < 36.0f) obj_sel = bi;
                     }
+                }
+            }
+        }
+        // dibujar el trazo del rio en curso (puntos + lineas) mientras se traza
+        if (tool == T_RIVER && !river_draft.empty() && terrain) {
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            ImVec2 prev; bool have = false;
+            int np = (int)river_draft.size() / 2;
+            for (int k = 0; k < np; k++) {
+                float wx = river_draft[k*2], wz = river_draft[k*2+1];
+                float wy = g3d_editor_terrain_height(terrain, wx, wz) + 0.3f;
+                float p2[2];
+                if (g3d_editor_world_to_screen(wx, wy, wz, (float)vp.w, (float)vp.h, p2)) {
+                    ImVec2 p(img_min.x + p2[0], img_min.y + p2[1]);
+                    if (have) dl->AddLine(prev, p, IM_COL32(80,190,255,230), 3.0f);
+                    dl->AddCircleFilled(p, 5.0f, IM_COL32(120,210,255,255));
+                    prev = p; have = true;
                 }
             }
         }
@@ -2720,13 +2806,29 @@ int main(int, char**) {
             ImGui::Separator();
             ImGui::Text("Lagos: %d", (int)lakes.size());
             if (!lakes.empty()) {
-                if (ImGui::Button("Quitar el ultimo")) { lakes.pop_back(); rebuild_lakes(); }
+                if (ImGui::Button("Quitar el ultimo")) { lakes.pop_back(); rebuild_water(); }
                 ImGui::SameLine();
-                if (ImGui::Button("Quitar todos")) { lakes.clear(); rebuild_lakes(); }
+                if (ImGui::Button("Quitar todos")) { lakes.clear(); rebuild_water(); }
             }
             ImGui::TextDisabled("El color y el oleaje salen del Entorno (agua). El agua global "
                                 "y los lagos pueden convivir; apaga el agua global si solo "
                                 "quieres lagos.");
+            ImGui::Separator();
+        }
+        if (tool == T_RIVER) {
+            ImGui::SeparatorText(ICON_FA_WATER "  Rio");
+            ImGui::TextWrapped("Clic en el terreno para poner los puntos del cauce (del nacimiento "
+                               "a la desembocadura). Doble clic para terminar el rio. El agua baja "
+                               "siguiendo el relieve; donde cae un desnivel fuerte sale una cascada.");
+            ImGui::SliderFloat("Ancho", &river_width, 1.0f, 30.0f, "%.1f");
+            ImGui::Separator();
+            ImGui::Text("Rios: %d    Trazando: %d puntos", (int)rivers.size(), (int)river_draft.size()/2);
+            if (!river_draft.empty() && ImGui::Button("Cancelar el trazo actual")) river_draft.clear();
+            if (!rivers.empty()) {
+                if (ImGui::Button("Quitar el ultimo rio")) { rivers.pop_back(); rebuild_water(); }
+                ImGui::SameLine();
+                if (ImGui::Button("Quitar todos##rios")) { rivers.clear(); rebuild_water(); }
+            }
             ImGui::Separator();
         }
         if (tool == T_PAINT) {

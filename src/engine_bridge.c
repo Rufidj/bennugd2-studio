@@ -271,6 +271,9 @@ void g3d_editor_water_update(int enabled, float level, float size,
 void g3d_editor_water_set_texture(void *tex) {
     g3d_water_set_texture(tex ? ((G3DTexture *)tex)->gl_handle : 0);
 }
+void g3d_editor_fluid_set_texture(void *tex) {
+    g3d_fluid_set_texture(tex ? ((G3DTexture *)tex)->gl_handle : 0);
+}
 
 /* -------- CUEVAS: volumen de voxels carvable con el raton (3D) -------- */
 static int g_cave_id = -1, g_cave_entity = -1;

@@ -151,6 +151,7 @@ extern "C" {
                                   float amp, float wavelen, float speed, float swell,
                                   float dr, float dg, float db, float sr, float sg, float sb);
     void  g3d_editor_water_set_texture(void *tex);
+    void  g3d_editor_fluid_set_texture(void *tex);
     // ---- lagos por flood-fill (agua colocada donde quieras, con la forma del hoyo) ----
     int   g3d_lake_add(float seed_x, float seed_z, float surface_y, float depth);
     float g3d_lake_spill_level(float seed_x, float seed_z);
@@ -378,10 +379,12 @@ int main(int, char**) {
         g3d_flow_clear();
         if (lakes.empty() && rivers.empty()) return;
         g3d_scene_set_terrain_collider(terrain);   // refresca el heightfield
-        g3d_fluid_set_style(0.12f, 5.0f, 1.1f,
+        // mismos parametros que el agua global (panel Entorno): olas, color, textura
+        g3d_fluid_set_style(w_amp, w_len, w_speed,
                             w_deep[0], w_deep[1], w_deep[2],
                             w_shallow[0], w_shallow[1], w_shallow[2], 0, 0.88f);
-        g3d_flow_set_color(w_shallow[0] + 0.25f, w_shallow[1] + 0.25f, w_shallow[2] + 0.25f);
+        g3d_editor_fluid_set_texture((water_tex_sel >= 0 && water_tex_sel < (int)paints.size())
+                                     ? paint_tex(water_tex_sel) : nullptr);
         for (auto& lk : lakes)
             g3d_lake_add(lk.sx, lk.sz, lk.level, lk.depth);
         for (auto& rv : rivers) {
@@ -1662,10 +1665,12 @@ int main(int, char**) {
         }
         // ---- lagos y rios: agua colocada (flood-fill / camino), no un mar global ----
         if (!lakes.empty() || !rivers.empty()) {
-            fprintf(f, "    g3d_fluid_style(0.12, 5.0, 1.1, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, 0.88);\n",
+            fprintf(f, "    g3d_fluid_style(%.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, 0.88);\n",
+                    w_amp, w_len, w_speed,
                     w_deep[0], w_deep[1], w_deep[2], w_shallow[0], w_shallow[1], w_shallow[2]);
-            fprintf(f, "    g3d_flow_set_color(%.4f, %.4f, %.4f);\n",
-                    w_shallow[0] + 0.25f, w_shallow[1] + 0.25f, w_shallow[2] + 0.25f);
+            if (water_tex_sel >= 0 && water_tex_sel < (int)paints.size())
+                fprintf(f, "    g3d_fluid_set_texture(g3d_load_texture(\"Assets/%s\"));\n",
+                        paints[water_tex_sel].file.c_str());
             for (auto& lk : lakes)
                 fprintf(f, "    g3d_lake_add(%.3f, %.3f, %.3f, %.3f);   // lago con la forma del hoyo\n",
                         lk.sx, lk.sz, lk.level, lk.depth);
@@ -2856,9 +2861,9 @@ int main(int, char**) {
                 ImGui::SameLine();
                 if (ImGui::Button("Quitar todos")) { lakes.clear(); rebuild_water(); }
             }
-            ImGui::TextDisabled("El color y el oleaje salen del Entorno (agua). El agua global "
-                                "y los lagos pueden convivir; apaga el agua global si solo "
-                                "quieres lagos.");
+            ImGui::TextDisabled("El color, el oleaje y la TEXTURA salen del panel Entorno (agua),\n"
+                                "igual que para el mar. El agua global y los lagos conviven;\n"
+                                "apaga la global si solo quieres lagos/rios.");
             ImGui::Separator();
         }
         if (tool == T_RIVER) {

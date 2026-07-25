@@ -150,6 +150,12 @@ extern "C" {
                                   float amp, float wavelen, float speed, float swell,
                                   float dr, float dg, float db, float sr, float sg, float sb);
     void  g3d_editor_water_set_texture(void *tex);
+    // ---- lagos por flood-fill (agua colocada donde quieras, con la forma del hoyo) ----
+    int   g3d_lake_add(float seed_x, float seed_z, float surface_y, float depth);
+    float g3d_lake_spill_level(float seed_x, float seed_z);
+    void  g3d_fluid_clear(void);
+    void  g3d_fluid_set_style(float amp, float len, float speed, float dr, float dg, float db,
+                              float sr, float sg, float sb, unsigned int tex, float opacity);
     void  g3d_water_ripple(float x, float z, float strength);
     void  g3d_water_splash(float x, float y, float z, float strength);
     int   g3d_editor_cave_enter(int scene, void *terrain, float world_size);
@@ -317,6 +323,27 @@ int main(int, char**) {
                                             base_path.empty() ? nullptr : base_path.c_str());
     g3d_zone_init(161, 400.0f);   // mascara de zonas: misma extension que el terreno (grid 160)
 
+    // ---- lagos colocados (agua con la forma de un hoyo del terreno) ----
+    struct Lake { float sx, sz, level, depth; };
+    std::vector<Lake> lakes;
+    bool  lake_auto  = true;    // nivel automatico (justo antes de desbordar)
+    float lake_level = -1.0f;   // nivel manual del agua
+    float lake_depth = 4.0f;    // profundidad (para el tinte y la fisica)
+
+    // Reconstruye TODOS los lagos en el motor (para el preview del viewport).
+    // Se llama al colocar/borrar un lago y tras esculpir el terreno, porque el
+    // lago sigue la forma del hueco y hay que rehacerlo con el relieve actual.
+    auto rebuild_lakes = [&]() {
+        g3d_fluid_clear();
+        if (lakes.empty()) return;
+        g3d_scene_set_terrain_collider(terrain);   // refresca el heightfield que lee g3d_lake_add
+        g3d_fluid_set_style(0.12f, 5.0f, 1.1f,
+                            w_deep[0], w_deep[1], w_deep[2],
+                            w_shallow[0], w_shallow[1], w_shallow[2], 0, 0.88f);
+        for (auto& lk : lakes)
+            g3d_lake_add(lk.sx, lk.sz, lk.level, lk.depth);
+    };
+
     // ---- ImGui ----
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -414,7 +441,7 @@ int main(int, char**) {
     std::string script_title;   // como se llama en la barra del editor
     // ---- herramienta activa (toolbar con iconos) ----
     enum Tool { T_SELECT, T_MOVE, T_ROTATE, T_SCALE, T_PLACE, T_RAISE, T_LOWER, T_SMOOTH, T_FLATTEN, T_PAINT,
-                T_HOLE, T_ZONE };
+                T_HOLE, T_ZONE, T_LAKE };
     bool hole_fill = false;   // T_HOLE: false=perforar, true=rellenar
     int tool = T_SELECT;
     int  zone_layer = 0;      // T_ZONE: capa (0..3) que se pinta
@@ -1101,6 +1128,8 @@ int main(int, char**) {
                 cam_mode, cam_follow, cam_pos[0], cam_pos[1], cam_pos[2],
                 cam_look[0], cam_look[1], cam_look[2], gcam_dist, cam_height, cam_fwd, cam_sens,
                 shadow_res);
+        for (auto& lk : lakes)
+            fprintf(f, "LAKE %.4f %.4f %.4f %.4f\n", lk.sx, lk.sz, lk.level, lk.depth);
         for (auto& o : objects) {
             fprintf(f, "OBJECT %s %.4f %.4f %.4f %.4f %.4f SCRIPT %s PHYS %d %.3f %.3f %.3f %d %.3f %.3f",
                     o.asset.c_str(), o.x, o.y, o.z, o.ry, o.scale, o.name.c_str(),
@@ -1137,6 +1166,7 @@ int main(int, char**) {
         undo_reset();
         for (auto& o : objects) if (o.entity >= 0) g3d_entity_impl_destroy(o.entity);
         objects.clear(); obj_sel = -1;
+        lakes.clear();
         // terreno primero: las cuevas/objetos se apoyan en su altura
         if (terrain) g3d_editor_terrain_load(terrain, (path + ".terrain").c_str());
         g3d_editor_paint_load((path + ".paint.png").c_str());
@@ -1153,6 +1183,9 @@ int main(int, char**) {
                                 w_shallow[0]=s0;w_shallow[1]=s1;w_shallow[2]=s2; }
                 continue;
             }
+            { float lsx, lsz, llv, ldp;
+              if (sscanf(line, "LAKE %f %f %f %f", &lsx,&lsz,&llv,&ldp) == 4) {
+                  lakes.push_back({ lsx, lsz, llv, ldp }); continue; } }
             int cm, cfol, sres = 2048; float px,py,pz, lx,ly,lz, cd, ch, cf = 0.45f, cs = 120.0f;
             int nleidos = sscanf(line, "CAMERA %d %d %f %f %f %f %f %f %f %f %f %f %d",
                        &cm, &cfol, &px,&py,&pz, &lx,&ly,&lz, &cd, &ch, &cf, &cs, &sres);
@@ -1208,6 +1241,7 @@ int main(int, char**) {
             }
         }
         fclose(f);
+        rebuild_lakes();   // dibujar los lagos cargados (con el relieve ya puesto)
         status = "Escena cargada (" + std::to_string(objects.size()) + " objetos)";
     };
 
@@ -1545,6 +1579,14 @@ int main(int, char**) {
                 fprintf(f, "    g3d_water_set_texture(g3d_load_texture(\"Assets/%s\"));\n",
                         paints[water_tex_sel].file.c_str());
             fputs("    g3d_water_set_enabled(1);\n", f);
+        }
+        // ---- lagos: agua con la forma de un hoyo del terreno (flood-fill) ----
+        if (!lakes.empty()) {
+            fprintf(f, "    g3d_fluid_style(0.12, 5.0, 1.1, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, 0.88);\n",
+                    w_deep[0], w_deep[1], w_deep[2], w_shallow[0], w_shallow[1], w_shallow[2]);
+            for (auto& lk : lakes)
+                fprintf(f, "    g3d_lake_add(%.3f, %.3f, %.3f, %.3f);   // lago con la forma del hoyo\n",
+                        lk.sx, lk.sz, lk.level, lk.depth);
         }
         // objetos + sus componentes (+ cuerpos fisicos Jolt)
         fputs("    escena_dt = 1.0 / 60.0;\n", f);
@@ -2132,6 +2174,7 @@ int main(int, char**) {
             toolBtn(ICON_FA_CIRCLE_NOTCH,        T_HOLE,    "Terreno: agujero (para bocas de cueva)");
             ImGui::SameLine(0, 12); ImGui::TextDisabled("|"); ImGui::SameLine(0, 12);
             toolBtn(ICON_FA_DRAW_POLYGON,        T_ZONE,    "Pintar ZONAS de barrera (por donde no pasan ciertos objetos)");
+            toolBtn(ICON_FA_DROPLET,             T_LAKE,    "Lago: clic en un hoyo del terreno para llenarlo de agua");
 
             // ---- PLAY: compila el juego y lo ejecuta en su propia ventana ----
             // Es un proceso BennuGD2 normal, con todos sus hooks: fidelidad total
@@ -2419,7 +2462,24 @@ int main(int, char**) {
                     if (tool == T_ZONE)
                         g3d_zone_paint(hit[0], hit[2], brush_r, zone_layer, zone_erase ? 0 : 1);
                 }
-            } else if (!terr_tool && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                // al soltar una pincelada, si hay lagos hay que rehacerlos: siguen
+                // la forma del hoyo y el relieve acaba de cambiar.
+                if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && !lakes.empty())
+                    rebuild_lakes();
+            } else if (tool == T_LAKE && terrain &&
+                       g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
+                // LAGO: clic en un hoyo -> se rellena de agua con la forma del hueco.
+                // El nivel puede ser automatico (justo antes de desbordar) o manual.
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    g3d_scene_set_terrain_collider(terrain);   // heightfield fresco
+                    float lvl = lake_auto
+                        ? g3d_lake_spill_level(hit[0], hit[2]) - 0.3f   // por debajo del borde
+                        : lake_level;
+                    lakes.push_back({ hit[0], hit[2], lvl, lake_depth });
+                    rebuild_lakes();
+                    status = "Lago anadido (nivel " + std::to_string((int)lvl) + ")";
+                }
+            } else if (!terr_tool && tool != T_LAKE && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 // punto: sobre agua->superficie, si no sobre el terreno/fondo
                 int ok = place_point(sx, sy, hit);
                 if (ok) {
@@ -2647,6 +2707,26 @@ int main(int, char**) {
                                "Luego, en cada objeto (seccion 'Zonas'), elige que capa le bloquea. "
                                "Ej: el barco bloqueado por la capa del borde del lago; el personaje no.");
             ImGui::TextDisabled("Manten el boton izquierdo y arrastra.");
+            ImGui::Separator();
+        }
+        if (tool == T_LAKE) {
+            ImGui::SeparatorText(ICON_FA_DROPLET "  Lago");
+            ImGui::TextWrapped("Primero esculpe un hoyo/valle con las herramientas de terreno. "
+                               "Luego haz clic dentro del hoyo: el agua lo rellena con su forma.");
+            ImGui::Checkbox("Nivel automatico (hasta el borde)", &lake_auto);
+            if (!lake_auto)
+                ImGui::SliderFloat("Nivel (altura)", &lake_level, -30.0f, 40.0f, "%.1f");
+            ImGui::SliderFloat("Profundidad", &lake_depth, 0.5f, 20.0f, "%.1f");
+            ImGui::Separator();
+            ImGui::Text("Lagos: %d", (int)lakes.size());
+            if (!lakes.empty()) {
+                if (ImGui::Button("Quitar el ultimo")) { lakes.pop_back(); rebuild_lakes(); }
+                ImGui::SameLine();
+                if (ImGui::Button("Quitar todos")) { lakes.clear(); rebuild_lakes(); }
+            }
+            ImGui::TextDisabled("El color y el oleaje salen del Entorno (agua). El agua global "
+                                "y los lagos pueden convivir; apaga el agua global si solo "
+                                "quieres lagos.");
             ImGui::Separator();
         }
         if (tool == T_PAINT) {

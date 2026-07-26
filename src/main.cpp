@@ -156,6 +156,7 @@ extern "C" {
     void  g3d_flow_set_color(float r, float g, float b);
     void  g3d_flow_set_foam(float foam);
     void  g3d_flow_set_speed(float mul);
+    int   g3d_river_add_falls(const float *pts_xyz, int n, float width);
     int   g3d_editor_terrain_vcount(void *mesh);
     void  g3d_editor_terrain_snapshot(void *mesh, float *out);
     void  g3d_editor_terrain_restore(void *mesh, const float *in);
@@ -592,9 +593,19 @@ int main(int, char**) {
             river_trimmed(rv, xyz, jn);
             if ((int)xyz.size() >= 6) {
                 apply_fx(rv.fx);   // JUSTO antes de crear -> el rio captura SUS efectos
-                apply_wf(rv.wf);   // y sus cascadas capturan SU estilo de cascada
-                g3d_river_add(xyz.data(), (int)xyz.size()/3, rv.width);
+                g3d_river_add(xyz.data(), (int)xyz.size()/3, rv.width);   // superficie (recortada)
                 dbg_rios++;
+            }
+            // Cascadas: con el camino COMPLETO (sin recortar), para que una caida que
+            // aterriza en un lago no desaparezca. Estilo de cascada propio.
+            {
+                int nf = (int)rv.pts.size() / 2;
+                if (nf >= 2) {
+                    std::vector<float> full(nf * 3);
+                    for (int k = 0; k < nf; k++) { full[k*3]=rv.pts[k*2]; full[k*3+1]=0.0f; full[k*3+2]=rv.pts[k*2+1]; }
+                    apply_wf(rv.wf);
+                    g3d_river_add_falls(full.data(), nf, rv.width);
+                }
             }
             for (auto& j : jn) { g3d_water_add_ripple_source(j.first, j.second, 0.9f); dbg_jun++; }
         }
@@ -1965,24 +1976,34 @@ int main(int, char**) {
                 int m = (int)xyz.size() / 3;
                 if (m >= 2) {
                     emit_fx(rv.fx);
-                    // estilo de CASCADA de este rio (shader de flujo, aparte del agua)
+                    fprintf(f, "    g3d_river_begin(%.3f, %.3f);\n", rv.width, rv.depth*0.8f);
+                    for (int k = 0; k < m; k++)
+                        fprintf(f, "    g3d_river_point(%.3f, %.3f);\n", xyz[k*3], xyz[k*3+2]);
+                    fputs("    g3d_river_end();   // superficie del rio (recortada)\n", f);
+                    for (auto& j : jn)
+                        fprintf(f, "    g3d_water_add_ripple_source(%.3f, %.3f, 0.9);   // honda en la union con el lago\n",
+                                j.first, j.second);
+                    apply_fx(rv.fx); g3d_river_add(xyz.data(), m, rv.width);   // motor: superficie
+                }
+                // CASCADAS: pasada aparte con el camino COMPLETO (sin recortar), para
+                // que las caidas que aterrizan en un lago no desaparezcan.
+                int nf = (int)rv.pts.size() / 2;
+                if (nf >= 2) {
                     fprintf(f, "    g3d_flow_set_color(%.4f, %.4f, %.4f);\n",
                             rv.wf.color[0], rv.wf.color[1], rv.wf.color[2]);
-                    fprintf(f, "    g3d_flow_set_foam(%.3f);\n", rv.wf.foam);
-                    fprintf(f, "    g3d_flow_set_speed(%.3f);\n", rv.wf.speed);
+                    fprintf(f, "    g3d_flow_set_foam(%.3f); g3d_flow_set_speed(%.3f);\n", rv.wf.foam, rv.wf.speed);
                     if (rv.wf.tex >= 0 && rv.wf.tex < (int)paints.size())
                         fprintf(f, "    g3d_flow_set_texture(g3d_load_texture(\"Assets/%s\"));\n",
                                 paints[rv.wf.tex].file.c_str());
                     else
                         fputs("    g3d_flow_set_texture(0);\n", f);
                     fprintf(f, "    g3d_river_begin(%.3f, %.3f);\n", rv.width, rv.depth*0.8f);
-                    for (int k = 0; k < m; k++)
-                        fprintf(f, "    g3d_river_point(%.3f, %.3f);\n", xyz[k*3], xyz[k*3+2]);
-                    fputs("    g3d_river_end();   // rio: agua + flujo + cascadas\n", f);
-                    for (auto& j : jn)
-                        fprintf(f, "    g3d_water_add_ripple_source(%.3f, %.3f, 0.9);   // honda en la union con el lago\n",
-                                j.first, j.second);
-                    apply_fx(rv.fx); apply_wf(rv.wf); g3d_river_add(xyz.data(), m, rv.width);   // motor
+                    for (int k = 0; k < nf; k++)
+                        fprintf(f, "    g3d_river_point(%.3f, %.3f);\n", rv.pts[k*2], rv.pts[k*2+1]);
+                    fputs("    g3d_river_falls();   // cascadas del rio (camino completo)\n", f);
+                    std::vector<float> full(nf * 3);
+                    for (int k = 0; k < nf; k++) { full[k*3]=rv.pts[k*2]; full[k*3+1]=0.0f; full[k*3+2]=rv.pts[k*2+1]; }
+                    apply_wf(rv.wf); g3d_river_add_falls(full.data(), nf, rv.width);   // motor
                 }
             }
             rebuild_water();   // restaura el preview (deshace el secuenciado de arriba)

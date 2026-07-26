@@ -2823,6 +2823,36 @@ int main(int, char**) {
                 // RIO: cada clic anade un punto del cauce; doble clic lo termina.
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                     if ((int)river_draft.size() >= 4) {   // al menos 2 puntos
+                        // Si un extremo apunta a un lago cercano, ALARGA el trazo hasta
+                        // el (unos puntos mas), para que el cauce excavado CONECTE con
+                        // el lago y no quede un trozo de cauce seco entre ambos.
+                        auto extend_to_lake = [&](bool front) {
+                            int np = (int)river_draft.size() / 2; if (np < 2) return;
+                            float ax, az, ex, ez;
+                            if (front) { ax=river_draft[0]; az=river_draft[1];
+                                         ex=ax-river_draft[2]; ez=az-river_draft[3]; }
+                            else { ax=river_draft[(np-1)*2]; az=river_draft[(np-1)*2+1];
+                                   ex=ax-river_draft[(np-2)*2]; ez=az-river_draft[(np-2)*2+1]; }
+                            float L=sqrtf(ex*ex+ez*ez); if (L<1e-4f) return; ex/=L; ez/=L;
+                            float hit=-1.0f;
+                            for (float d=river_width*0.5f; d<=river_width*5.0f; d+=river_width*0.4f)
+                                if (g3d_lake_covers(ax+ex*d, az+ez*d)) { hit=d; break; }
+                            if (hit < 0.0f) return;   // no hay lago en esa direccion
+                            std::vector<float> add;   // puntos hasta un poco DENTRO del lago
+                            for (float d=river_width*0.5f; d<=hit+river_width; d+=river_width*0.5f)
+                                { add.push_back(ax+ex*d); add.push_back(az+ez*d); }
+                            if (front) {
+                                std::vector<float> nd;
+                                for (int i=(int)add.size()/2-1; i>=0; i--)
+                                    { nd.push_back(add[i*2]); nd.push_back(add[i*2+1]); }
+                                nd.insert(nd.end(), river_draft.begin(), river_draft.end());
+                                river_draft.swap(nd);
+                            } else {
+                                river_draft.insert(river_draft.end(), add.begin(), add.end());
+                            }
+                        };
+                        extend_to_lake(false);   // final del trazo
+                        extend_to_lake(true);    // inicio del trazo
                         River nr{ river_draft, river_width, river_depth, current_fx(), {} };
                         nr.terrain_before = snapshot_terrain();               // ANTES de excavar
                         carve_river(river_draft, river_width, river_depth);   // excava el lecho

@@ -372,36 +372,36 @@ int main(int, char**) {
     auto carve_river = [&](const std::vector<float>& pts, float width, float depth) {
         if (!terrain || (int)pts.size() < 4) return;
         int n = (int)pts.size() / 2;
-        // alturas ORIGINALES en cada punto (antes de excavar), para que el lecho no
-        // se hunda mas y mas al solaparse los pinceles.
-        std::vector<float> h0(n);
-        for (int k = 0; k < n; k++) h0[k] = g3d_editor_terrain_height(terrain, pts[k*2], pts[k*2+1]);
         float r = width * 0.6f;
+        // Muestrea DENSO el relieve ORIGINAL a lo largo de todo el cauce ANTES de
+        // excavar. El lecho = relieve original - profundidad, siguiendo el terreno
+        // (incl. acantilados -> cascadas), en vez de una rampa recta entre los
+        // puntos clicados (que aplanaba las caidas y mataba las cascadas).
+        struct DP { float x, z, oh; };
+        std::vector<DP> dense;
         for (int seg = 0; seg < n - 1; seg++) {
             float ax = pts[seg*2], az = pts[seg*2+1];
             float bx = pts[(seg+1)*2], bz = pts[(seg+1)*2+1];
             float dx = bx-ax, dz = bz-az; float len = sqrtf(dx*dx+dz*dz);
             int steps = (int)(len / (r * 0.5f)); if (steps < 1) steps = 1;
-            for (int s = 0; s <= steps; s++) {
-                float t = (float)s / steps;
-                float x = ax + dx*t, z = az + dz*t;
-                float bed = (h0[seg]*(1.0f-t) + h0[seg+1]*t) - depth;   // lecho con pendiente
-                g3d_editor_terrain_flatten_to(terrain, x, z, r, bed, 1.0f);
+            for (int s = (seg == 0 ? 0 : 1); s <= steps; s++) {
+                float t = (float)s / steps, x = ax + dx*t, z = az + dz*t;
+                dense.push_back({ x, z, g3d_editor_terrain_height(terrain, x, z) });
             }
         }
-        // Suaviza los TALUDES a lo largo de todo el cauce (no solo en los puntos
-        // clicados) y con radio mayor, para que la hierba baje al canal en pendiente
-        // en vez de con un borde duro ("los bordes"). Una sola pasada para no
-        // rellenar el cauce.
-        for (int seg = 0; seg < n - 1; seg++) {
-            float ax = pts[seg*2], az = pts[seg*2+1];
-            float bx = pts[(seg+1)*2], bz = pts[(seg+1)*2+1];
-            float dx = bx-ax, dz = bz-az; float len = sqrtf(dx*dx+dz*dz);
-            int steps = (int)(len / (width*0.4f)); if (steps < 1) steps = 1;
-            for (int s = 0; s <= steps; s++) {
-                float t = (float)s / steps, x = ax + dx*t, z = az + dz*t;
-                g3d_editor_terrain_smooth(terrain, x, z, width*1.5f, 0.55f);
-            }
+        for (auto& d : dense)
+            g3d_editor_terrain_flatten_to(terrain, d.x, d.z, r, d.oh - depth, 1.0f);
+        // Suaviza los TALUDES a lo largo del cauce para que la hierba baje en
+        // pendiente (no un borde duro), PERO no en los tramos con caida fuerte
+        // (acantilados), para no alisar la cara de la cascada. Recorre los puntos
+        // densos (que ya llevan la altura original) y salta donde el desnivel local
+        // es grande.
+        for (size_t k = 0; k + 1 < dense.size(); k++) {
+            float ddx = dense[k+1].x - dense[k].x, ddz = dense[k+1].z - dense[k].z;
+            float horiz = sqrtf(ddx*ddx + ddz*ddz) + 1e-4f;
+            float drop = dense[k].oh - dense[k+1].oh;
+            if (drop > 1.2f && drop > horiz*0.6f) continue;   // acantilado: no alisar
+            g3d_editor_terrain_smooth(terrain, dense[k].x, dense[k].z, width*1.5f, 0.55f);
         }
     };
 

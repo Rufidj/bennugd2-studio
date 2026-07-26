@@ -22,6 +22,7 @@
 #include "libmod_3d_pick.h"
 #include "libmod_3d_paint.h"
 #include "libmod_3d_water.h"
+#include "libmod_3d_flow.h"
 #include "libmod_3d_cave.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -291,6 +292,9 @@ void g3d_editor_water_set_texture(void *tex) {
 }
 void g3d_editor_fluid_set_texture(void *tex) {
     g3d_fluid_set_texture(tex ? ((G3DTexture *)tex)->gl_handle : 0);
+}
+void g3d_editor_flow_set_texture(void *tex) {
+    g3d_flow_set_texture(tex ? ((G3DTexture *)tex)->gl_handle : 0);
 }
 
 /* -------- CUEVAS: volumen de voxels carvable con el raton (3D) -------- */

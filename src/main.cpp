@@ -152,6 +152,10 @@ extern "C" {
                                   float dr, float dg, float db, float sr, float sg, float sb);
     void  g3d_editor_water_set_texture(void *tex);
     void  g3d_editor_fluid_set_texture(void *tex);
+    void  g3d_editor_flow_set_texture(void *tex);
+    void  g3d_flow_set_color(float r, float g, float b);
+    void  g3d_flow_set_foam(float foam);
+    void  g3d_flow_set_speed(float mul);
     int   g3d_editor_terrain_vcount(void *mesh);
     void  g3d_editor_terrain_snapshot(void *mesh, float *out);
     void  g3d_editor_terrain_restore(void *mesh, const float *in);
@@ -349,6 +353,14 @@ int main(int, char**) {
         float shallow[3] = { 0.10f, 0.34f, 0.44f };
         int   tex = -1;   // indice en paints, -1 = ninguna
     };
+    // Efectos PROPIOS de la cascada de un rio (shader de flujo, distinto del agua):
+    // textura que cae, velocidad, espuma y color. Se editan aparte en el Inspector.
+    struct WaterfallFX {
+        int   tex = -1;          // indice en paints, -1 = ninguna (procedural)
+        float speed = 1.0f;      // velocidad de caida
+        float foam = 1.0f;       // intensidad de espuma
+        float color[3] = { 0.60f, 0.78f, 0.85f };
+    };
     struct Lake { float sx, sz, level, depth; WaterFX fx; };
     std::vector<Lake> lakes;
     bool  lake_auto  = true;    // nivel automatico (justo antes de desbordar)
@@ -358,6 +370,7 @@ int main(int, char**) {
     // terrain_before = relieve del terreno JUSTO ANTES de excavar este rio, para
     // restaurarlo (rellenar el cauce) si el rio se borra.
     struct River { std::vector<float> pts; float width, depth; WaterFX fx;
+                   WaterfallFX wf;                          // efectos de sus cascadas
                    std::vector<float> terrain_before; };   // pts = pares x,z
     std::vector<River> rivers;
     std::vector<float> river_draft;   // rio que se esta trazando (pares x,z)
@@ -427,6 +440,16 @@ int main(int, char**) {
                             fx.shallow[0], fx.shallow[1], fx.shallow[2], 0, 0.88f);
         g3d_editor_fluid_set_texture((fx.tex >= 0 && fx.tex < (int)paints.size())
                                      ? paint_tex(fx.tex) : nullptr);
+    };
+    // Fija en el motor los efectos de CASCADA (shader de flujo) antes de crear el
+    // rio, para que sus cascadas capturen ESE estilo (textura, velocidad, espuma,
+    // color) como propio, distinto del agua del rio.
+    auto apply_wf = [&](const WaterfallFX& wf) {
+        g3d_flow_set_color(wf.color[0], wf.color[1], wf.color[2]);
+        g3d_flow_set_foam(wf.foam);
+        g3d_flow_set_speed(wf.speed);
+        g3d_editor_flow_set_texture((wf.tex >= 0 && wf.tex < (int)paints.size())
+                                    ? paint_tex(wf.tex) : nullptr);
     };
     // FX por defecto para una masa de agua NUEVA: los del panel Entorno (agua).
     auto current_fx = [&]() {
@@ -569,6 +592,7 @@ int main(int, char**) {
             river_trimmed(rv, xyz, jn);
             if ((int)xyz.size() >= 6) {
                 apply_fx(rv.fx);   // JUSTO antes de crear -> el rio captura SUS efectos
+                apply_wf(rv.wf);   // y sus cascadas capturan SU estilo de cascada
                 g3d_river_add(xyz.data(), (int)xyz.size()/3, rv.width);
                 dbg_rios++;
             }
@@ -1396,7 +1420,10 @@ int main(int, char**) {
         for (auto& rv : rivers) {
             fprintf(f, "RIVER %.3f %.3f %d", rv.width, rv.depth, (int)rv.pts.size()/2);
             for (float c : rv.pts) fprintf(f, " %.3f", c);
-            fprint_fx(rv.fx); fputc('\n', f);
+            fprint_fx(rv.fx);
+            fprintf(f, " WF %d %.3f %.3f %.4f %.4f %.4f",
+                    rv.wf.tex, rv.wf.speed, rv.wf.foam, rv.wf.color[0], rv.wf.color[1], rv.wf.color[2]);
+            fputc('\n', f);
         }
         for (auto& o : objects) {
             fprintf(f, "OBJECT %s %.4f %.4f %.4f %.4f %.4f SCRIPT %s PHYS %d %.3f %.3f %.3f %d %.3f %.3f",
@@ -1486,6 +1513,14 @@ int main(int, char**) {
                             rv.pts.push_back(val); p = end;
                         }
                         parse_fx(p, rv.fx);
+                        char* w = strstr(p, "WF ");
+                        if (w) {
+                            int wt = -1; float wsp, wfo, wr, wg, wb;
+                            if (sscanf(w, "WF %d %f %f %f %f %f", &wt,&wsp,&wfo,&wr,&wg,&wb) == 6) {
+                                rv.wf.tex=wt; rv.wf.speed=wsp; rv.wf.foam=wfo;
+                                rv.wf.color[0]=wr; rv.wf.color[1]=wg; rv.wf.color[2]=wb;
+                            }
+                        }
                         if ((int)rv.pts.size() == (int)rn*2) rivers.push_back(rv);
                     }
                 }
@@ -1930,6 +1965,16 @@ int main(int, char**) {
                 int m = (int)xyz.size() / 3;
                 if (m >= 2) {
                     emit_fx(rv.fx);
+                    // estilo de CASCADA de este rio (shader de flujo, aparte del agua)
+                    fprintf(f, "    g3d_flow_set_color(%.4f, %.4f, %.4f);\n",
+                            rv.wf.color[0], rv.wf.color[1], rv.wf.color[2]);
+                    fprintf(f, "    g3d_flow_set_foam(%.3f);\n", rv.wf.foam);
+                    fprintf(f, "    g3d_flow_set_speed(%.3f);\n", rv.wf.speed);
+                    if (rv.wf.tex >= 0 && rv.wf.tex < (int)paints.size())
+                        fprintf(f, "    g3d_flow_set_texture(g3d_load_texture(\"Assets/%s\"));\n",
+                                paints[rv.wf.tex].file.c_str());
+                    else
+                        fputs("    g3d_flow_set_texture(0);\n", f);
                     fprintf(f, "    g3d_river_begin(%.3f, %.3f);\n", rv.width, rv.depth*0.8f);
                     for (int k = 0; k < m; k++)
                         fprintf(f, "    g3d_river_point(%.3f, %.3f);\n", xyz[k*3], xyz[k*3+2]);
@@ -1937,7 +1982,7 @@ int main(int, char**) {
                     for (auto& j : jn)
                         fprintf(f, "    g3d_water_add_ripple_source(%.3f, %.3f, 0.9);   // honda en la union con el lago\n",
                                 j.first, j.second);
-                    apply_fx(rv.fx); g3d_river_add(xyz.data(), m, rv.width);   // motor, para el siguiente rio
+                    apply_fx(rv.fx); apply_wf(rv.wf); g3d_river_add(xyz.data(), m, rv.width);   // motor
                 }
             }
             rebuild_water();   // restaura el preview (deshace el secuenciado de arriba)
@@ -3196,7 +3241,24 @@ int main(int, char**) {
             for (int i = 0; i < (int)rivers.size(); i++) {
                 char hdr[64]; snprintf(hdr, sizeof(hdr), ICON_FA_WATER "  Rio %d##rvfx%d", i + 1, i);
                 if (ImGui::TreeNode(hdr)) {
+                    ImGui::SeparatorText("Agua del rio");
                     if (water_fx_editor(rivers[i].fx, 6000 + i)) water_fx_dirty = true;
+                    // --- Cascada: efectos PROPIOS (shader de flujo, aparte del agua) ---
+                    ImGui::SeparatorText("Cascada (en las caidas)");
+                    WaterfallFX& wf = rivers[i].wf;
+                    ImGui::PushID(7000 + i);
+                    const char* wcur = (wf.tex >= 0 && wf.tex < (int)paints.size())
+                                       ? paints[wf.tex].file.c_str() : "(procedural)";
+                    if (ImGui::BeginCombo("Textura", wcur)) {
+                        if (ImGui::Selectable("(procedural)", wf.tex < 0)) { wf.tex = -1; water_fx_dirty = true; }
+                        for (int p = 0; p < (int)paints.size(); p++)
+                            if (ImGui::Selectable(paints[p].file.c_str(), wf.tex == p)) { wf.tex = p; water_fx_dirty = true; }
+                        ImGui::EndCombo();
+                    }
+                    if (ImGui::SliderFloat("Velocidad", &wf.speed, 0.2f, 4.0f, "%.2f")) water_fx_dirty = true;
+                    if (ImGui::SliderFloat("Espuma",    &wf.foam,  0.0f, 2.0f, "%.2f")) water_fx_dirty = true;
+                    if (ImGui::ColorEdit3("Color",      wf.color)) water_fx_dirty = true;
+                    ImGui::PopID();
                     if (ImGui::SmallButton("Quitar este rio")) {
                         remove_river(i);
                         ImGui::TreePop(); break;

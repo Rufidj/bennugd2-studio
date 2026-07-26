@@ -495,27 +495,44 @@ int main(int, char**) {
                 out_xyz[i*3+1] = out_xyz[i*3+1]*(1.0f-t) + lakeY*t;
             }
         }
-        // Honda en la UNION con el lago: un extremo se considera unido si esta
-        // cubierto (s>0 / e<n-1) O si hay agua de lago pegada, sondeando un poco mas
-        // alla en la direccion del rio (asi tambien vale si el rio acaba justo en la
-        // orilla, sin solaparse). Se pone la honda en ese extremo del tramo.
-        auto touches_lake = [&](float x, float z, float dx, float dz) {
+        // UNION con el lago: como el cauce esta bloqueado para que el lago no lo
+        // inunde, entre el agua del rio y la del lago queda un trozo de lecho SECO.
+        // Para taparlo, se EXTIENDE cada extremo que toca un lago hasta el agua del
+        // lago (un punto extra al nivel del lago), asi la superficie del rio cubre la
+        // junta y enrasa con el lago. La honda va en ese punto de union. Sondea un
+        // poco mas alla del extremo en la direccion del cauce.
+        auto probe_lake = [&](float x, float z, float dx, float dz,
+                              float& lx, float& lz, float& ly) {
             float L = sqrtf(dx*dx + dz*dz); if (L < 1e-4f) return false;
             dx /= L; dz /= L;
-            for (float d = 1.0f; d <= 7.0f; d += 2.0f) {
+            for (float d = 1.0f; d <= 10.0f; d += 1.5f) {
                 float px = x + dx*d, pz = z + dz*d;
-                if (g3d_water_level_at(px, pz) > g3d_editor_terrain_height(terrain, px, pz) + 0.3f)
-                    return true;
+                float wl = g3d_water_level_at(px, pz);
+                if (wl > g3d_editor_terrain_height(terrain, px, pz) + 0.3f) {
+                    lx = px; lz = pz; ly = wl; return true;
+                }
             }
             return false;
         };
         if (m >= 2) {
-            float x0 = out_xyz[0], z0 = out_xyz[2];
-            if (s > 0 || touches_lake(x0, z0, x0 - out_xyz[3], z0 - out_xyz[5]))
-                junctions.push_back({ x0, z0 });
-            float xe = out_xyz[(m-1)*3], ze = out_xyz[(m-1)*3+2];
-            if (e < n - 1 || touches_lake(xe, ze, xe - out_xyz[(m-2)*3], ze - out_xyz[(m-2)*3+2]))
-                junctions.push_back({ xe, ze });
+            float lx, lz, ly;
+            // arranque del tramo
+            if (probe_lake(out_xyz[0], out_xyz[2], out_xyz[0]-out_xyz[3], out_xyz[2]-out_xyz[5], lx, lz, ly)) {
+                out_xyz.insert(out_xyz.begin(), { lx, ly, lz });   // punto extra dentro del lago
+                junctions.push_back({ lx, lz });
+            } else if (s > 0) {
+                junctions.push_back({ out_xyz[0], out_xyz[2] });
+            }
+            m = (int)out_xyz.size() / 3;
+            // final del tramo
+            if (probe_lake(out_xyz[(m-1)*3], out_xyz[(m-1)*3+2],
+                           out_xyz[(m-1)*3]-out_xyz[(m-2)*3], out_xyz[(m-1)*3+2]-out_xyz[(m-2)*3+2],
+                           lx, lz, ly)) {
+                out_xyz.push_back(lx); out_xyz.push_back(ly); out_xyz.push_back(lz);
+                junctions.push_back({ lx, lz });
+            } else if (e < n - 1) {
+                junctions.push_back({ out_xyz[(m-1)*3], out_xyz[(m-1)*3+2] });
+            }
         }
     };
 

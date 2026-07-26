@@ -157,7 +157,7 @@ extern "C" {
     void  g3d_flow_set_foam(float foam);
     void  g3d_flow_set_speed(float mul);
     int   g3d_river_add_falls(const float *pts_xyz, int n, float width);
-    int   g3d_waterfall_add(float tx, float ty, float tz, float bx, float bz, float width);
+    int   g3d_waterfall_add(float tx, float ty, float tz, float bx, float bz, float width, float arc);
     int   g3d_editor_terrain_vcount(void *mesh);
     void  g3d_editor_terrain_snapshot(void *mesh, float *out);
     void  g3d_editor_terrain_restore(void *mesh, const float *in);
@@ -377,11 +377,12 @@ int main(int, char**) {
     std::vector<River> rivers;
     std::vector<float> river_draft;   // rio que se esta trazando (pares x,z)
     // ---- cascadas (elemento propio: borde arriba -> base abajo) ----
-    struct Waterfall { float top[3]; float base[3]; float width; WaterfallFX fx; };
+    struct Waterfall { float top[3]; float base[3]; float width; float arc; WaterfallFX fx; };
     std::vector<Waterfall> waterfalls;
     bool  wf_have_top = false;         // 1er clic puesto (esperando la base)
     float wf_top[3] = {0,0,0};         // borde superior en curso
     float wf_width = 6.0f;             // ancho de la proxima cascada
+    float wf_arc = 0.0f;               // arco (comba) de la proxima cascada
     float river_width = 6.0f;
     float river_depth = 3.0f;    // cuanto se excava el lecho bajo el terreno
     bool  water_fx_dirty = false; // hay cambios de efectos pendientes de reconstruir
@@ -608,7 +609,7 @@ int main(int, char**) {
         // CASCADAS colocadas a mano (herramienta propia): cada una con su estilo.
         for (auto& wf : waterfalls) {
             apply_wf(wf.fx);
-            g3d_waterfall_add(wf.top[0], wf.top[1], wf.top[2], wf.base[0], wf.base[2], wf.width);
+            g3d_waterfall_add(wf.top[0], wf.top[1], wf.top[2], wf.base[0], wf.base[2], wf.width, wf.arc);
         }
         (void)dbg_rios; (void)dbg_jun;
     };
@@ -1438,9 +1439,9 @@ int main(int, char**) {
             fputc('\n', f);
         }
         for (auto& w : waterfalls) {
-            fprintf(f, "WATERFALL %.3f %.3f %.3f %.3f %.3f %.3f %.3f %d %.3f %.3f %.4f %.4f %.4f\n",
+            fprintf(f, "WATERFALL %.3f %.3f %.3f %.3f %.3f %.3f %.3f %d %.3f %.3f %.4f %.4f %.4f %.3f\n",
                     w.top[0], w.top[1], w.top[2], w.base[0], w.base[1], w.base[2], w.width,
-                    w.fx.tex, w.fx.speed, w.fx.foam, w.fx.color[0], w.fx.color[1], w.fx.color[2]);
+                    w.fx.tex, w.fx.speed, w.fx.foam, w.fx.color[0], w.fx.color[1], w.fx.color[2], w.arc);
         }
         for (auto& o : objects) {
             fprintf(f, "OBJECT %s %.4f %.4f %.4f %.4f %.4f SCRIPT %s PHYS %d %.3f %.3f %.3f %d %.3f %.3f",
@@ -1543,10 +1544,11 @@ int main(int, char**) {
                 }
                 continue;
             }
-            { Waterfall w; int wt = -1;
-              if (sscanf(line, "WATERFALL %f %f %f %f %f %f %f %d %f %f %f %f %f",
+            { Waterfall w; int wt = -1; w.arc = 0.0f;
+              if (sscanf(line, "WATERFALL %f %f %f %f %f %f %f %d %f %f %f %f %f %f",
                          &w.top[0],&w.top[1],&w.top[2], &w.base[0],&w.base[1],&w.base[2], &w.width,
-                         &wt, &w.fx.speed, &w.fx.foam, &w.fx.color[0],&w.fx.color[1],&w.fx.color[2]) == 13) {
+                         &wt, &w.fx.speed, &w.fx.foam, &w.fx.color[0],&w.fx.color[1],&w.fx.color[2],
+                         &w.arc) >= 13) {
                   w.fx.tex = wt; waterfalls.push_back(w); continue; } }
             int cm, cfol, sres = 2048; float px,py,pz, lx,ly,lz, cd, ch, cf = 0.45f, cs = 120.0f;
             int nleidos = sscanf(line, "CAMERA %d %d %f %f %f %f %f %f %f %f %f %f %d",
@@ -2007,9 +2009,9 @@ int main(int, char**) {
                             paints[w.fx.tex].file.c_str());
                 else
                     fputs("    g3d_flow_set_texture(0);\n", f);
-                fprintf(f, "    g3d_waterfall_add(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n",
-                        w.top[0], w.top[1], w.top[2], w.base[0], w.base[2], w.width);
-                apply_wf(w.fx); g3d_waterfall_add(w.top[0], w.top[1], w.top[2], w.base[0], w.base[2], w.width);
+                fprintf(f, "    g3d_waterfall_add(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n",
+                        w.top[0], w.top[1], w.top[2], w.base[0], w.base[2], w.width, w.arc);
+                apply_wf(w.fx); g3d_waterfall_add(w.top[0], w.top[1], w.top[2], w.base[0], w.base[2], w.width, w.arc);
             }
             rebuild_water();   // restaura el preview (deshace el secuenciado de arriba)
         }
@@ -2982,7 +2984,7 @@ int main(int, char**) {
                         Waterfall wf;
                         wf.top[0]=wf_top[0]; wf.top[1]=wf_top[1]; wf.top[2]=wf_top[2];
                         wf.base[0]=hit[0]; wf.base[1]=hit[1]; wf.base[2]=hit[2];
-                        wf.width = wf_width; wf.fx = WaterfallFX();
+                        wf.width = wf_width; wf.arc = wf_arc; wf.fx = WaterfallFX();
                         waterfalls.push_back(wf);
                         wf_have_top = false;
                         rebuild_water();
@@ -3030,6 +3032,42 @@ int main(int, char**) {
                     dl->AddCircleFilled(p, 5.0f, IM_COL32(120,210,255,255));
                     prev = p; have = true;
                 }
+            }
+        }
+        // CASCADAS: dibuja la CURVA (arco) de cada cascada, y la que se esta
+        // colocando siguiendo el raton, en tiempo real. Replica la geometria del
+        // motor (parabola en la direccion de la caida) para que coincida.
+        if (tool == T_WATERFALL && terrain) {
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            auto draw_arc = [&](const float* top, const float* base, float width, float arc,
+                                ImU32 col, float th) {
+                float tx=top[0], ty=top[1]+0.3f, tz=top[2];
+                float bx=base[0], bz=base[2];
+                float by=g3d_editor_terrain_height(terrain, bx, bz);
+                float dxh=bx-tx, dzh=bz-tz; float hlen=sqrtf(dxh*dxh+dzh*dzh);
+                float hx=(hlen>0.05f)?dxh/hlen:0.0f, hz=(hlen>0.05f)?dzh/hlen:1.0f;
+                float fwd=width*0.5f+1.0f;
+                ImVec2 prev; bool have=false;
+                for (int j=0;j<=20;j++) {
+                    float fv=(float)j/20.0f;
+                    float cx=tx+(bx-tx)*fv, cy=ty+(by-ty)*fv, cz=tz+(bz-tz)*fv;
+                    float pushf=fwd*(0.55f+0.45f*fv) + arc*4.0f*fv*(1.0f-fv);
+                    cx+=hx*pushf; cz+=hz*pushf;
+                    float p2[2];
+                    if (g3d_editor_world_to_screen(cx, cy, cz, (float)vp.w, (float)vp.h, p2)) {
+                        ImVec2 p(img_min.x+p2[0], img_min.y+p2[1]);
+                        if (have) dl->AddLine(prev, p, col, th);
+                        prev=p; have=true;
+                    }
+                }
+            };
+            for (auto& w : waterfalls)
+                draw_arc(w.top, w.base, w.width, w.arc, IM_COL32(120,210,255,200), 2.5f);
+            if (wf_have_top) {   // la que se esta colocando: hasta el raton
+                ImVec2 mp = ImGui::GetIO().MousePos;
+                float msx = mp.x - img_min.x, msy = mp.y - img_min.y, mhit[3];
+                if (g3d_editor_terrain_pick(msx, msy, (float)vp.w, (float)vp.h, terrain, mhit))
+                    draw_arc(wf_top, mhit, wf_width, wf_arc, IM_COL32(255,220,90,240), 3.0f);
             }
         }
         ImGui::End();
@@ -3303,6 +3341,7 @@ int main(int, char**) {
                                "(la base o la poza). La cascada cae recta entre esos dos "
                                "puntos; si la base esta en un lago/rio, aterriza en el agua.");
             ImGui::SliderFloat("Ancho", &wf_width, 1.0f, 30.0f, "%.1f");
+            ImGui::SliderFloat("Arco (comba)", &wf_arc, 0.0f, 20.0f, "%.1f");
             if (wf_have_top) {
                 ImGui::TextColored(ImVec4(1,0.8f,0.2f,1), "Borde puesto: ahora clic en la BASE");
                 if (ImGui::Button("Cancelar")) wf_have_top = false;
@@ -3315,6 +3354,7 @@ int main(int, char**) {
                     Waterfall& w = waterfalls[i];
                     ImGui::PushID(8000 + i);
                     if (ImGui::SliderFloat("Ancho", &w.width, 1.0f, 30.0f, "%.1f")) water_fx_dirty = true;
+                    if (ImGui::SliderFloat("Arco (comba)", &w.arc, 0.0f, 20.0f, "%.1f")) water_fx_dirty = true;
                     const char* wc = (w.fx.tex >= 0 && w.fx.tex < (int)paints.size())
                                      ? paints[w.fx.tex].file.c_str() : "(procedural)";
                     if (ImGui::BeginCombo("Textura", wc)) {

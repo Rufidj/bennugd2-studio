@@ -3087,6 +3087,29 @@ int main(int, char**) {
                     draw_arc(wf_top, mhit, wf_width, wf_arc, IM_COL32(255,220,90,240), 3.0f);
             }
         }
+        // LAGO: previsualiza el CIRCULO del radio max (la "presa" que acota el
+        // llenado) bajo el raton, para que se vea cuanto abarcara el lago.
+        if (tool == T_LAKE && terrain && lake_radius >= 1.0f) {
+            ImVec2 mp = ImGui::GetIO().MousePos;
+            float msx = mp.x - img_min.x, msy = mp.y - img_min.y, c[3];
+            if (g3d_editor_terrain_pick(msx, msy, (float)vp.w, (float)vp.h, terrain, c)) {
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                ImVec2 prev; bool have = false, first = false; ImVec2 firstp;
+                for (int k = 0; k <= 48; k++) {
+                    float a = (float)k / 48.0f * 6.2831853f;
+                    float wx = c[0] + cosf(a)*lake_radius, wz = c[2] + sinf(a)*lake_radius;
+                    float wy = g3d_editor_terrain_height(terrain, wx, wz) + 0.2f;
+                    float p2[2];
+                    if (g3d_editor_world_to_screen(wx, wy, wz, (float)vp.w, (float)vp.h, p2)) {
+                        ImVec2 p(img_min.x+p2[0], img_min.y+p2[1]);
+                        if (have) dl->AddLine(prev, p, IM_COL32(90,200,255,200), 2.0f);
+                        if (!first) { firstp = p; first = true; }
+                        prev = p; have = true;
+                    }
+                }
+                if (first && have) dl->AddLine(prev, firstp, IM_COL32(90,200,255,200), 2.0f);
+            }
+        }
         ImGui::End();
         ImGui::PopStyleVar();
 

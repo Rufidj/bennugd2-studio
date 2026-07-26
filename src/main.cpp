@@ -170,6 +170,8 @@ extern "C" {
     // ---- lagos por flood-fill (agua colocada donde quieras, con la forma del hoyo) ----
     int   g3d_lake_add(float seed_x, float seed_z, float surface_y, float depth);
     float g3d_lake_spill_level(float seed_x, float seed_z);
+    float g3d_lake_spill_level_r(float seed_x, float seed_z, float max_radius);
+    int   g3d_lake_add_r(float seed_x, float seed_z, float surface_y, float depth, float max_radius);
     void  g3d_fluid_clear(void);
     void  g3d_fluid_set_style(float amp, float len, float speed, float dr, float dg, float db,
                               float sr, float sg, float sb, unsigned int tex, float opacity);
@@ -363,11 +365,12 @@ int main(int, char**) {
         float foam = 1.0f;       // intensidad de espuma
         float color[3] = { 0.60f, 0.78f, 0.85f };
     };
-    struct Lake { float sx, sz, level, depth; WaterFX fx; };
+    struct Lake { float sx, sz, level, depth; float radius; WaterFX fx; };
     std::vector<Lake> lakes;
     bool  lake_auto  = true;    // nivel automatico (justo antes de desbordar)
     float lake_level = -1.0f;   // nivel manual del agua
     float lake_depth = 4.0f;    // profundidad (para el tinte y la fisica)
+    float lake_radius = 0.0f;   // radio max del llenado (0 = sin limite); acota hoyos abiertos
     // ---- rios (agua por un camino de puntos clicados) ----
     // terrain_before = relieve del terreno JUSTO ANTES de excavar este rio, para
     // restaurarlo (rellenar el cauce) si el rio se borra.
@@ -590,7 +593,7 @@ int main(int, char**) {
         }
         for (auto& lk : lakes) {
             apply_fx(lk.fx);   // cada lago captura SUS efectos
-            g3d_lake_add(lk.sx, lk.sz, lk.level, lk.depth);
+            g3d_lake_add_r(lk.sx, lk.sz, lk.level, lk.depth, lk.radius);
         }
         int dbg_rios = 0, dbg_jun = 0;
         for (auto& rv : rivers) {
@@ -1428,7 +1431,9 @@ int main(int, char**) {
         };
         for (auto& lk : lakes) {
             fprintf(f, "LAKE %.4f %.4f %.4f %.4f", lk.sx, lk.sz, lk.level, lk.depth);
-            fprint_fx(lk.fx); fputc('\n', f);
+            fprint_fx(lk.fx);
+            fprintf(f, " R %.3f", lk.radius);
+            fputc('\n', f);
         }
         for (auto& rv : rivers) {
             fprintf(f, "RIVER %.3f %.3f %d", rv.width, rv.depth, (int)rv.pts.size()/2);
@@ -1512,8 +1517,10 @@ int main(int, char**) {
             };
             { float lsx, lsz, llv, ldp;
               if (sscanf(line, "LAKE %f %f %f %f", &lsx,&lsz,&llv,&ldp) == 4) {
-                  Lake lk{ lsx, lsz, llv, ldp, {} };
+                  Lake lk{ lsx, lsz, llv, ldp, 0.0f, {} };
                   parse_fx(line, lk.fx);
+                  char* r = strstr(line, " R ");
+                  if (r) sscanf(r, " R %f", &lk.radius);
                   lakes.push_back(lk); continue; } }
             if (strncmp(line, "RIVER ", 6) == 0) {
                 char* p = line + 6; char* end;
@@ -1978,9 +1985,9 @@ int main(int, char**) {
             }
             for (auto& lk : lakes) {
                 emit_fx(lk.fx);
-                fprintf(f, "    g3d_lake_add(%.3f, %.3f, %.3f, %.3f);   // lago con la forma del hoyo\n",
-                        lk.sx, lk.sz, lk.level, lk.depth);
-                apply_fx(lk.fx); g3d_lake_add(lk.sx, lk.sz, lk.level, lk.depth);   // motor
+                fprintf(f, "    g3d_lake_add_r(%.3f, %.3f, %.3f, %.3f, %.3f);   // lago (radio max acota hoyos abiertos)\n",
+                        lk.sx, lk.sz, lk.level, lk.depth, lk.radius);
+                apply_fx(lk.fx); g3d_lake_add_r(lk.sx, lk.sz, lk.level, lk.depth, lk.radius);   // motor
             }
             for (auto& rv : rivers) {
                 std::vector<float> xyz;
@@ -2966,9 +2973,9 @@ int main(int, char**) {
                         g3d_fluid_block_river(bx.data(), n, rv.width);
                     }
                     float lvl = lake_auto
-                        ? g3d_lake_spill_level(hit[0], hit[2]) - 0.3f   // por debajo del borde
+                        ? g3d_lake_spill_level_r(hit[0], hit[2], lake_radius) - 0.3f   // borde LOCAL
                         : lake_level;
-                    lakes.push_back({ hit[0], hit[2], lvl, lake_depth, current_fx() });
+                    lakes.push_back({ hit[0], hit[2], lvl, lake_depth, lake_radius, current_fx() });
                     rebuild_water();
                     status = "Lago anadido (nivel " + std::to_string((int)lvl) + ")";
                 }
@@ -3282,6 +3289,9 @@ int main(int, char**) {
             if (!lake_auto)
                 ImGui::SliderFloat("Nivel (altura)", &lake_level, -30.0f, 40.0f, "%.1f");
             ImGui::SliderFloat("Profundidad", &lake_depth, 0.5f, 20.0f, "%.1f");
+            ImGui::SliderFloat("Radio max", &lake_radius, 0.0f, 200.0f, lake_radius < 1.0f ? "sin limite" : "%.0f");
+            ImGui::TextDisabled("Radio max acota el llenado a un circulo: para hoyos ABIERTOS\n"
+                                "(al borde de una montana) evita que el agua inunde todo.");
             ImGui::Separator();
             ImGui::Text("Lagos: %d", (int)lakes.size());
             if (!lakes.empty()) {

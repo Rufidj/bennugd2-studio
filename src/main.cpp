@@ -157,6 +157,7 @@ extern "C" {
     void  g3d_flow_set_foam(float foam);
     void  g3d_flow_set_speed(float mul);
     int   g3d_river_add_falls(const float *pts_xyz, int n, float width);
+    int   g3d_waterfall_add(float tx, float ty, float tz, float bx, float bz, float width);
     int   g3d_editor_terrain_vcount(void *mesh);
     void  g3d_editor_terrain_snapshot(void *mesh, float *out);
     void  g3d_editor_terrain_restore(void *mesh, const float *in);
@@ -375,6 +376,12 @@ int main(int, char**) {
                    std::vector<float> terrain_before; };   // pts = pares x,z
     std::vector<River> rivers;
     std::vector<float> river_draft;   // rio que se esta trazando (pares x,z)
+    // ---- cascadas (elemento propio: borde arriba -> base abajo) ----
+    struct Waterfall { float top[3]; float base[3]; float width; WaterfallFX fx; };
+    std::vector<Waterfall> waterfalls;
+    bool  wf_have_top = false;         // 1er clic puesto (esperando la base)
+    float wf_top[3] = {0,0,0};         // borde superior en curso
+    float wf_width = 6.0f;             // ancho de la proxima cascada
     float river_width = 6.0f;
     float river_depth = 3.0f;    // cuanto se excava el lecho bajo el terreno
     bool  water_fx_dirty = false; // hay cambios de efectos pendientes de reconstruir
@@ -567,7 +574,7 @@ int main(int, char**) {
         g3d_fluid_clear();
         g3d_flow_clear();
         g3d_water_clear_ripple_sources();
-        if (lakes.empty() && rivers.empty()) return;
+        if (lakes.empty() && rivers.empty() && waterfalls.empty()) return;
         g3d_scene_set_terrain_collider(terrain);   // refresca el heightfield
         // Bloquea los cauces de los rios ANTES de crear los lagos: asi el relleno
         // del lago NO sube por el rio (antes el lago inundaba el cauce y el rio se
@@ -596,18 +603,12 @@ int main(int, char**) {
                 g3d_river_add(xyz.data(), (int)xyz.size()/3, rv.width);   // superficie (recortada)
                 dbg_rios++;
             }
-            // Cascadas: con el camino COMPLETO (sin recortar), para que una caida que
-            // aterriza en un lago no desaparezca. Estilo de cascada propio.
-            {
-                int nf = (int)rv.pts.size() / 2;
-                if (nf >= 2) {
-                    std::vector<float> full(nf * 3);
-                    for (int k = 0; k < nf; k++) { full[k*3]=rv.pts[k*2]; full[k*3+1]=0.0f; full[k*3+2]=rv.pts[k*2+1]; }
-                    apply_wf(rv.wf);
-                    g3d_river_add_falls(full.data(), nf, rv.width);
-                }
-            }
             for (auto& j : jn) { g3d_water_add_ripple_source(j.first, j.second, 0.9f); dbg_jun++; }
+        }
+        // CASCADAS colocadas a mano (herramienta propia): cada una con su estilo.
+        for (auto& wf : waterfalls) {
+            apply_wf(wf.fx);
+            g3d_waterfall_add(wf.top[0], wf.top[1], wf.top[2], wf.base[0], wf.base[2], wf.width);
         }
         (void)dbg_rios; (void)dbg_jun;
     };
@@ -733,7 +734,7 @@ int main(int, char**) {
     std::string script_title;   // como se llama en la barra del editor
     // ---- herramienta activa (toolbar con iconos) ----
     enum Tool { T_SELECT, T_MOVE, T_ROTATE, T_SCALE, T_PLACE, T_RAISE, T_LOWER, T_SMOOTH, T_FLATTEN, T_PAINT,
-                T_HOLE, T_ZONE, T_LAKE, T_RIVER };
+                T_HOLE, T_ZONE, T_LAKE, T_RIVER, T_WATERFALL };
     bool hole_fill = false;   // T_HOLE: false=perforar, true=rellenar
     int tool = T_SELECT;
     int  zone_layer = 0;      // T_ZONE: capa (0..3) que se pinta
@@ -1436,6 +1437,11 @@ int main(int, char**) {
                     rv.wf.tex, rv.wf.speed, rv.wf.foam, rv.wf.color[0], rv.wf.color[1], rv.wf.color[2]);
             fputc('\n', f);
         }
+        for (auto& w : waterfalls) {
+            fprintf(f, "WATERFALL %.3f %.3f %.3f %.3f %.3f %.3f %.3f %d %.3f %.3f %.4f %.4f %.4f\n",
+                    w.top[0], w.top[1], w.top[2], w.base[0], w.base[1], w.base[2], w.width,
+                    w.fx.tex, w.fx.speed, w.fx.foam, w.fx.color[0], w.fx.color[1], w.fx.color[2]);
+        }
         for (auto& o : objects) {
             fprintf(f, "OBJECT %s %.4f %.4f %.4f %.4f %.4f SCRIPT %s PHYS %d %.3f %.3f %.3f %d %.3f %.3f",
                     o.asset.c_str(), o.x, o.y, o.z, o.ry, o.scale, o.name.c_str(),
@@ -1472,7 +1478,7 @@ int main(int, char**) {
         undo_reset();
         for (auto& o : objects) if (o.entity >= 0) g3d_entity_impl_destroy(o.entity);
         objects.clear(); obj_sel = -1;
-        lakes.clear(); rivers.clear(); river_draft.clear();
+        lakes.clear(); rivers.clear(); river_draft.clear(); waterfalls.clear();
         // terreno primero: las cuevas/objetos se apoyan en su altura
         if (terrain) g3d_editor_terrain_load(terrain, (path + ".terrain").c_str());
         g3d_editor_paint_load((path + ".paint.png").c_str());
@@ -1537,6 +1543,11 @@ int main(int, char**) {
                 }
                 continue;
             }
+            { Waterfall w; int wt = -1;
+              if (sscanf(line, "WATERFALL %f %f %f %f %f %f %f %d %f %f %f %f %f",
+                         &w.top[0],&w.top[1],&w.top[2], &w.base[0],&w.base[1],&w.base[2], &w.width,
+                         &wt, &w.fx.speed, &w.fx.foam, &w.fx.color[0],&w.fx.color[1],&w.fx.color[2]) == 13) {
+                  w.fx.tex = wt; waterfalls.push_back(w); continue; } }
             int cm, cfol, sres = 2048; float px,py,pz, lx,ly,lz, cd, ch, cf = 0.45f, cs = 120.0f;
             int nleidos = sscanf(line, "CAMERA %d %d %f %f %f %f %f %f %f %f %f %f %d",
                        &cm, &cfol, &px,&py,&pz, &lx,&ly,&lz, &cd, &ch, &cf, &cs, &sres);
@@ -1934,7 +1945,7 @@ int main(int, char**) {
         // ---- lagos y rios: agua colocada (flood-fill / camino), no un mar global ----
         // Cada masa de agua fija SU estilo (olas/color/textura) justo antes de
         // crearse, para que el motor lo capture como propio de esa zona.
-        if (!lakes.empty() || !rivers.empty()) {
+        if (!lakes.empty() || !rivers.empty() || !waterfalls.empty()) {
             auto emit_fx = [&](const WaterFX& x) {
                 fprintf(f, "    g3d_fluid_style(%.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, 0.88);\n",
                         x.amp, x.len, x.speed,
@@ -1985,26 +1996,20 @@ int main(int, char**) {
                                 j.first, j.second);
                     apply_fx(rv.fx); g3d_river_add(xyz.data(), m, rv.width);   // motor: superficie
                 }
-                // CASCADAS: pasada aparte con el camino COMPLETO (sin recortar), para
-                // que las caidas que aterrizan en un lago no desaparezcan.
-                int nf = (int)rv.pts.size() / 2;
-                if (nf >= 2) {
-                    fprintf(f, "    g3d_flow_set_color(%.4f, %.4f, %.4f);\n",
-                            rv.wf.color[0], rv.wf.color[1], rv.wf.color[2]);
-                    fprintf(f, "    g3d_flow_set_foam(%.3f); g3d_flow_set_speed(%.3f);\n", rv.wf.foam, rv.wf.speed);
-                    if (rv.wf.tex >= 0 && rv.wf.tex < (int)paints.size())
-                        fprintf(f, "    g3d_flow_set_texture(g3d_load_texture(\"Assets/%s\"));\n",
-                                paints[rv.wf.tex].file.c_str());
-                    else
-                        fputs("    g3d_flow_set_texture(0);\n", f);
-                    fprintf(f, "    g3d_river_begin(%.3f, %.3f);\n", rv.width, rv.depth*0.8f);
-                    for (int k = 0; k < nf; k++)
-                        fprintf(f, "    g3d_river_point(%.3f, %.3f);\n", rv.pts[k*2], rv.pts[k*2+1]);
-                    fputs("    g3d_river_falls();   // cascadas del rio (camino completo)\n", f);
-                    std::vector<float> full(nf * 3);
-                    for (int k = 0; k < nf; k++) { full[k*3]=rv.pts[k*2]; full[k*3+1]=0.0f; full[k*3+2]=rv.pts[k*2+1]; }
-                    apply_wf(rv.wf); g3d_river_add_falls(full.data(), nf, rv.width);   // motor
-                }
+            }
+            // CASCADAS (colocadas a mano): elemento propio, con su estilo de flujo.
+            for (auto& w : waterfalls) {
+                fprintf(f, "    g3d_flow_set_color(%.4f, %.4f, %.4f);\n",
+                        w.fx.color[0], w.fx.color[1], w.fx.color[2]);
+                fprintf(f, "    g3d_flow_set_foam(%.3f); g3d_flow_set_speed(%.3f);\n", w.fx.foam, w.fx.speed);
+                if (w.fx.tex >= 0 && w.fx.tex < (int)paints.size())
+                    fprintf(f, "    g3d_flow_set_texture(g3d_load_texture(\"Assets/%s\"));\n",
+                            paints[w.fx.tex].file.c_str());
+                else
+                    fputs("    g3d_flow_set_texture(0);\n", f);
+                fprintf(f, "    g3d_waterfall_add(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n",
+                        w.top[0], w.top[1], w.top[2], w.base[0], w.base[2], w.width);
+                apply_wf(w.fx); g3d_waterfall_add(w.top[0], w.top[1], w.top[2], w.base[0], w.base[2], w.width);
             }
             rebuild_water();   // restaura el preview (deshace el secuenciado de arriba)
         }
@@ -2605,6 +2610,7 @@ int main(int, char**) {
             toolBtn(ICON_FA_DRAW_POLYGON,        T_ZONE,    "Pintar ZONAS de barrera (por donde no pasan ciertos objetos)");
             toolBtn(ICON_FA_DROPLET,             T_LAKE,    "Lago: clic en un hoyo del terreno para llenarlo de agua");
             toolBtn(ICON_FA_WATER,               T_RIVER,   "Rio: clic para poner puntos del cauce, doble clic para terminar");
+            toolBtn(ICON_FA_ANGLES_DOWN,         T_WATERFALL, "Cascada: clic arriba (el borde) y clic abajo (la base/poza)");
 
             // ---- PLAY: compila el juego y lo ejecuta en su propia ventana ----
             // Es un proceso BennuGD2 normal, con todos sus hooks: fidelidad total
@@ -2964,7 +2970,26 @@ int main(int, char**) {
                     rebuild_water();
                     status = "Lago anadido (nivel " + std::to_string((int)lvl) + ")";
                 }
-            } else if (!terr_tool && tool != T_LAKE && tool != T_RIVER && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            } else if (tool == T_WATERFALL && terrain &&
+                       g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
+                // CASCADA: 1er clic = el borde (arriba), 2o clic = la base (poza).
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    if (!wf_have_top) {
+                        wf_top[0]=hit[0]; wf_top[1]=hit[1]; wf_top[2]=hit[2];
+                        wf_have_top = true;
+                        status = "Cascada: ahora haz clic en la BASE (abajo)";
+                    } else {
+                        Waterfall wf;
+                        wf.top[0]=wf_top[0]; wf.top[1]=wf_top[1]; wf.top[2]=wf_top[2];
+                        wf.base[0]=hit[0]; wf.base[1]=hit[1]; wf.base[2]=hit[2];
+                        wf.width = wf_width; wf.fx = WaterfallFX();
+                        waterfalls.push_back(wf);
+                        wf_have_top = false;
+                        rebuild_water();
+                        status = "Cascada anadida";
+                    }
+                }
+            } else if (!terr_tool && tool != T_LAKE && tool != T_RIVER && tool != T_WATERFALL && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 // punto: sobre agua->superficie, si no sobre el terreno/fondo
                 int ok = place_point(sx, sy, hit);
                 if (ok) {
@@ -3262,26 +3287,48 @@ int main(int, char**) {
             for (int i = 0; i < (int)rivers.size(); i++) {
                 char hdr[64]; snprintf(hdr, sizeof(hdr), ICON_FA_WATER "  Rio %d##rvfx%d", i + 1, i);
                 if (ImGui::TreeNode(hdr)) {
-                    ImGui::SeparatorText("Agua del rio");
                     if (water_fx_editor(rivers[i].fx, 6000 + i)) water_fx_dirty = true;
-                    // --- Cascada: efectos PROPIOS (shader de flujo, aparte del agua) ---
-                    ImGui::SeparatorText("Cascada (en las caidas)");
-                    WaterfallFX& wf = rivers[i].wf;
-                    ImGui::PushID(7000 + i);
-                    const char* wcur = (wf.tex >= 0 && wf.tex < (int)paints.size())
-                                       ? paints[wf.tex].file.c_str() : "(procedural)";
-                    if (ImGui::BeginCombo("Textura", wcur)) {
-                        if (ImGui::Selectable("(procedural)", wf.tex < 0)) { wf.tex = -1; water_fx_dirty = true; }
-                        for (int p = 0; p < (int)paints.size(); p++)
-                            if (ImGui::Selectable(paints[p].file.c_str(), wf.tex == p)) { wf.tex = p; water_fx_dirty = true; }
-                        ImGui::EndCombo();
-                    }
-                    if (ImGui::SliderFloat("Velocidad", &wf.speed, 0.2f, 4.0f, "%.2f")) water_fx_dirty = true;
-                    if (ImGui::SliderFloat("Espuma",    &wf.foam,  0.0f, 2.0f, "%.2f")) water_fx_dirty = true;
-                    if (ImGui::ColorEdit3("Color",      wf.color)) water_fx_dirty = true;
-                    ImGui::PopID();
                     if (ImGui::SmallButton("Quitar este rio")) {
                         remove_river(i);
+                        ImGui::TreePop(); break;
+                    }
+                    ImGui::TreePop();
+                }
+            }
+            ImGui::Separator();
+        }
+        if (tool == T_WATERFALL) {
+            ImGui::SeparatorText(ICON_FA_ANGLES_DOWN "  Cascada");
+            ImGui::TextWrapped("Haz clic ARRIBA (el borde por donde cae) y luego ABAJO "
+                               "(la base o la poza). La cascada cae recta entre esos dos "
+                               "puntos; si la base esta en un lago/rio, aterriza en el agua.");
+            ImGui::SliderFloat("Ancho", &wf_width, 1.0f, 30.0f, "%.1f");
+            if (wf_have_top) {
+                ImGui::TextColored(ImVec4(1,0.8f,0.2f,1), "Borde puesto: ahora clic en la BASE");
+                if (ImGui::Button("Cancelar")) wf_have_top = false;
+            }
+            ImGui::Separator();
+            ImGui::Text("Cascadas: %d", (int)waterfalls.size());
+            for (int i = 0; i < (int)waterfalls.size(); i++) {
+                char hdr[64]; snprintf(hdr, sizeof(hdr), ICON_FA_ANGLES_DOWN "  Cascada %d##wf%d", i+1, i);
+                if (ImGui::TreeNode(hdr)) {
+                    Waterfall& w = waterfalls[i];
+                    ImGui::PushID(8000 + i);
+                    if (ImGui::SliderFloat("Ancho", &w.width, 1.0f, 30.0f, "%.1f")) water_fx_dirty = true;
+                    const char* wc = (w.fx.tex >= 0 && w.fx.tex < (int)paints.size())
+                                     ? paints[w.fx.tex].file.c_str() : "(procedural)";
+                    if (ImGui::BeginCombo("Textura", wc)) {
+                        if (ImGui::Selectable("(procedural)", w.fx.tex < 0)) { w.fx.tex = -1; water_fx_dirty = true; }
+                        for (int p = 0; p < (int)paints.size(); p++)
+                            if (ImGui::Selectable(paints[p].file.c_str(), w.fx.tex == p)) { w.fx.tex = p; water_fx_dirty = true; }
+                        ImGui::EndCombo();
+                    }
+                    if (ImGui::SliderFloat("Velocidad", &w.fx.speed, 0.2f, 4.0f, "%.2f")) water_fx_dirty = true;
+                    if (ImGui::SliderFloat("Espuma",    &w.fx.foam,  0.0f, 2.0f, "%.2f")) water_fx_dirty = true;
+                    if (ImGui::ColorEdit3("Color",      w.fx.color)) water_fx_dirty = true;
+                    ImGui::PopID();
+                    if (ImGui::SmallButton("Quitar esta cascada")) {
+                        waterfalls.erase(waterfalls.begin() + i); rebuild_water();
                         ImGui::TreePop(); break;
                     }
                     ImGui::TreePop();

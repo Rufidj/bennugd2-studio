@@ -158,6 +158,8 @@ extern "C" {
     float g3d_water_level_at(float x, float z);
     void  g3d_water_add_ripple_source(float x, float z, float strength);
     void  g3d_water_clear_ripple_sources(void);
+    void  g3d_fluid_block_reset(void);
+    void  g3d_fluid_block_river(const float *pts_xyz, int n, float width);
     // ---- lagos por flood-fill (agua colocada donde quieras, con la forma del hoyo) ----
     int   g3d_lake_add(float seed_x, float seed_z, float surface_y, float depth);
     float g3d_lake_spill_level(float seed_x, float seed_z);
@@ -523,6 +525,17 @@ int main(int, char**) {
         g3d_water_clear_ripple_sources();
         if (lakes.empty() && rivers.empty()) return;
         g3d_scene_set_terrain_collider(terrain);   // refresca el heightfield
+        // Bloquea los cauces de los rios ANTES de crear los lagos: asi el relleno
+        // del lago NO sube por el rio (antes el lago inundaba el cauce y el rio se
+        // veia con agua de lago). Cada rio conserva su propia agua.
+        g3d_fluid_block_reset();
+        for (auto& rv : rivers) {
+            int n = (int)rv.pts.size() / 2;
+            if (n < 2) continue;
+            std::vector<float> bx(n * 3);
+            for (int k = 0; k < n; k++) { bx[k*3]=rv.pts[k*2]; bx[k*3+1]=0.0f; bx[k*3+2]=rv.pts[k*2+1]; }
+            g3d_fluid_block_river(bx.data(), n, rv.width);
+        }
         for (auto& lk : lakes) {
             apply_fx(lk.fx);   // cada lago captura SUS efectos
             g3d_lake_add(lk.sx, lk.sz, lk.level, lk.depth);
@@ -1870,6 +1883,20 @@ int main(int, char**) {
             // cada rio contra los lagos + rios YA anadidos (no contra si mismo). Al
             // final se restaura con rebuild_water().
             g3d_fluid_clear(); g3d_flow_clear(); g3d_water_clear_ripple_sources();
+            // Bloquea los cauces ANTES de crear los lagos (que no suban por el rio),
+            // tanto en el motor (preview del recorte) como en el juego generado.
+            g3d_fluid_block_reset();
+            fputs("    g3d_fluid_block_reset();\n", f);
+            for (auto& rv : rivers) {
+                int n = (int)rv.pts.size() / 2; if (n < 2) continue;
+                std::vector<float> bx(n * 3);
+                for (int k = 0; k < n; k++) { bx[k*3]=rv.pts[k*2]; bx[k*3+1]=0.0f; bx[k*3+2]=rv.pts[k*2+1]; }
+                g3d_fluid_block_river(bx.data(), n, rv.width);   // motor
+                fprintf(f, "    g3d_river_begin(%.3f, %.3f);\n", rv.width, rv.depth*0.8f);
+                for (int k = 0; k < n; k++)
+                    fprintf(f, "    g3d_river_point(%.3f, %.3f);\n", rv.pts[k*2], rv.pts[k*2+1]);
+                fputs("    g3d_river_block();   // marca el cauce (no lo dibuja aun)\n", f);
+            }
             for (auto& lk : lakes) {
                 emit_fx(lk.fx);
                 fprintf(f, "    g3d_lake_add(%.3f, %.3f, %.3f, %.3f);   // lago con la forma del hoyo\n",
@@ -2806,6 +2833,14 @@ int main(int, char**) {
                 // El nivel puede ser automatico (justo antes de desbordar) o manual.
                 if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     g3d_scene_set_terrain_collider(terrain);   // heightfield fresco
+                    // bloquea los cauces para que el desborde no baje por un rio
+                    g3d_fluid_block_reset();
+                    for (auto& rv : rivers) {
+                        int n = (int)rv.pts.size() / 2; if (n < 2) continue;
+                        std::vector<float> bx(n * 3);
+                        for (int k = 0; k < n; k++) { bx[k*3]=rv.pts[k*2]; bx[k*3+1]=0.0f; bx[k*3+2]=rv.pts[k*2+1]; }
+                        g3d_fluid_block_river(bx.data(), n, rv.width);
+                    }
                     float lvl = lake_auto
                         ? g3d_lake_spill_level(hit[0], hit[2]) - 0.3f   // por debajo del borde
                         : lake_level;

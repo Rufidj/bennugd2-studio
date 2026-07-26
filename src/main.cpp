@@ -479,7 +479,6 @@ int main(int, char**) {
         }
         if (s > 0) {           // emerge de un lago: suaviza el arranque a su nivel
             float lakeY = lvlAt[s-1];
-            junctions.push_back({ out_xyz[0], out_xyz[2] });
             int bn = m < 6 ? m : 6;
             for (int i = 0; i < bn; i++) {
                 float t = (bn > 1) ? (float)i/(bn-1) : 1.0f;
@@ -488,12 +487,33 @@ int main(int, char**) {
         }
         if (e < n - 1) {       // desemboca en un lago: suaviza el final a su nivel
             float lakeY = lvlAt[e+1];
-            junctions.push_back({ out_xyz[(m-1)*3], out_xyz[(m-1)*3+2] });
             int bn = m < 6 ? m : 6;
             for (int i = m - bn; i < m; i++) {
                 float t = (bn > 1) ? (float)(i-(m-bn))/(bn-1) : 1.0f;
                 out_xyz[i*3+1] = out_xyz[i*3+1]*(1.0f-t) + lakeY*t;
             }
+        }
+        // Honda en la UNION con el lago: un extremo se considera unido si esta
+        // cubierto (s>0 / e<n-1) O si hay agua de lago pegada, sondeando un poco mas
+        // alla en la direccion del rio (asi tambien vale si el rio acaba justo en la
+        // orilla, sin solaparse). Se pone la honda en ese extremo del tramo.
+        auto touches_lake = [&](float x, float z, float dx, float dz) {
+            float L = sqrtf(dx*dx + dz*dz); if (L < 1e-4f) return false;
+            dx /= L; dz /= L;
+            for (float d = 1.0f; d <= 7.0f; d += 2.0f) {
+                float px = x + dx*d, pz = z + dz*d;
+                if (g3d_water_level_at(px, pz) > g3d_editor_terrain_height(terrain, px, pz) + 0.3f)
+                    return true;
+            }
+            return false;
+        };
+        if (m >= 2) {
+            float x0 = out_xyz[0], z0 = out_xyz[2];
+            if (s > 0 || touches_lake(x0, z0, x0 - out_xyz[3], z0 - out_xyz[5]))
+                junctions.push_back({ x0, z0 });
+            float xe = out_xyz[(m-1)*3], ze = out_xyz[(m-1)*3+2];
+            if (e < n - 1 || touches_lake(xe, ze, xe - out_xyz[(m-2)*3], ze - out_xyz[(m-2)*3+2]))
+                junctions.push_back({ xe, ze });
         }
     };
 
@@ -507,17 +527,21 @@ int main(int, char**) {
             apply_fx(lk.fx);   // cada lago captura SUS efectos
             g3d_lake_add(lk.sx, lk.sz, lk.level, lk.depth);
         }
+        int dbg_rios = 0, dbg_jun = 0;
         for (auto& rv : rivers) {
-            apply_fx(rv.fx);   // cada rio captura SUS efectos
             // Recorta el tramo cubierto por un lago (evita el parche solapado) y
-            // pon hondas en la union rio-lago.
+            // detecta las uniones rio-lago (para hondas).
             std::vector<float> xyz;
             std::vector<std::pair<float,float>> jn;
             river_trimmed(rv, xyz, jn);
-            if ((int)xyz.size() >= 6)
+            if ((int)xyz.size() >= 6) {
+                apply_fx(rv.fx);   // JUSTO antes de crear -> el rio captura SUS efectos
                 g3d_river_add(xyz.data(), (int)xyz.size()/3, rv.width);
-            for (auto& j : jn) g3d_water_add_ripple_source(j.first, j.second, 0.9f);
+                dbg_rios++;
+            }
+            for (auto& j : jn) { g3d_water_add_ripple_source(j.first, j.second, 0.9f); dbg_jun++; }
         }
+        (void)dbg_rios; (void)dbg_jun;
     };
 
     // Borra un rio Y rellena su cauce: restaura el terreno a como estaba antes de

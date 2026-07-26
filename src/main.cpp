@@ -2975,9 +2975,19 @@ int main(int, char**) {
                     float lvl = lake_auto
                         ? g3d_lake_spill_level_r(hit[0], hit[2], lake_radius) - 0.3f   // borde LOCAL
                         : lake_level;
-                    lakes.push_back({ hit[0], hit[2], lvl, lake_depth, lake_radius, current_fx() });
-                    rebuild_water();
-                    status = "Lago anadido (nivel " + std::to_string((int)lvl) + ")";
+                    // El agua solo se ve si el nivel esta POR ENCIMA del suelo del hoyo.
+                    // Con nivel manual bajo (p.ej. -1) en un hoyo alto de una montana no
+                    // entra agua: avisamos en vez de crear un lago vacio.
+                    float th = g3d_editor_terrain_height(terrain, hit[0], hit[2]);
+                    if (lvl <= th + 0.05f) {
+                        status = "Aqui el nivel del agua (" + std::to_string((int)lvl) +
+                                 ") queda por DEBAJO del suelo (" + std::to_string((int)th) +
+                                 "). Marca 'Nivel automatico' o sube 'Nivel (altura)'.";
+                    } else {
+                        lakes.push_back({ hit[0], hit[2], lvl, lake_depth, lake_radius, current_fx() });
+                        rebuild_water();
+                        status = "Lago anadido (nivel " + std::to_string((int)lvl) + ")";
+                    }
                 }
             } else if (tool == T_WATERFALL && terrain &&
                        g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {

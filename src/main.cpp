@@ -389,8 +389,20 @@ int main(int, char**) {
                 g3d_editor_terrain_flatten_to(terrain, x, z, r, bed, 1.0f);
             }
         }
-        for (int seg = 0; seg < n; seg++)
-            g3d_editor_terrain_smooth(terrain, pts[seg*2], pts[seg*2+1], width, 0.5f);
+        // Suaviza los TALUDES a lo largo de todo el cauce (no solo en los puntos
+        // clicados) y con radio mayor, para que la hierba baje al canal en pendiente
+        // en vez de con un borde duro ("los bordes"). Una sola pasada para no
+        // rellenar el cauce.
+        for (int seg = 0; seg < n - 1; seg++) {
+            float ax = pts[seg*2], az = pts[seg*2+1];
+            float bx = pts[(seg+1)*2], bz = pts[(seg+1)*2+1];
+            float dx = bx-ax, dz = bz-az; float len = sqrtf(dx*dx+dz*dz);
+            int steps = (int)(len / (width*0.4f)); if (steps < 1) steps = 1;
+            for (int s = 0; s <= steps; s++) {
+                float t = (float)s / steps, x = ax + dx*t, z = az + dz*t;
+                g3d_editor_terrain_smooth(terrain, x, z, width*1.5f, 0.55f);
+            }
+        }
     };
 
     // Copia el relieve actual del terreno (para poder deshacer un cauce despues).

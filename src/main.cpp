@@ -160,6 +160,7 @@ extern "C" {
     void  g3d_water_clear_ripple_sources(void);
     void  g3d_fluid_block_reset(void);
     void  g3d_fluid_block_river(const float *pts_xyz, int n, float width);
+    int   g3d_lake_covers(float x, float z);
     // ---- lagos por flood-fill (agua colocada donde quieras, con la forma del hoyo) ----
     int   g3d_lake_add(float seed_x, float seed_z, float surface_y, float depth);
     float g3d_lake_spill_level(float seed_x, float seed_z);
@@ -464,12 +465,15 @@ int main(int, char**) {
             surfY[k] = bed[k] + rv.depth*0.8f;
             lvlAt[k] = g3d_water_level_at(x, z);   // lagos/mar/rios ya anadidos
         }
-        // Recortar SOLO contra el mar global (un plano exacto que si cubre el rio).
-        // Los lagos NO se recortan: estan bloqueados del cauce (no lo solapan), y
-        // g3d_water_level_at los reporta por su CAJA (sobre-inclusiva), lo que
-        // recortaba el rio por error cerca de la boca -> dejaba lecho seco. La union
-        // con el lago se resuelve extendiendo el rio hasta su agua (mas abajo).
-        auto covered = [&](int k){ return water_on && water_level > bed[k] + 0.3f; };
+        // Un punto se recorta si lo cubre el mar global (plano exacto) o la
+        // superficie REAL de un lago (g3d_lake_covers, por celda del flood-fill, no
+        // la caja). Como el cauce interior esta bloqueado, el lago solo cubre la boca
+        // (el margen sin bloquear); ahi el rio se recorta EXACTO al borde del lago y
+        // se unen sin lecho seco ni solape.
+        auto covered = [&](int k){
+            return (water_on && water_level > bed[k] + 0.3f) ||
+                   g3d_lake_covers(rv.pts[k*2], rv.pts[k*2+1]);
+        };
         int s = 0;     while (s < n  && covered(s)) s++;
         int e = n - 1; while (e >= 0 && covered(e)) e--;
         if (s > e) return;   // el rio va entero bajo un lago -> no se dibuja
@@ -496,47 +500,31 @@ int main(int, char**) {
                 out_xyz[i*3+1] = out_xyz[i*3+1]*(1.0f-t) + lakeY*t;
             }
         }
-        // UNION con el lago: como el cauce esta bloqueado para que el lago no lo
-        // inunde, entre el agua del rio y la del lago queda un trozo de lecho SECO.
-        // Para taparlo, se EXTIENDE cada extremo que toca un lago hasta el agua del
-        // lago (un punto extra al nivel del lago), asi la superficie del rio cubre la
-        // junta y enrasa con el lago. La honda va en ese punto de union. Sondea un
-        // poco mas alla del extremo en la direccion del cauce.
-        auto probe_lake = [&](float x, float z, float dx, float dz,
-                              float& lx, float& lz, float& ly) {
+        // Honda en la union con un lago: si un extremo del tramo esta pegado a agua
+        // de lago (sondeando un poco mas alla en la direccion del cauce), pon la
+        // honda ahi. NO se toca la geometria del rio: el lago entra por la boca (el
+        // cauce se deja sin bloquear en los extremos) y se unen solos.
+        auto touches_lake = [&](float x, float z, float dx, float dz, float& jx, float& jz) {
             float L = sqrtf(dx*dx + dz*dz); if (L < 1e-4f) return false;
             dx /= L; dz /= L;
-            for (float d = 1.0f; d <= 10.0f; d += 1.5f) {
+            for (float d = 1.0f; d <= 9.0f; d += 1.5f) {
                 float px = x + dx*d, pz = z + dz*d;
-                float wl = g3d_water_level_at(px, pz);
-                if (wl > g3d_editor_terrain_height(terrain, px, pz) + 0.3f) {
-                    lx = px; lz = pz; ly = wl; return true;
+                if (g3d_water_level_at(px, pz) > g3d_editor_terrain_height(terrain, px, pz) + 0.3f) {
+                    jx = px; jz = pz; return true;
                 }
             }
             return false;
         };
-        // Extiende un extremo del tramo hasta DENTRO del agua del lago. Como la caja
-        // del lago detecta el agua un poco antes del agua real (sobre el lecho seco
-        // bloqueado), se empuja el punto rv.width mas alla del primer contacto, para
-        // asegurar que la superficie del rio cruza el lecho seco y solapa el lago.
-        auto extend_end = [&](bool front) {
-            int mm = (int)out_xyz.size() / 3; if (mm < 2) return;
-            int i0 = front ? 0 : mm - 1, i1 = front ? 1 : mm - 2;
-            float ex = out_xyz[i0*3] - out_xyz[i1*3];
-            float ez = out_xyz[i0*3+2] - out_xyz[i1*3+2];
-            float lx, lz, ly;
-            if (probe_lake(out_xyz[i0*3], out_xyz[i0*3+2], ex, ez, lx, lz, ly)) {
-                float dl = sqrtf(ex*ex + ez*ez); if (dl > 1e-4f) { ex/=dl; ez/=dl; }
-                float px = lx + ex*rv.width, pz = lz + ez*rv.width;   // un pelin DENTRO del lago
-                if (front) out_xyz.insert(out_xyz.begin(), { px, ly, pz });
-                else { out_xyz.push_back(px); out_xyz.push_back(ly); out_xyz.push_back(pz); }
-                junctions.push_back({ px, pz });
-            } else if ((front && s > 0) || (!front && e < n - 1)) {
-                junctions.push_back({ out_xyz[i0*3], out_xyz[i0*3+2] });
-            }
-        };
-        extend_end(true);    // arranque del tramo
-        extend_end(false);   // final del tramo
+        if (m >= 2) {
+            float jx, jz;
+            if (touches_lake(out_xyz[0], out_xyz[2], out_xyz[0]-out_xyz[3], out_xyz[2]-out_xyz[5], jx, jz))
+                junctions.push_back({ jx, jz });
+            else if (s > 0) junctions.push_back({ out_xyz[0], out_xyz[2] });
+            if (touches_lake(out_xyz[(m-1)*3], out_xyz[(m-1)*3+2],
+                             out_xyz[(m-1)*3]-out_xyz[(m-2)*3], out_xyz[(m-1)*3+2]-out_xyz[(m-2)*3+2], jx, jz))
+                junctions.push_back({ jx, jz });
+            else if (e < n - 1) junctions.push_back({ out_xyz[(m-1)*3], out_xyz[(m-1)*3+2] });
+        }
     };
 
     auto rebuild_water = [&]() {

@@ -371,6 +371,11 @@ int main(int, char**) {
     float lake_level = -1.0f;   // nivel manual del agua
     float lake_depth = 4.0f;    // profundidad (para el tinte y la fisica)
     float lake_radius = 0.0f;   // radio max del llenado (0 = sin limite); acota hoyos abiertos
+    // previsualizacion en vivo del lago (como Planet Coaster): al pasar el raton se
+    // ve el agua que se colocaria; la rueda sube/baja el nivel.
+    bool  lake_prev_on = false;
+    Lake  lake_prev{0,0,0,4.0f,0.0f,{}};
+    long  lake_prev_key = -1;      // celda+nivel para no rehacer cada frame
     // ---- rios (agua por un camino de puntos clicados) ----
     // terrain_before = relieve del terreno JUSTO ANTES de excavar este rio, para
     // restaurarlo (rellenar el cauce) si el rio se borra.
@@ -578,7 +583,7 @@ int main(int, char**) {
         g3d_fluid_clear();
         g3d_flow_clear();
         g3d_water_clear_ripple_sources();
-        if (lakes.empty() && rivers.empty() && waterfalls.empty()) return;
+        if (lakes.empty() && rivers.empty() && waterfalls.empty() && !lake_prev_on) return;
         g3d_scene_set_terrain_collider(terrain);   // refresca el heightfield
         // Bloquea los cauces de los rios ANTES de crear los lagos: asi el relleno
         // del lago NO sube por el rio (antes el lago inundaba el cauce y el rio se
@@ -594,6 +599,10 @@ int main(int, char**) {
         for (auto& lk : lakes) {
             apply_fx(lk.fx);   // cada lago captura SUS efectos
             g3d_lake_add_r(lk.sx, lk.sz, lk.level, lk.depth, lk.radius);
+        }
+        if (lake_prev_on) {   // lago de PREVISUALIZACION (mientras se coloca)
+            apply_fx(lake_prev.fx);
+            g3d_lake_add_r(lake_prev.sx, lake_prev.sz, lake_prev.level, lake_prev.depth, lake_prev.radius);
         }
         int dbg_rios = 0, dbg_jun = 0;
         for (auto& rv : rivers) {
@@ -2867,6 +2876,12 @@ int main(int, char**) {
             }
         }
 
+        // quita la previsualizacion del lago si ya no aplica (otra herramienta,
+        // fuera del viewport, o en Play)
+        if (lake_prev_on && (tool != T_LAKE || !vp_hovered || playing || ImGuizmo::IsOver())) {
+            lake_prev_on = false; lake_prev_key = -1;
+            rebuild_water();
+        }
         // ---- interaccion del viewport segun la herramienta ----
         if (!playing && vp_hovered && !ImGuizmo::IsOver()) {
             ImVec2 mp = ImGui::GetIO().MousePos;
@@ -2960,34 +2975,41 @@ int main(int, char**) {
                 }
             } else if (tool == T_LAKE && terrain &&
                        g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
-                // LAGO: clic en un hoyo -> se rellena de agua con la forma del hueco.
-                // El nivel puede ser automatico (justo antes de desbordar) o manual.
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                    g3d_scene_set_terrain_collider(terrain);   // heightfield fresco
-                    // bloquea los cauces para que el desborde no baje por un rio
-                    g3d_fluid_block_reset();
-                    for (auto& rv : rivers) {
-                        int n = (int)rv.pts.size() / 2; if (n < 2) continue;
-                        std::vector<float> bx(n * 3);
-                        for (int k = 0; k < n; k++) { bx[k*3]=rv.pts[k*2]; bx[k*3+1]=0.0f; bx[k*3+2]=rv.pts[k*2+1]; }
-                        g3d_fluid_block_river(bx.data(), n, rv.width);
-                    }
-                    float lvl = lake_auto
-                        ? g3d_lake_spill_level_r(hit[0], hit[2], lake_radius) - 0.3f   // borde LOCAL
-                        : lake_level;
-                    // El agua solo se ve si el nivel esta POR ENCIMA del suelo del hoyo.
-                    // Con nivel manual bajo (p.ej. -1) en un hoyo alto de una montana no
-                    // entra agua: avisamos en vez de crear un lago vacio.
-                    float th = g3d_editor_terrain_height(terrain, hit[0], hit[2]);
-                    if (lvl <= th + 0.05f) {
-                        status = "Aqui el nivel del agua (" + std::to_string((int)lvl) +
-                                 ") queda por DEBAJO del suelo (" + std::to_string((int)th) +
-                                 "). Marca 'Nivel automatico' o sube 'Nivel (altura)'.";
-                    } else {
-                        lakes.push_back({ hit[0], hit[2], lvl, lake_depth, lake_radius, current_fx() });
-                        rebuild_water();
-                        status = "Lago anadido (nivel " + std::to_string((int)lvl) + ")";
-                    }
+                // LAGO estilo editor pro: al pasar el raton se PREVISUALIZA el agua que
+                // se colocaria (capa horizontal a un nivel, acotada por el terreno); la
+                // RUEDA sube/baja el nivel; el clic lo confirma.
+                g3d_scene_set_terrain_collider(terrain);   // heightfield fresco
+                g3d_fluid_block_reset();                   // los rios bloquean el desborde
+                for (auto& rv : rivers) {
+                    int n = (int)rv.pts.size() / 2; if (n < 2) continue;
+                    std::vector<float> bx(n * 3);
+                    for (int k = 0; k < n; k++) { bx[k*3]=rv.pts[k*2]; bx[k*3+1]=0.0f; bx[k*3+2]=rv.pts[k*2+1]; }
+                    g3d_fluid_block_river(bx.data(), n, rv.width);
+                }
+                float th = g3d_editor_terrain_height(terrain, hit[0], hit[2]);
+                // rueda del raton -> ajusta el nivel manual (y desactiva el automatico)
+                float wheel = ImGui::GetIO().MouseWheel;
+                if (wheel != 0.0f) { lake_auto = false; lake_level += wheel * 1.0f; }
+                float lvl = lake_auto
+                    ? g3d_lake_spill_level_r(hit[0], hit[2], lake_radius) - 0.3f   // borde LOCAL
+                    : lake_level;
+                if (lake_auto) lake_level = lvl;   // el slider sigue al automatico
+                // previsualiza (solo rehace el agua cuando cambia la celda o el nivel)
+                long key = ((long)(hit[0]*0.5f)*100003L + (long)(hit[2]*0.5f)) * 1000L + (long)(lvl*4.0f);
+                lake_prev = { hit[0], hit[2], lvl, lake_depth, lake_radius, current_fx() };
+                if (!lake_prev_on || key != lake_prev_key) {
+                    lake_prev_on = true; lake_prev_key = key;
+                    rebuild_water();
+                }
+                status = (lvl <= th + 0.05f)
+                    ? "El nivel queda por debajo del suelo aqui (sube con la rueda)."
+                    : "Rueda: nivel " + std::to_string((int)lvl) + "  |  clic para colocar el lago";
+                // clic: confirma el lago de la previsualizacion
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && lvl > th + 0.05f) {
+                    lakes.push_back({ hit[0], hit[2], lvl, lake_depth, lake_radius, current_fx() });
+                    lake_prev_on = false; lake_prev_key = -1;
+                    rebuild_water();
+                    status = "Lago anadido (nivel " + std::to_string((int)lvl) + ")";
                 }
             } else if (tool == T_WATERFALL && terrain &&
                        g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {

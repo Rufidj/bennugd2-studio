@@ -172,6 +172,12 @@ extern "C" {
     float g3d_lake_spill_level(float seed_x, float seed_z);
     float g3d_lake_spill_level_r(float seed_x, float seed_z, float max_radius);
     int   g3d_lake_add_r(float seed_x, float seed_z, float surface_y, float depth, float max_radius);
+    int   g3d_hydrology_analyze(float river_thresh, float min_lake_depth, const unsigned char *exclude);
+    int   g3d_hydrology_lake_count(void);
+    void  g3d_hydrology_lake(int i, float *x, float *z, float *level);
+    int   g3d_hydrology_river_count(void);
+    int   g3d_hydrology_river_len(int i);
+    void  g3d_hydrology_river_point(int i, int k, float *x, float *z);
     void  g3d_fluid_clear(void);
     void  g3d_fluid_set_style(float amp, float len, float speed, float dr, float dg, float db,
                               float sr, float sg, float sb, unsigned int tex, float opacity);
@@ -394,6 +400,10 @@ int main(int, char**) {
     float river_width = 6.0f;
     float river_depth = 3.0f;    // cuanto se excava el lecho bajo el terreno
     bool  water_fx_dirty = false; // hay cambios de efectos pendientes de reconstruir
+    // ---- agua automatica (hidrologia) ----
+    std::vector<float> hyd_base;       // relieve base (antes de excavar cauces auto)
+    float hyd_river_thresh = 400.0f;   // caudal minimo para que sea rio (sensibilidad)
+    float hyd_lake_depth   = 1.0f;     // profundidad minima para que un hoyo sea lago
 
     // Excava un cauce en el terreno siguiendo un camino de puntos (pares x,z): baja
     // el terreno a un lecho `depth` por debajo del relieve original, con pendiente
@@ -647,6 +657,41 @@ int main(int, char**) {
         if (!rivers.empty() && terrain && (int)rivers[0].terrain_before.size() == nv && nv > 0)
             g3d_editor_terrain_restore(terrain, rivers[0].terrain_before.data());
         rivers.clear();
+        rebuild_water();
+    };
+
+    // AGUA AUTOMATICA (hidrologia): analiza el relieve y coloca lagos + rios
+    // (excavando el cauce) + cascadas, todo conectado. Reemplaza el agua actual.
+    // Luego puedes borrar a mano la masa que no quieras, o anadir mas.
+    auto generate_water_auto = [&]() {
+        if (!terrain) return;
+        int nv = g3d_editor_terrain_vcount(terrain);
+        // relieve base: 1a vez = terreno actual; despues se restaura para no excavar
+        // cauces sobre cauces al regenerar.
+        if ((int)hyd_base.size() == nv && nv > 0)
+            g3d_editor_terrain_restore(terrain, hyd_base.data());
+        else
+            hyd_base = snapshot_terrain();
+        lakes.clear(); rivers.clear(); waterfalls.clear();
+        g3d_scene_set_terrain_collider(terrain);
+        if (!g3d_hydrology_analyze(hyd_river_thresh, hyd_lake_depth, nullptr)) return;
+        int nr = g3d_hydrology_river_count();
+        for (int i = 0; i < nr; i++) {
+            int n = g3d_hydrology_river_len(i);
+            if (n < 2) continue;
+            std::vector<float> pts(n * 2);
+            for (int k = 0; k < n; k++) { float x, z; g3d_hydrology_river_point(i, k, &x, &z); pts[k*2]=x; pts[k*2+1]=z; }
+            River rv; rv.pts = pts; rv.width = river_width; rv.depth = river_depth;
+            rv.fx = current_fx(); rv.wf = WaterfallFX();
+            rv.terrain_before = snapshot_terrain();   // para poder borrarlo luego
+            carve_river(pts, river_width, river_depth);
+            rivers.push_back(std::move(rv));
+        }
+        int nl = g3d_hydrology_lake_count();
+        for (int i = 0; i < nl; i++) {
+            float x, z, lv; g3d_hydrology_lake(i, &x, &z, &lv);
+            lakes.push_back({ x, z, lv, lake_depth, 0.0f, current_fx() });
+        }
         rebuild_water();
     };
 
@@ -3186,7 +3231,22 @@ int main(int, char**) {
 
         // --- Panel: Entorno (agua / mar / lago) ---
         ImGui::Begin("Entorno");
-        ImGui::SeparatorText(ICON_FA_WATER "  Agua");
+        // --- AGUA AUTOMATICA (hidrologia): un boton deduce lagos/rios/cascadas del relieve ---
+        ImGui::SeparatorText(ICON_FA_WAND_MAGIC_SPARKLES "  Agua automatica");
+        ImGui::TextWrapped("Analiza el relieve y coloca lagos, rios (excavando el cauce) y "
+                           "cascadas conectados. Esculpe el terreno y pulsa el boton.");
+        ImGui::SliderFloat("Sensibilidad rio", &hyd_river_thresh, 50.0f, 2000.0f, "%.0f");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Menor = mas rios (con menos caudal). Mayor = solo los rios grandes.");
+        ImGui::SliderFloat("Prof. min lago", &hyd_lake_depth, 0.3f, 8.0f, "%.1f");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Un hoyo se vuelve lago solo si retiene agua mas honda que esto.");
+        if (ImGui::Button(ICON_FA_WAND_MAGIC_SPARKLES "  Generar agua", ImVec2(-1, 0))) {
+            generate_water_auto();
+            status = "Agua auto: " + std::to_string(g3d_hydrology_lake_count()) + " lago(s), " +
+                     std::to_string(g3d_hydrology_river_count()) + " rio(s)";
+        }
+        ImGui::TextDisabled("Luego borra a mano la masa que no quieras, o anade con las herramientas.");
+        ImGui::Separator();
+        ImGui::SeparatorText(ICON_FA_WATER "  Agua (mar global)");
         ImGui::Checkbox("Activar agua (mar/lago)", &water_on);
         ImGui::BeginDisabled(!water_on);
         ImGui::SliderFloat("Nivel", &water_level, -20.0f, 40.0f, "%.1f");

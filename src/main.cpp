@@ -626,6 +626,16 @@ int main(int, char**) {
                 g3d_river_add(xyz.data(), (int)xyz.size()/3, rv.width);   // superficie (recortada)
                 dbg_rios++;
             }
+            // CASCADAS del rio: con el camino COMPLETO (sin recortar). g3d_river_add_falls
+            // pone una lamina donde el cauce CAE fuerte (un precipicio), siguiendo el
+            // acantilado hasta la base. Asi un rio que llega a un desnivel forma cascada.
+            int nf = (int)rv.pts.size() / 2;
+            if (nf >= 2) {
+                std::vector<float> full(nf * 3);
+                for (int k = 0; k < nf; k++) { full[k*3]=rv.pts[k*2]; full[k*3+1]=0.0f; full[k*3+2]=rv.pts[k*2+1]; }
+                apply_wf(rv.wf);
+                g3d_river_add_falls(full.data(), nf, rv.width);
+            }
             for (auto& j : jn) { g3d_water_add_ripple_source(j.first, j.second, 0.9f); dbg_jun++; }
         }
         // CASCADAS colocadas a mano (herramienta propia): cada una con su estilo.
@@ -2051,6 +2061,21 @@ int main(int, char**) {
                         fprintf(f, "    g3d_water_add_ripple_source(%.3f, %.3f, 0.9);   // honda en la union con el lago\n",
                                 j.first, j.second);
                     apply_fx(rv.fx); g3d_river_add(xyz.data(), m, rv.width);   // motor: superficie
+                }
+                // CASCADAS del rio: camino COMPLETO -> lamina donde el cauce cae fuerte.
+                int nf = (int)rv.pts.size() / 2;
+                if (nf >= 2) {
+                    fprintf(f, "    g3d_flow_set_color(%.4f, %.4f, %.4f);\n",
+                            rv.wf.color[0], rv.wf.color[1], rv.wf.color[2]);
+                    fprintf(f, "    g3d_flow_set_foam(%.3f); g3d_flow_set_speed(%.3f);\n", rv.wf.foam, rv.wf.speed);
+                    fputs("    g3d_flow_set_texture(0);\n", f);
+                    fprintf(f, "    g3d_river_begin(%.3f, %.3f);\n", rv.width, rv.depth*0.8f);
+                    for (int k = 0; k < nf; k++)
+                        fprintf(f, "    g3d_river_point(%.3f, %.3f);\n", rv.pts[k*2], rv.pts[k*2+1]);
+                    fputs("    g3d_river_falls();   // cascadas del rio (camino completo)\n", f);
+                    std::vector<float> full(nf * 3);
+                    for (int k = 0; k < nf; k++) { full[k*3]=rv.pts[k*2]; full[k*3+1]=0.0f; full[k*3+2]=rv.pts[k*2+1]; }
+                    apply_wf(rv.wf); g3d_river_add_falls(full.data(), nf, rv.width);
                 }
             }
             // CASCADAS (colocadas a mano): elemento propio, con su estilo de flujo.

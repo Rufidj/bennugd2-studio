@@ -402,8 +402,8 @@ int main(int, char**) {
     bool  water_fx_dirty = false; // hay cambios de efectos pendientes de reconstruir
     // ---- agua automatica (hidrologia) ----
     std::vector<float> hyd_base;       // relieve base (antes de excavar cauces auto)
-    float hyd_river_thresh = 400.0f;   // caudal minimo para que sea rio (sensibilidad)
-    float hyd_lake_depth   = 1.0f;     // profundidad minima para que un hoyo sea lago
+    float hyd_river_thresh = 600.0f;   // caudal minimo para que sea rio (sensibilidad)
+    float hyd_lake_depth   = 2.0f;     // profundidad minima para que un hoyo sea lago
 
     // Excava un cauce en el terreno siguiendo un camino de puntos (pares x,z): baja
     // el terreno a un lecho `depth` por debajo del relieve original, con pendiente

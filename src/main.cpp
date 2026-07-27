@@ -698,6 +698,57 @@ int main(int, char**) {
         rebuild_water();
     };
 
+    // AUTO-PINTAR el terreno con las texturas de Assets segun ALTURA y PENDIENTE:
+    // hierba en lo llano/medio, roca en lo empinado, nieve en las cimas, arena/tierra
+    // en lo bajo. Elige que textura es cada cosa por el NOMBRE del fichero.
+    auto auto_paint_terrain = [&]() {
+        if (!terrain || paints.empty()) return;
+        auto find_tex = [&](std::initializer_list<const char*> keys) -> int {
+            for (int i = 0; i < (int)paints.size(); i++) {
+                std::string f = paints[i].file; for (auto& c : f) c = (char)tolower(c);
+                for (auto k : keys) if (f.find(k) != std::string::npos) return i;
+            }
+            return -1;
+        };
+        int iGrass = find_tex({"grass","cesped","hierba","pasto","grama","green"});
+        int iRock  = find_tex({"rock","roca","stone","piedra","cliff","montan","mountain"});
+        int iSand  = find_tex({"sand","arena","beach","playa","dirt","tierra","desert","suelo"});
+        int iSnow  = find_tex({"snow","nieve","ice","hielo"});
+        if (iGrass < 0) iGrass = 0;           /* base = primera textura si no hay 'grass' */
+        if (iRock  < 0) iRock  = iGrass;
+        if (iSand  < 0) iSand  = iGrass;
+        if (iSnow  < 0) iSnow  = iRock;
+        const float half = 200.0f;            /* worldsize 400 -> [-200,200] */
+        // rango de alturas (muestreo grueso)
+        float hmin = 1e30f, hmax = -1e30f;
+        for (float z = -half; z <= half; z += 10.0f)
+            for (float x = -half; x <= half; x += 10.0f) {
+                float h = g3d_editor_terrain_height(terrain, x, z);
+                if (h < hmin) hmin = h; if (h > hmax) hmax = h;
+            }
+        float span = hmax - hmin; if (span < 1e-3f) span = 1.0f;
+        // Pasada 1: base de hierba en todo el terreno
+        for (float z = -half; z <= half; z += 9.0f)
+            for (float x = -half; x <= half; x += 9.0f)
+                if (paint_tex(iGrass)) g3d_editor_terrain_paint(terrain, paint_tex(iGrass), paint_tiling, x, z, 7.0f, 1.0f);
+        // Pasada 2: roca/nieve/arena segun altura y pendiente
+        const float s = 5.0f;
+        for (float z = -half; z <= half; z += s)
+            for (float x = -half; x <= half; x += s) {
+                float h  = g3d_editor_terrain_height(terrain, x, z);
+                float hL = g3d_editor_terrain_height(terrain, x-s, z), hR = g3d_editor_terrain_height(terrain, x+s, z);
+                float hD = g3d_editor_terrain_height(terrain, x, z-s), hU = g3d_editor_terrain_height(terrain, x, z+s);
+                float slope = (fabsf(hR-hL) + fabsf(hU-hD)) / (2.0f * s);
+                float hn = (h - hmin) / span;
+                int t = -1;
+                if (slope > 0.7f)      t = iRock;    /* empinado -> roca */
+                else if (hn > 0.82f)   t = iSnow;    /* cima -> nieve */
+                else if (hn < 0.10f)   t = iSand;    /* bajo -> arena/tierra */
+                if (t >= 0 && t != iGrass && paint_tex(t))
+                    g3d_editor_terrain_paint(terrain, paint_tex(t), paint_tiling, x, z, s*1.3f, 1.0f);
+            }
+    };
+
     // TERRENO PROCEDURAL: genera relieve con ruido (colinas, valles y un
     // acantilado) y luego lanza el agua automatica -> paisaje con lagos, rios y
     // cascadas de un solo golpe. amplitud = cuanto relieve.
@@ -752,6 +803,7 @@ int main(int, char**) {
                 hs[j*side+i] = (e - 0.32f) * amp;
             }
         g3d_editor_terrain_restore(terrain, hs.data());
+        auto_paint_terrain();     // pinta hierba/roca/nieve/arena segun el relieve
         generate_water_auto();
     };
 
@@ -2723,6 +2775,12 @@ int main(int, char**) {
                     generate_procedural_terrain(proc_amp);
                     status = "Terreno procedural + agua auto generados";
                 }
+                if (ImGui::MenuItem(ICON_FA_PAINTBRUSH " Auto-pintar texturas")) {
+                    auto_paint_terrain();
+                    status = "Terreno pintado por altura/pendiente";
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Pinta el terreno actual con las texturas de Assets:\nhierba, roca (empinado), nieve (cima), arena (bajo).");
                 ImGui::Separator();
                 ImGui::TextDisabled("AGUA AUTOMATICA");
                 ImGui::SetNextItemWidth(150);

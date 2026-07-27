@@ -698,6 +698,44 @@ int main(int, char**) {
         rebuild_water();
     };
 
+    // TERRENO PROCEDURAL: genera relieve con ruido (colinas, valles y un
+    // acantilado) y luego lanza el agua automatica -> paisaje con lagos, rios y
+    // cascadas de un solo golpe. amplitud = cuanto relieve.
+    float proc_seed = 1.0f, proc_amp = 22.0f;
+    auto generate_procedural_terrain = [&](float amp) {
+        if (!terrain) return;
+        int nv = g3d_editor_terrain_vcount(terrain);
+        int side = (int)(sqrtf((float)nv) + 0.5f);
+        if (side * side != nv || side < 2) return;
+        unsigned seed = (unsigned)(proc_seed) * 2654435761u + 12345u;
+        auto hsh = [&](int x, int y) {
+            unsigned h = seed + (unsigned)x*374761393u + (unsigned)y*668265263u;
+            h = (h ^ (h >> 13)) * 1274126177u; h ^= h >> 16;
+            return (float)(h & 0xffffu) / 65535.0f;
+        };
+        auto vn = [&](float x, float z) {
+            int xi = (int)floorf(x), zi = (int)floorf(z);
+            float xf = x - xi, zf = z - zi;
+            float u = xf*xf*(3-2*xf), v = zf*zf*(3-2*zf);
+            float a = hsh(xi,zi), b = hsh(xi+1,zi), c = hsh(xi,zi+1), d = hsh(xi+1,zi+1);
+            return (a*(1-u)+b*u)*(1-v) + (c*(1-u)+d*u)*v;
+        };
+        std::vector<float> hs(nv);
+        for (int j = 0; j < side; j++)
+            for (int i = 0; i < side; i++) {
+                float nx = (float)i / side, nz = (float)j / side;
+                float e = 0.0f, a = 1.0f, fr = 3.0f, norm = 0.0f;
+                for (int o = 0; o < 5; o++) { e += a * vn(nx*fr, nz*fr); norm += a; a *= 0.5f; fr *= 2.0f; }
+                e /= norm;                      // 0..1
+                e = powf(e, 1.6f);              // valles mas planos, picos marcados
+                // un ESCALON/acantilado suave a media altura para tener precipicios
+                float terr = e;
+                hs[j*side+i] = (terr - 0.4f) * amp;
+            }
+        g3d_editor_terrain_restore(terrain, hs.data());
+        generate_water_auto();
+    };
+
     // ---- ImGui ----
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -3263,6 +3301,16 @@ int main(int, char**) {
                      std::to_string(g3d_hydrology_river_count()) + " rio(s)";
         }
         ImGui::TextDisabled("Luego borra a mano la masa que no quieras, o anade con las herramientas.");
+        ImGui::Spacing();
+        ImGui::SliderFloat("Relieve", &proc_amp, 5.0f, 60.0f, "%.0f");
+        ImGui::SliderFloat("Semilla", &proc_seed, 1.0f, 999.0f, "%.0f");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Aleatoria")) proc_seed = (float)(1 + (rand() % 999));
+        if (ImGui::Button(ICON_FA_MOUNTAIN_SUN "  Generar terreno procedural", ImVec2(-1, 0))) {
+            generate_procedural_terrain(proc_amp);
+            status = "Terreno procedural + agua auto generados";
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Crea colinas/valles/acantilados con ruido y les pone agua automatica. Cambia la Semilla para otro mapa.");
         ImGui::Separator();
         ImGui::SeparatorText(ICON_FA_WATER "  Agua (mar global)");
         ImGui::Checkbox("Activar agua (mar/lago)", &water_on);

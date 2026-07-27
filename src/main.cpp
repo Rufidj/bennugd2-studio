@@ -665,13 +665,8 @@ int main(int, char**) {
     // Luego puedes borrar a mano la masa que no quieras, o anadir mas.
     auto generate_water_auto = [&]() {
         if (!terrain) return;
-        int nv = g3d_editor_terrain_vcount(terrain);
-        // relieve base: 1a vez = terreno actual; despues se restaura para no excavar
-        // cauces sobre cauces al regenerar.
-        if ((int)hyd_base.size() == nv && nv > 0)
-            g3d_editor_terrain_restore(terrain, hyd_base.data());
-        else
-            hyd_base = snapshot_terrain();
+        // NO se toca el terreno: el agua solo RELLENA lo que ya tengas excavado
+        // (hoyos -> lagos, cauces encajados -> rios, desniveles -> cascadas).
         lakes.clear(); rivers.clear(); waterfalls.clear();
         g3d_scene_set_terrain_collider(terrain);
         if (!g3d_hydrology_analyze(hyd_river_thresh, hyd_lake_depth, nullptr)) return;
@@ -683,9 +678,7 @@ int main(int, char**) {
             for (int k = 0; k < n; k++) { float x, z; g3d_hydrology_river_point(i, k, &x, &z); pts[k*2]=x; pts[k*2+1]=z; }
             River rv; rv.pts = pts; rv.width = river_width; rv.depth = river_depth;
             rv.fx = current_fx(); rv.wf = WaterfallFX();
-            rv.terrain_before = snapshot_terrain();   // para poder borrarlo luego
-            carve_river(pts, river_width, river_depth);
-            rivers.push_back(std::move(rv));
+            rivers.push_back(std::move(rv));   // sin excavar: el agua llena el cauce existente
         }
         int nl = g3d_hydrology_lake_count();
         for (int i = 0; i < nl; i++) {

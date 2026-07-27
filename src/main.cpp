@@ -718,19 +718,38 @@ int main(int, char**) {
             float xf = x - xi, zf = z - zi;
             float u = xf*xf*(3-2*xf), v = zf*zf*(3-2*zf);
             float a = hsh(xi,zi), b = hsh(xi+1,zi), c = hsh(xi,zi+1), d = hsh(xi+1,zi+1);
-            return (a*(1-u)+b*u)*(1-v) + (c*(1-u)+d*u)*v;
+            return (a*(1-u)+b*u)*(1-v) + (c*(1-u)+d*u)*v;   // 0..1
         };
+        auto fbm = [&](float x, float z, int oct) {
+            float e = 0, a = 1, f = 1, norm = 0;
+            for (int o = 0; o < oct; o++) { e += a * vn(x*f, z*f); norm += a; a *= 0.5f; f *= 2.0f; }
+            return e / norm;                                // 0..1
+        };
+        // ruido de CORDILLERA (ridged): crestas afiladas para montanas realistas
+        auto ridged = [&](float x, float z, int oct) {
+            float e = 0, a = 1, f = 1, norm = 0;
+            for (int o = 0; o < oct; o++) {
+                float r = 1.0f - fabsf(vn(x*f, z*f) * 2.0f - 1.0f); r *= r;
+                e += a * r; norm += a; a *= 0.5f; f *= 2.0f;
+            }
+            return e / norm;
+        };
+        auto smooth01 = [](float a, float b, float x){ float t=(x-a)/(b-a); if(t<0)t=0; if(t>1)t=1; return t*t*(3-2*t); };
         std::vector<float> hs(nv);
         for (int j = 0; j < side; j++)
             for (int i = 0; i < side; i++) {
-                float nx = (float)i / side, nz = (float)j / side;
-                float e = 0.0f, a = 1.0f, fr = 3.0f, norm = 0.0f;
-                for (int o = 0; o < 5; o++) { e += a * vn(nx*fr, nz*fr); norm += a; a *= 0.5f; fr *= 2.0f; }
-                e /= norm;                      // 0..1
-                e = powf(e, 1.6f);              // valles mas planos, picos marcados
-                // un ESCALON/acantilado suave a media altura para tener precipicios
-                float terr = e;
-                hs[j*side+i] = (terr - 0.4f) * amp;
+                float nx = (float)i / side * 3.0f, nz = (float)j / side * 3.0f;
+                // DOMAIN WARP: desplaza las coords con otro ruido -> formas organicas
+                float wx = fbm(nx + 5.2f, nz + 1.3f, 3) - 0.5f;
+                float wz = fbm(nx + 8.3f, nz + 2.8f, 3) - 0.5f;
+                float sx = nx + wx * 1.2f, sz = nz + wz * 1.2f;
+                // colinas base + cordilleras (ridged) solo donde una mascara amplia dice
+                float hills = fbm(sx * 1.2f, sz * 1.2f, 5);
+                float mtn   = ridged(sx * 1.6f, sz * 1.6f, 5);
+                float mask  = smooth01(0.42f, 0.72f, fbm(nx * 0.5f, nz * 0.5f, 2));
+                float e = hills * 0.55f + mtn * mask * 1.1f;
+                e = powf(e, 1.35f);             // valles mas planos, cimas marcadas
+                hs[j*side+i] = (e - 0.32f) * amp;
             }
         g3d_editor_terrain_restore(terrain, hs.data());
         generate_water_auto();
@@ -2693,6 +2712,30 @@ int main(int, char**) {
                 }
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("Terreno")) {
+                ImGui::TextDisabled("TERRENO PROCEDURAL");
+                ImGui::SetNextItemWidth(150);
+                ImGui::SliderFloat("Relieve##m", &proc_amp, 5.0f, 60.0f, "%.0f");
+                ImGui::SetNextItemWidth(150);
+                ImGui::SliderFloat("Semilla##m", &proc_seed, 1.0f, 999.0f, "%.0f");
+                if (ImGui::MenuItem("Semilla aleatoria")) proc_seed = (float)(1 + (rand() % 999));
+                if (ImGui::MenuItem(ICON_FA_MOUNTAIN_SUN " Generar terreno")) {
+                    generate_procedural_terrain(proc_amp);
+                    status = "Terreno procedural + agua auto generados";
+                }
+                ImGui::Separator();
+                ImGui::TextDisabled("AGUA AUTOMATICA");
+                ImGui::SetNextItemWidth(150);
+                ImGui::SliderFloat("Sensib. rio##m", &hyd_river_thresh, 50.0f, 2000.0f, "%.0f");
+                ImGui::SetNextItemWidth(150);
+                ImGui::SliderFloat("Prof. min lago##m", &hyd_lake_depth, 0.3f, 8.0f, "%.1f");
+                if (ImGui::MenuItem(ICON_FA_WAND_MAGIC_SPARKLES " Generar agua")) {
+                    generate_water_auto();
+                    status = "Agua auto: " + std::to_string(g3d_hydrology_lake_count()) + " lago(s), " +
+                             std::to_string(g3d_hydrology_river_count()) + " rio(s)";
+                }
+                ImGui::EndMenu();
+            }
             if (ImGui::BeginMenu("Juego")) {
                 if (ImGui::MenuItem("Generar y compilar")) generate_game(false);
                 if (ImGui::MenuItem(ICON_FA_PLAY " Generar y ejecutar")) generate_game(true);
@@ -3287,31 +3330,7 @@ int main(int, char**) {
 
         // --- Panel: Entorno (agua / mar / lago) ---
         ImGui::Begin("Entorno");
-        // --- AGUA AUTOMATICA (hidrologia): un boton deduce lagos/rios/cascadas del relieve ---
-        ImGui::SeparatorText(ICON_FA_WAND_MAGIC_SPARKLES "  Agua automatica");
-        ImGui::TextWrapped("Analiza el relieve y coloca lagos, rios (excavando el cauce) y "
-                           "cascadas conectados. Esculpe el terreno y pulsa el boton.");
-        ImGui::SliderFloat("Sensibilidad rio", &hyd_river_thresh, 50.0f, 2000.0f, "%.0f");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Menor = mas rios (con menos caudal). Mayor = solo los rios grandes.");
-        ImGui::SliderFloat("Prof. min lago", &hyd_lake_depth, 0.3f, 8.0f, "%.1f");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Un hoyo se vuelve lago solo si retiene agua mas honda que esto.");
-        if (ImGui::Button(ICON_FA_WAND_MAGIC_SPARKLES "  Generar agua", ImVec2(-1, 0))) {
-            generate_water_auto();
-            status = "Agua auto: " + std::to_string(g3d_hydrology_lake_count()) + " lago(s), " +
-                     std::to_string(g3d_hydrology_river_count()) + " rio(s)";
-        }
-        ImGui::TextDisabled("Luego borra a mano la masa que no quieras, o anade con las herramientas.");
-        ImGui::Spacing();
-        ImGui::SliderFloat("Relieve", &proc_amp, 5.0f, 60.0f, "%.0f");
-        ImGui::SliderFloat("Semilla", &proc_seed, 1.0f, 999.0f, "%.0f");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Aleatoria")) proc_seed = (float)(1 + (rand() % 999));
-        if (ImGui::Button(ICON_FA_MOUNTAIN_SUN "  Generar terreno procedural", ImVec2(-1, 0))) {
-            generate_procedural_terrain(proc_amp);
-            status = "Terreno procedural + agua auto generados";
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Crea colinas/valles/acantilados con ruido y les pone agua automatica. Cambia la Semilla para otro mapa.");
-        ImGui::Separator();
+        ImGui::TextDisabled("Terreno y agua auto: menu 'Terreno' (arriba).");
         ImGui::SeparatorText(ICON_FA_WATER "  Agua (mar global)");
         ImGui::Checkbox("Activar agua (mar/lago)", &water_on);
         ImGui::BeginDisabled(!water_on);

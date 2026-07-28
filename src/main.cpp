@@ -421,8 +421,8 @@ int main(int, char**) {
     // ---- simulacion de agua (manantiales que fluyen) ----
     struct WSource { float x, z, rate; };
     std::vector<WSource> wsources;     // fuentes colocadas (para guardar/regenerar)
-    float ws_rate = 1.5f;              // caudal de la proxima fuente
-    float ws_evap = 0.08f;            // evaporacion (rios finos, charcos se secan)
+    float ws_rate = 6.0f;              // caudal de la proxima fuente (potente: llena rapido)
+    float ws_evap = 0.0f;             // evaporacion (0 = el agua se QUEDA, no se seca)
     float ws_flow = 1.0f;             // velocidad de flujo
 
     // Excava un cauce en el terreno siguiendo un camino de puntos (pares x,z): baja
@@ -737,7 +737,7 @@ int main(int, char**) {
         g3d_watersim_set_flow_scale(ws_flow);
         g3d_watersim_clear_sources();
         for (auto& s : wsources) g3d_watersim_add_source(s.x, s.z, s.rate);
-        if (resettle) g3d_watersim_settle(25.0f);   // llena de golpe (no gota a gota)
+        if (resettle) g3d_watersim_settle(60.0f);   // llena de golpe hasta su nivel estable
     };
 
     // AUTO-PINTAR el terreno con las texturas de Assets segun ALTURA y PENDIENTE:
@@ -3710,9 +3710,10 @@ int main(int, char**) {
             ImGui::TextWrapped("Pon un MANANTIAL con clic: el agua fluye cuesta abajo sola, "
                                "formando rios en los cauces, charcos en los hoyos y cascadas en "
                                "los precipicios, con fisica. Clic derecho quita el mas cercano.");
-            if (ImGui::SliderFloat("Caudal fuente", &ws_rate, 0.2f, 8.0f, "%.1f")) {}
+            if (ImGui::SliderFloat("Caudal fuente", &ws_rate, 0.5f, 30.0f, "%.1f")) {}
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Potencia del manantial: mas = llena mas rapido y hace mas rio.");
             if (ImGui::SliderFloat("Evaporacion", &ws_evap, 0.0f, 0.4f, "%.2f")) { if (g3d_watersim_active()) watersim_sync(true); }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mas evaporacion = rios mas finos y charcos que se secan.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = el agua se QUEDA (llena y no se seca). Mas = rios finos / charcos que se secan.");
             if (ImGui::SliderFloat("Velocidad flujo", &ws_flow, 0.3f, 3.0f, "%.1f")) { if (g3d_watersim_active()) watersim_sync(false); }
             ImGui::Separator();
             ImGui::Text("Manantiales: %d", (int)wsources.size());

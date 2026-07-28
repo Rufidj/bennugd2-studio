@@ -178,6 +178,20 @@ extern "C" {
     int   g3d_hydrology_river_count(void);
     int   g3d_hydrology_river_len(int i);
     void  g3d_hydrology_river_point(int i, int k, float *x, float *z);
+    // --- simulacion de agua (fluye con fisica: rios/cascadas automaticos) ---
+    void  g3d_watersim_init(const float *heights, int side, float world_size);
+    void  g3d_watersim_set_terrain(const float *heights);
+    void  g3d_watersim_shutdown(void);
+    int   g3d_watersim_active(void);
+    int   g3d_watersim_add_source(float x, float z, float rate);
+    void  g3d_watersim_clear_sources(void);
+    int   g3d_watersim_source_count(void);
+    int   g3d_watersim_get_source(int i, float *x, float *z, float *rate);
+    void  g3d_watersim_set_rain(float rate);
+    void  g3d_watersim_set_sea_level(float y);
+    void  g3d_watersim_set_evaporation(float rate);
+    void  g3d_watersim_set_flow_scale(float s);
+    void  g3d_watersim_settle(float seconds);
     void  g3d_fluid_clear(void);
     void  g3d_fluid_set_style(float amp, float len, float speed, float dr, float dg, float db,
                               float sr, float sg, float sb, unsigned int tex, float opacity);
@@ -404,6 +418,12 @@ int main(int, char**) {
     std::vector<float> hyd_base;       // relieve base (antes de excavar cauces auto)
     float hyd_river_thresh = 600.0f;   // caudal minimo para que sea rio (sensibilidad)
     float hyd_lake_depth   = 2.0f;     // profundidad minima para que un hoyo sea lago
+    // ---- simulacion de agua (manantiales que fluyen) ----
+    struct WSource { float x, z, rate; };
+    std::vector<WSource> wsources;     // fuentes colocadas (para guardar/regenerar)
+    float ws_rate = 1.5f;              // caudal de la proxima fuente
+    float ws_evap = 0.08f;            // evaporacion (rios finos, charcos se secan)
+    float ws_flow = 1.0f;             // velocidad de flujo
 
     // Excava un cauce en el terreno siguiendo un camino de puntos (pares x,z): baja
     // el terreno a un lecho `depth` por debajo del relieve original, con pendiente
@@ -698,6 +718,28 @@ int main(int, char**) {
         rebuild_water();
     };
 
+    // Simulacion de agua: (re)arranca sobre el terreno actual y re-aplica fuentes y
+    // parametros. El agua fluye sola (rios/cascadas). Se llama al colocar la 1a
+    // fuente y al esculpir (para que el agua siga el relieve nuevo).
+    auto watersim_sync = [&](bool resettle) {
+        if (!terrain) return;
+        int nv = g3d_editor_terrain_vcount(terrain);
+        int side = (int)(sqrtf((float)nv) + 0.5f);
+        if (side * side != nv || side < 2) return;
+        std::vector<float> hs(nv);
+        g3d_editor_terrain_snapshot(terrain, hs.data());
+        if (!g3d_watersim_active())
+            g3d_watersim_init(hs.data(), side, 400.0f);
+        else
+            g3d_watersim_set_terrain(hs.data());
+        g3d_watersim_set_sea_level(water_on ? water_level : -1e30f);
+        g3d_watersim_set_evaporation(ws_evap);
+        g3d_watersim_set_flow_scale(ws_flow);
+        g3d_watersim_clear_sources();
+        for (auto& s : wsources) g3d_watersim_add_source(s.x, s.z, s.rate);
+        if (resettle) g3d_watersim_settle(25.0f);   // llena de golpe (no gota a gota)
+    };
+
     // AUTO-PINTAR el terreno con las texturas de Assets segun ALTURA y PENDIENTE:
     // hierba en lo llano/medio, roca en lo empinado, nieve en las cimas, arena/tierra
     // en lo bajo. Elige que textura es cada cosa por el NOMBRE del fichero.
@@ -904,7 +946,7 @@ int main(int, char**) {
     std::string script_title;   // como se llama en la barra del editor
     // ---- herramienta activa (toolbar con iconos) ----
     enum Tool { T_SELECT, T_MOVE, T_ROTATE, T_SCALE, T_PLACE, T_RAISE, T_LOWER, T_SMOOTH, T_FLATTEN, T_PAINT,
-                T_HOLE, T_ZONE, T_LAKE, T_RIVER, T_WATERFALL };
+                T_HOLE, T_ZONE, T_LAKE, T_RIVER, T_WATERFALL, T_WATERSOURCE };
     bool hole_fill = false;   // T_HOLE: false=perforar, true=rellenar
     int tool = T_SELECT;
     int  zone_layer = 0;      // T_ZONE: capa (0..3) que se pinta
@@ -2831,6 +2873,7 @@ int main(int, char**) {
             toolBtn(ICON_FA_DROPLET,             T_LAKE,    "Lago: clic en un hoyo del terreno para llenarlo de agua");
             toolBtn(ICON_FA_WATER,               T_RIVER,   "Rio: clic para poner puntos del cauce, doble clic para terminar");
             toolBtn(ICON_FA_ANGLES_DOWN,         T_WATERFALL, "Cascada: clic arriba (el borde) y clic abajo (la base/poza)");
+            toolBtn(ICON_FA_FAUCET_DRIP,         T_WATERSOURCE, "Manantial: clic para poner una fuente; el agua fluye sola (rios/cascadas con fisica)");
 
             // ---- PLAY: compila el juego y lo ejecuta en su propia ventana ----
             // Es un proceso BennuGD2 normal, con todos sus hooks: fidelidad total
@@ -3126,8 +3169,10 @@ int main(int, char**) {
                 }
                 // al soltar una pincelada, si hay agua hay que rehacerla: sigue
                 // la forma del relieve y este acaba de cambiar.
-                if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && (!lakes.empty() || !rivers.empty()))
-                    rebuild_water();
+                if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                    if (!lakes.empty() || !rivers.empty()) rebuild_water();
+                    if (g3d_watersim_active()) watersim_sync(true);   // el agua sigue el relieve nuevo
+                }
             } else if (tool == T_RIVER && terrain &&
                        g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
                 // RIO: cada clic anade un punto del cauce; doble clic lo termina.
@@ -3232,7 +3277,23 @@ int main(int, char**) {
                         status = "Cascada anadida";
                     }
                 }
-            } else if (!terr_tool && tool != T_LAKE && tool != T_RIVER && tool != T_WATERFALL && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            } else if (tool == T_WATERSOURCE && terrain &&
+                       g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
+                // MANANTIAL: pone una fuente; el simulador hace fluir el agua (rios,
+                // charcos y cascadas por fisica). Clic derecho quita la mas cercana.
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    wsources.push_back({ hit[0], hit[2], ws_rate });
+                    watersim_sync(true);
+                    status = "Manantial anadido (el agua fluira sola)";
+                } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !wsources.empty()) {
+                    int bi = -1; float best = 1e30f;
+                    for (int i = 0; i < (int)wsources.size(); i++) {
+                        float dx = wsources[i].x - hit[0], dz = wsources[i].z - hit[2];
+                        float d = dx*dx + dz*dz; if (d < best) { best = d; bi = i; }
+                    }
+                    if (bi >= 0) { wsources.erase(wsources.begin() + bi); watersim_sync(true); status = "Manantial quitado"; }
+                }
+            } else if (!terr_tool && tool != T_LAKE && tool != T_RIVER && tool != T_WATERFALL && tool != T_WATERSOURCE && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 // punto: sobre agua->superficie, si no sobre el terreno/fondo
                 int ok = place_point(sx, sy, hit);
                 if (ok) {
@@ -3642,6 +3703,24 @@ int main(int, char**) {
                     ImGui::TreePop();
                 }
             }
+            ImGui::Separator();
+        }
+        if (tool == T_WATERSOURCE) {
+            ImGui::SeparatorText(ICON_FA_FAUCET_DRIP "  Agua que fluye (simulacion)");
+            ImGui::TextWrapped("Pon un MANANTIAL con clic: el agua fluye cuesta abajo sola, "
+                               "formando rios en los cauces, charcos en los hoyos y cascadas en "
+                               "los precipicios, con fisica. Clic derecho quita el mas cercano.");
+            if (ImGui::SliderFloat("Caudal fuente", &ws_rate, 0.2f, 8.0f, "%.1f")) {}
+            if (ImGui::SliderFloat("Evaporacion", &ws_evap, 0.0f, 0.4f, "%.2f")) { if (g3d_watersim_active()) watersim_sync(true); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mas evaporacion = rios mas finos y charcos que se secan.");
+            if (ImGui::SliderFloat("Velocidad flujo", &ws_flow, 0.3f, 3.0f, "%.1f")) { if (g3d_watersim_active()) watersim_sync(false); }
+            ImGui::Separator();
+            ImGui::Text("Manantiales: %d", (int)wsources.size());
+            if (!wsources.empty() && ImGui::Button("Quitar todos los manantiales")) {
+                wsources.clear(); g3d_watersim_clear_sources(); g3d_watersim_shutdown();
+                status = "Simulacion de agua vaciada";
+            }
+            ImGui::TextDisabled("El mar global y los lagos siguen igual (panel Entorno / herramienta Lago).");
             ImGui::Separator();
         }
         // Reconstruye el agua UNA vez cuando se suelta el raton tras editar efectos,

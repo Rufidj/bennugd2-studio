@@ -147,6 +147,8 @@ extern "C" {
     void  g3d_editor_terrain_paint(void *mesh, void *tex, float tiling, float x, float z, float r, float opacity);
     void  g3d_editor_paint_save(const char *path);
     int   g3d_editor_paint_load(const char *path);
+    void  g3d_water_render_set_surf(float amount, float wavelength, float speed, float runup);
+    void  g3d_water_render_set_surf_wave(float height, float direction_deg);
     void  g3d_editor_water_update(int enabled, float level, float size,
                                   float amp, float wavelen, float speed, float swell,
                                   float dr, float dg, float db, float sr, float sg, float sb);
@@ -334,6 +336,10 @@ int main(int, char**) {
     float w_deep[3]    = { 0.02f, 0.11f, 0.20f };
     float w_shallow[3] = { 0.10f, 0.34f, 0.44f };
     int   water_tex_sel = -1;   // textura de agua (de project/Assets), -1 = ninguna
+    // olas de PLAYA: rompientes en el bajio y lengua de agua que sube por la arena.
+    // Distintas del oleaje de mar abierto: dependen de la profundidad, no del viento.
+    float surf_amount = 0.55f, surf_len = 9.0f, surf_speed = 0.16f, surf_runup = 1.8f;
+    float surf_height = 0.55f, surf_dir = 0.0f;   // cresta y rumbo (grados)
 
     // ---- CAMARA principal del juego (se genera en el main.prg) ----
     // modo: 0=Fija 1=Tercera persona 2=Primera persona(FPS) 3=Cenital(top-down)
@@ -1625,9 +1631,10 @@ int main(int, char**) {
         FILE* f = fopen(path.c_str(), "w");
         if (!f) { status = "ERROR guardando escena"; return; }
         fputs("# escena del editor BennuGD2\n", f);
-        fprintf(f, "WATER %d %.4f %.4f %.4f %.4f %.4f %.3f %.3f %.3f %.3f %.3f %.3f\n",
+        fprintf(f, "WATER %d %.4f %.4f %.4f %.4f %.4f %.3f %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f %.4f %.4f %.2f\n",
                 water_on ? 1 : 0, water_level, w_amp, w_len, w_speed, w_swell,
-                w_deep[0], w_deep[1], w_deep[2], w_shallow[0], w_shallow[1], w_shallow[2]);
+                w_deep[0], w_deep[1], w_deep[2], w_shallow[0], w_shallow[1], w_shallow[2],
+                surf_amount, surf_len, surf_speed, surf_runup, surf_height, surf_dir);
         fprintf(f, "CAMERA %d %d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %d\n",
                 cam_mode, cam_follow, cam_pos[0], cam_pos[1], cam_pos[2],
                 cam_look[0], cam_look[1], cam_look[2], gcam_dist, cam_height, cam_fwd, cam_sens,
@@ -1699,14 +1706,19 @@ int main(int, char**) {
         if (!g3d_zone_load((path + ".zones").c_str())) g3d_zone_init(161, 400.0f);  // zonas (o limpia)
         char line[512], asset[256], name[256];
         while (fgets(line, sizeof(line), f)) {
-            int won; float wl, wa, wln, wsp, wsw, d0,d1,d2, s0,s1,s2;
-            int nw = sscanf(line, "WATER %d %f %f %f %f %f %f %f %f %f %f %f",
-                            &won, &wl, &wa, &wln, &wsp, &wsw, &d0,&d1,&d2, &s0,&s1,&s2);
+            int won; float wl, wa, wln, wsp, wsw, d0,d1,d2, s0,s1,s2, sa,sl,ss,sr, sh,sd;
+            int nw = sscanf(line, "WATER %d %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f",
+                            &won, &wl, &wa, &wln, &wsp, &wsw, &d0,&d1,&d2, &s0,&s1,&s2,
+                            &sa,&sl,&ss,&sr, &sh,&sd);
             if (nw >= 2) {
                 water_on = won; water_level = wl;
                 if (nw >= 6) { w_amp=wa; w_len=wln; w_speed=wsp; w_swell=wsw; }
                 if (nw >= 12) { w_deep[0]=d0;w_deep[1]=d1;w_deep[2]=d2;
                                 w_shallow[0]=s0;w_shallow[1]=s1;w_shallow[2]=s2; }
+                /* Campos anadidos despues: una escena guardada antes simplemente
+                   no los trae y se quedan los valores por defecto. */
+                if (nw >= 16) { surf_amount=sa; surf_len=sl; surf_speed=ss; surf_runup=sr; }
+                if (nw >= 18) { surf_height=sh; surf_dir=sd; }
                 continue;
             }
             // Lee un sufijo opcional "FX amp len speed d0 d1 d2 s0 s1 s2 tex" del
@@ -2158,6 +2170,12 @@ int main(int, char**) {
                 fprintf(f, "    g3d_water_set_texture(g3d_load_texture(\"Assets/%s\"));\n",
                         paints[water_tex_sel].file.c_str());
             fputs("    g3d_water_set_enabled(1);\n", f);
+            // Las olas de playa tienen que viajar al juego: si se quedan en el
+            // editor, lo que se ve al jugar no es lo que se ha compuesto.
+            fprintf(f, "    g3d_water_set_surf(%.4f, %.4f, %.4f, %.4f);\n",
+                    surf_amount, surf_len, surf_speed, surf_runup);
+            fprintf(f, "    g3d_water_set_surf_wave(%.4f, %.2f);\n",
+                    surf_height, surf_dir);
         }
         // ---- lagos y rios: agua colocada (flood-fill / camino), no un mar global ----
         // Cada masa de agua fija SU estilo (olas/color/textura) justo antes de
@@ -3285,13 +3303,32 @@ int main(int, char**) {
                     wsources.push_back({ hit[0], hit[2], ws_rate });
                     watersim_sync(true);
                     status = "Manantial anadido (el agua fluira sola)";
-                } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !wsources.empty()) {
-                    int bi = -1; float best = 1e30f;
-                    for (int i = 0; i < (int)wsources.size(); i++) {
-                        float dx = wsources[i].x - hit[0], dz = wsources[i].z - hit[2];
-                        float d = dx*dx + dz*dz; if (d < best) { best = d; bi = i; }
+                } else if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) && !wsources.empty()) {
+                    // Quitar un manantial con el boton derecho, PERO el derecho es
+                    // tambien la orbita de camara. Borrar en IsMouseClicked disparaba
+                    // al PULSAR, o sea antes de saber si el usuario iba a arrastrar:
+                    // cada giro de camara se llevaba un manantial por delante. Se
+                    // decide al SOLTAR y solo si el raton apenas se movio.
+                    ImVec2 drag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right);
+                    bool was_drag = (drag.x * drag.x + drag.y * drag.y) > 16.0f;
+                    if (!was_drag) {
+                        // Y solo si hay uno CERCA de donde se ha hecho clic: sin radio
+                        // se borraba el mas cercano aunque estuviera al otro lado del
+                        // mapa, asi que un clic en vacio borraba algo invisible.
+                        const float PICK_R = 14.0f;   // unidades de mundo
+                        int bi = -1; float best = PICK_R * PICK_R;
+                        for (int i = 0; i < (int)wsources.size(); i++) {
+                            float dx = wsources[i].x - hit[0], dz = wsources[i].z - hit[2];
+                            float d = dx*dx + dz*dz; if (d < best) { best = d; bi = i; }
+                        }
+                        if (bi >= 0) {
+                            wsources.erase(wsources.begin() + bi);
+                            watersim_sync(true);
+                            status = "Manantial quitado";
+                        } else {
+                            status = "No hay ningun manantial cerca de ahi";
+                        }
                     }
-                    if (bi >= 0) { wsources.erase(wsources.begin() + bi); watersim_sync(true); status = "Manantial quitado"; }
                 }
             } else if (!terr_tool && tool != T_LAKE && tool != T_RIVER && tool != T_WATERFALL && tool != T_WATERSOURCE && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 // punto: sobre agua->superficie, si no sobre el terreno/fondo
@@ -3459,6 +3496,27 @@ int main(int, char**) {
             ImGui::SliderFloat("Longitud", &w_len, 1.0f, 40.0f, "%.1f");
             ImGui::SliderFloat("Velocidad", &w_speed, 0.0f, 4.0f, "%.2f");
             ImGui::SliderFloat("Marejada (swell)", &w_swell, 0.0f, 3.0f, "%.2f");
+            ImGui::TreePop();
+        }
+        if (ImGui::TreeNodeEx("Olas de playa", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::SliderFloat("Intensidad##surf", &surf_amount, 0.0f, 2.0f, "%.2f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("0 = sin rompientes ni espuma en la orilla.");
+            ImGui::SliderFloat("Separacion##surf", &surf_len, 2.0f, 30.0f, "%.1f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Distancia entre rompientes, medida en PROFUNDIDAD:\n"
+                                  "una playa mas tendida las separa mas, como una de verdad.");
+            ImGui::SliderFloat("Velocidad##surf", &surf_speed, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Subida por la arena", &surf_runup, 0.0f, 8.0f, "%.1f");
+            ImGui::SliderFloat("Altura de cresta", &surf_height, 0.0f, 3.0f, "%.2f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Altura real de la ola: la cresta se levanta y se\n"
+                                  "apunta al llegar al bajio, como una ola de verdad.");
+            ImGui::SliderFloat("Direccion", &surf_dir, -180.0f, 180.0f, "%.0f grados");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("De donde viene la mar. Solo manda en aguas abiertas:\n"
+                                  "al notar el fondo las olas refractan y se giran solas\n"
+                                  "para llegar paralelas a la orilla, como las reales.");
             ImGui::TreePop();
         }
         if (ImGui::TreeNode("Color")) {
@@ -4090,6 +4148,8 @@ int main(int, char**) {
             }
 
         // ---- agua (mar/lago global) ----
+        g3d_water_render_set_surf(surf_amount, surf_len, surf_speed, surf_runup);
+        g3d_water_render_set_surf_wave(surf_height, surf_dir);
         g3d_editor_water_update(water_on ? 1 : 0, water_level, 4000.0f,
                                 w_amp, w_len, w_speed, w_swell,
                                 w_deep[0], w_deep[1], w_deep[2],

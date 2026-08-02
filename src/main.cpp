@@ -149,6 +149,10 @@ extern "C" {
     int   g3d_editor_paint_load(const char *path);
     void  g3d_water_render_set_surf(float amount, float wavelength, float speed, float runup);
     void  g3d_water_render_set_surf_wave(float height, float direction_deg);
+    void  g3d_water_render_set_detail(float foam, float refraction);
+    void  g3d_water_splash_set_amount(float amount);
+    void  g3d_water_splash_set_threshold(float speed);
+    int   g3d_entity_impl_set_collider(int entity_id, int solid);
     void  g3d_editor_water_update(int enabled, float level, float size,
                                   float amp, float wavelen, float speed, float swell,
                                   float dr, float dg, float db, float sr, float sg, float sb);
@@ -340,6 +344,9 @@ int main(int, char**) {
     // Distintas del oleaje de mar abierto: dependen de la profundidad, no del viento.
     float surf_amount = 0.55f, surf_len = 9.0f, surf_speed = 0.16f, surf_runup = 1.8f;
     float surf_height = 0.55f, surf_dir = 0.0f;   // cresta y rumbo (grados)
+    float water_foam = 0.55f;                     // cuanta espuma lleva el agua
+    float splash_amount = 1.0f;                   // gotas al chocar con algo
+    float splash_speed  = 0.8f;                   // corriente minima para salpicar
 
     // ---- CAMARA principal del juego (se genera en el main.prg) ----
     // modo: 0=Fija 1=Tercera persona 2=Primera persona(FPS) 3=Cenital(top-down)
@@ -1117,6 +1124,9 @@ int main(int, char**) {
         // ojo con la firma: (escena, modelo, x, y, z, ALTURA, giro-Y en grados).
         o.entity = g3d_model_spawn(scene, m, o.x, o.y, o.z, 0.0f, 0.0f);
         if (o.entity < 0) return -1;
+        // Lo que se coloca es SOLIDO. Sin esto el agua no lo ve: una roca en
+        // mitad del rio no lo desviaria ni salpicaria, la atravesaria.
+        g3d_entity_impl_set_collider(o.entity, 1);
         g3d_entity_impl_set_rotation(o.entity, 0.0f, o.ry, 0.0f);
         g3d_entity_impl_set_scale(o.entity, o.scale, o.scale, o.scale);
         objects.push_back(o);
@@ -1179,6 +1189,7 @@ int main(int, char**) {
             void* m = load_model(o.asset);
             o.entity = m ? g3d_model_spawn(scene, m, o.x, o.y, o.z, 0.0f, 0.0f) : -1;
             if (o.entity >= 0) {
+                g3d_entity_impl_set_collider(o.entity, 1);
                 g3d_entity_impl_set_rotation(o.entity, 0.0f, o.ry, 0.0f);
                 g3d_entity_impl_set_scale(o.entity, o.scale, o.scale, o.scale);
             }
@@ -1549,6 +1560,7 @@ int main(int, char**) {
             "    angle_y = %.3f;   // milesimas de grado\n"
             "    size = %.3f;      // escala en %% (100 = 1.0)\n"
             "    entity = g3d_model_spawn(scene, modelo, x, y, z, 0.0, 0.0);\n"
+            "    g3d_entity_set_collider(entity, 1);   // solido: el agua lo rodea y salpica en el\n"
             "%s"
             "    LOOP\n"
             "        // ... tu logica (por ejemplo: angle_y = angle_y + 500; para girarlo) ...\n"
@@ -1631,10 +1643,11 @@ int main(int, char**) {
         FILE* f = fopen(path.c_str(), "w");
         if (!f) { status = "ERROR guardando escena"; return; }
         fputs("# escena del editor BennuGD2\n", f);
-        fprintf(f, "WATER %d %.4f %.4f %.4f %.4f %.4f %.3f %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f %.4f %.4f %.2f\n",
+        fprintf(f, "WATER %d %.4f %.4f %.4f %.4f %.4f %.3f %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f %.4f %.4f %.2f %.4f %.4f %.4f\n",
                 water_on ? 1 : 0, water_level, w_amp, w_len, w_speed, w_swell,
                 w_deep[0], w_deep[1], w_deep[2], w_shallow[0], w_shallow[1], w_shallow[2],
-                surf_amount, surf_len, surf_speed, surf_runup, surf_height, surf_dir);
+                surf_amount, surf_len, surf_speed, surf_runup, surf_height, surf_dir,
+                water_foam, splash_amount, splash_speed);
         fprintf(f, "CAMERA %d %d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %d\n",
                 cam_mode, cam_follow, cam_pos[0], cam_pos[1], cam_pos[2],
                 cam_look[0], cam_look[1], cam_look[2], gcam_dist, cam_height, cam_fwd, cam_sens,
@@ -1706,10 +1719,10 @@ int main(int, char**) {
         if (!g3d_zone_load((path + ".zones").c_str())) g3d_zone_init(161, 400.0f);  // zonas (o limpia)
         char line[512], asset[256], name[256];
         while (fgets(line, sizeof(line), f)) {
-            int won; float wl, wa, wln, wsp, wsw, d0,d1,d2, s0,s1,s2, sa,sl,ss,sr, sh,sd;
-            int nw = sscanf(line, "WATER %d %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f",
+            int won; float wl, wa, wln, wsp, wsw, d0,d1,d2, s0,s1,s2, sa,sl,ss,sr, sh,sd, wf,spa,sps;
+            int nw = sscanf(line, "WATER %d %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f",
                             &won, &wl, &wa, &wln, &wsp, &wsw, &d0,&d1,&d2, &s0,&s1,&s2,
-                            &sa,&sl,&ss,&sr, &sh,&sd);
+                            &sa,&sl,&ss,&sr, &sh,&sd, &wf,&spa,&sps);
             if (nw >= 2) {
                 water_on = won; water_level = wl;
                 if (nw >= 6) { w_amp=wa; w_len=wln; w_speed=wsp; w_swell=wsw; }
@@ -1719,6 +1732,7 @@ int main(int, char**) {
                    no los trae y se quedan los valores por defecto. */
                 if (nw >= 16) { surf_amount=sa; surf_len=sl; surf_speed=ss; surf_runup=sr; }
                 if (nw >= 18) { surf_height=sh; surf_dir=sd; }
+                if (nw >= 21) { water_foam=wf; splash_amount=spa; splash_speed=sps; }
                 continue;
             }
             // Lee un sufijo opcional "FX amp len speed d0 d1 d2 s0 s1 s2 tex" del
@@ -2176,6 +2190,9 @@ int main(int, char**) {
                     surf_amount, surf_len, surf_speed, surf_runup);
             fprintf(f, "    g3d_water_set_surf_wave(%.4f, %.2f);\n",
                     surf_height, surf_dir);
+            fprintf(f, "    g3d_water_set_foam(%.4f, 1.0);\n", water_foam);
+            fprintf(f, "    g3d_water_set_splash(%.4f, %.4f);\n",
+                    splash_amount, splash_speed);
         }
         // ---- lagos y rios: agua colocada (flood-fill / camino), no un mar global ----
         // Cada masa de agua fija SU estilo (olas/color/textura) justo antes de
@@ -2263,6 +2280,11 @@ int main(int, char**) {
             }
             rebuild_water();   // restaura el preview (deshace el secuenciado de arriba)
         }
+        // La simulacion del agua tiene que arrancar como en el editor. Sin esto,
+        // el juego empieza con el cauce SECO y tarda minutos en llenarse desde el
+        // manantial, asi que lo que compones aqui no es lo que luego se ve.
+        fprintf(f, "    g3d_watersim_set_evaporation(%.4f);\n", ws_evap);
+        fputs("    g3d_watersim_settle(60.0);   // el agua ya asentada, como en el editor\n", f);
         // objetos + sus componentes (+ cuerpos fisicos Jolt)
         fputs("    escena_dt = 1.0 / 60.0;\n", f);
         int pj = 0;   // indice de cuerpo fisico (literal)
@@ -3498,6 +3520,22 @@ int main(int, char**) {
             ImGui::SliderFloat("Marejada (swell)", &w_swell, 0.0f, 3.0f, "%.2f");
             ImGui::TreePop();
         }
+        if (ImGui::TreeNode("Espuma y salpicaduras")) {
+            ImGui::SliderFloat("Espuma", &water_foam, 0.0f, 1.5f, "%.2f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Cuanta espuma lleva el agua. Pasado cierto punto tapa\n"
+                                  "el color del agua y el mar se vuelve una sabana blanca.");
+            ImGui::SliderFloat("Salpicaduras", &splash_amount, 0.0f, 3.0f, "%.2f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Gotas al pie de las cascadas y contra las rocas.\n"
+                                  "A 0 no salpica, pero el agua sigue rodeando las rocas:\n"
+                                  "el desvio es simulacion, las gotas son adorno.");
+            ImGui::SliderFloat("Corriente minima", &splash_speed, 0.0f, 4.0f, "%.2f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Lo rapido que tiene que ir el agua para salpicar en\n"
+                                  "una roca. Subelo si una balsa quieta burbujea.");
+            ImGui::TreePop();
+        }
         if (ImGui::TreeNodeEx("Olas de playa", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::SliderFloat("Intensidad##surf", &surf_amount, 0.0f, 2.0f, "%.2f");
             if (ImGui::IsItemHovered())
@@ -4150,6 +4188,9 @@ int main(int, char**) {
         // ---- agua (mar/lago global) ----
         g3d_water_render_set_surf(surf_amount, surf_len, surf_speed, surf_runup);
         g3d_water_render_set_surf_wave(surf_height, surf_dir);
+        g3d_water_render_set_detail(water_foam, 1.0f);
+        g3d_water_splash_set_amount(splash_amount);
+        g3d_water_splash_set_threshold(splash_speed);
         g3d_editor_water_update(water_on ? 1 : 0, water_level, 4000.0f,
                                 w_amp, w_len, w_speed, w_swell,
                                 w_deep[0], w_deep[1], w_deep[2],

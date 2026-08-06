@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include "libmod_3d_erosion.h"
 #include <string.h>
 
 static G3DCamera *g_editor_cam = NULL;
@@ -207,6 +208,163 @@ void g3d_editor_terrain_hole(void *mesh, float x, float z, float r, int on) {
 float g3d_editor_terrain_height(void *mesh, float x, float z) {
     return mesh ? g3d_terrain_get_height((G3DMesh *)mesh, x, z) : 0.0f;
 }
+/* --- Edicion VERTICE A VERTICE ---------------------------------------------
+   El pincel siempre deja formas blandas: sirve para el bulto general, pero no
+   para una arista, un escalon o una cresta. Esto expone la rejilla tal cual es
+   -- indices (i,j) con i hacia +x y j hacia +z, que es el mismo orden en que se
+   guarda el relieve -- para poder tocar un vertice y solo ese. */
+
+int g3d_editor_terrain_grid(void *mesh, int *side, float *size) {
+    G3DMesh *m = (G3DMesh *)mesh;
+    if (!m || m->vertex_count < 4) return 0;
+    /* La malla es cuadrada: el lado sale de la raiz del numero de vertices. */
+    int s = (int)(sqrtf((float)m->vertex_count) + 0.5f);
+    if (s < 2 || s * s != (int)m->vertex_count) return 0;
+    if (side) *side = s;
+    if (size) *size = m->aabb_max[0] - m->aabb_min[0];
+    return 1;
+}
+
+/* Posicion de un vertice de la rejilla. Devuelve 0 si (i,j) se sale. */
+int g3d_editor_terrain_vertex(void *mesh, int i, int j, float *out_xyz) {
+    G3DMesh *m = (G3DMesh *)mesh;
+    int s = 0;
+    if (!g3d_editor_terrain_grid(mesh, &s, NULL)) return 0;
+    if (i < 0 || j < 0 || i >= s || j >= s) return 0;
+    const float *p = m->vertices[(size_t)j * s + i].position;
+    if (out_xyz) { out_xyz[0] = p[0]; out_xyz[1] = p[1]; out_xyz[2] = p[2]; }
+    return 1;
+}
+
+/* Mueve un vertice en Y. `commit` sube el resultado a la GPU y recalcula
+   normales; durante un arrastre se pasa 0 en los intermedios y 1 al final, que
+   es lo caro. */
+void g3d_editor_terrain_set_vertex_y(void *mesh, int i, int j, float y, int commit) {
+    G3DMesh *m = (G3DMesh *)mesh;
+    int s = 0;
+    if (!g3d_editor_terrain_grid(mesh, &s, NULL)) return;
+    if (i < 0 || j < 0 || i >= s || j >= s) return;
+    m->vertices[(size_t)j * s + i].position[1] = y;
+    if (commit) g3d_terrain_update(m);
+}
+
+/* Desplaza un vertice EN HORIZONTAL, acotado a una fraccion de la celda.
+   Nada del motor lee la X/Z de un vertice de terreno: la altura, el picado, la
+   fisica y el campo de agua dan por hecho que estan clavados en la rejilla. Por
+   eso el limite no es un capricho -- mientras el desplazamiento se quede dentro
+   de la celda, lo que esos sistemas creen y lo que se ve difieren menos de media
+   celda, que es invisible. Soltarlo del todo obligaria a rehacerlos. */
+void g3d_editor_terrain_set_vertex_xz(void *mesh, int i, int j,
+                                      float x, float z, float max_frac, int commit) {
+    G3DMesh *m = (G3DMesh *)mesh;
+    int s = 0; float size = 0.0f;
+    if (!g3d_editor_terrain_grid(mesh, &s, &size)) return;
+    if (i < 0 || j < 0 || i >= s || j >= s) return;
+    float step = size / (float)(s - 1);
+    float lim  = step * (max_frac > 0.0f ? max_frac : 0.45f);
+    /* Posicion "de rejilla" de este vertice: de ahi se mide el desvio. */
+    float bx = -size * 0.5f + (float)i * step;
+    float bz = -size * 0.5f + (float)j * step;
+    float dx = x - bx, dz = z - bz;
+    if (dx >  lim) dx =  lim;  if (dx < -lim) dx = -lim;
+    if (dz >  lim) dz =  lim;  if (dz < -lim) dz = -lim;
+    /* El borde no se mueve: dejaria un diente en el limite del mapa. */
+    if (i == 0 || j == 0 || i == s - 1 || j == s - 1) { dx = 0.0f; dz = 0.0f; }
+    m->vertices[(size_t)j * s + i].position[0] = bx + dx;
+    m->vertices[(size_t)j * s + i].position[2] = bz + dz;
+    if (commit) g3d_terrain_update(m);
+}
+
+/* Los desvios horizontales van en un fichero APARTE. El .terrain guarda una Y
+   por vertice y lo leen escenas ya hechas; ampliarlo las romperia. Sin este
+   fichero, el terreno es simplemente uno sin desvios. */
+void g3d_editor_terrain_save_xz(void *mesh, const char *path) {
+    G3DMesh *m = (G3DMesh *)mesh;
+    int s = 0; float size = 0.0f;
+    if (!g3d_editor_terrain_grid(mesh, &s, &size)) return;
+    float step = size / (float)(s - 1);
+    /* Si no hay ni un desvio, no se escribe fichero. */
+    int any = 0;
+    for (int j = 0; j < s && !any; j++)
+        for (int i = 0; i < s; i++) {
+            const float *p = m->vertices[(size_t)j * s + i].position;
+            float bx = -size * 0.5f + i * step, bz = -size * 0.5f + j * step;
+            if (fabsf(p[0] - bx) > 1e-4f || fabsf(p[2] - bz) > 1e-4f) { any = 1; break; }
+        }
+    if (!any) { remove(path); return; }
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    uint32_t n = (uint32_t)(s * s);
+    fwrite(&n, sizeof(uint32_t), 1, f);
+    for (int j = 0; j < s; j++)
+        for (int i = 0; i < s; i++) {
+            const float *p = m->vertices[(size_t)j * s + i].position;
+            float d[2] = { p[0] - (-size * 0.5f + i * step),
+                           p[2] - (-size * 0.5f + j * step) };
+            fwrite(d, sizeof(float), 2, f);
+        }
+    fclose(f);
+}
+
+int g3d_editor_terrain_load_xz(void *mesh, const char *path) {
+    G3DMesh *m = (G3DMesh *)mesh;
+    int s = 0; float size = 0.0f;
+    if (!g3d_editor_terrain_grid(mesh, &s, &size)) return 0;
+    float step = size / (float)(s - 1);
+    FILE *f = fopen(path, "rb");
+    if (!f) {   /* sin fichero: rejilla limpia */
+        for (int j = 0; j < s; j++)
+            for (int i = 0; i < s; i++) {
+                m->vertices[(size_t)j * s + i].position[0] = -size * 0.5f + i * step;
+                m->vertices[(size_t)j * s + i].position[2] = -size * 0.5f + j * step;
+            }
+        g3d_terrain_update(m);
+        return 0;
+    }
+    uint32_t n = 0;
+    if (fread(&n, sizeof(uint32_t), 1, f) != 1 || n != (uint32_t)(s * s)) { fclose(f); return 0; }
+    for (int j = 0; j < s; j++)
+        for (int i = 0; i < s; i++) {
+            float d[2] = { 0.0f, 0.0f };
+            if (fread(d, sizeof(float), 2, f) != 2) break;
+            m->vertices[(size_t)j * s + i].position[0] = -size * 0.5f + i * step + d[0];
+            m->vertices[(size_t)j * s + i].position[2] = -size * 0.5f + j * step + d[1];
+        }
+    fclose(f);
+    g3d_terrain_update(m);
+    return 1;
+}
+
+/* Erosiona el relieve de la malla. Los parametros van sueltos y no en la
+   estructura para no tener que exponerla al C++ del editor. */
+int g3d_editor_terrain_erode(void *mesh, int iterations, float rain, float evap,
+                             float capacity, float dissolve, float deposit,
+                             float min_slope, float talus) {
+    G3DMesh *m = (G3DMesh *)mesh;
+    int side = 0; float size = 0.0f;
+    if (!g3d_editor_terrain_grid(mesh, &side, &size)) return 0;
+    int n = side * side;
+    float *h = (float *)malloc((size_t)n * sizeof(float));
+    if (!h) return 0;
+    for (int i = 0; i < n; i++) h[i] = m->vertices[i].position[1];
+
+    G3DErosionParams p;
+    g3d_erosion_defaults(&p);
+    p.rain = rain; p.evaporation = evap; p.capacity = capacity;
+    p.dissolve = dissolve; p.deposit = deposit; p.min_slope = min_slope;
+    p.talus = talus;
+    int done = g3d_erosion_run(h, side, size, iterations, &p);
+
+    for (int i = 0; i < n; i++) m->vertices[i].position[1] = h[i];
+    free(h);
+    g3d_terrain_update(m);
+    return done;
+}
+
+void g3d_editor_terrain_commit(void *mesh) {
+    if (mesh) g3d_terrain_update((G3DMesh *)mesh);
+}
+
 /* Snapshot/restore de las alturas del terreno (para deshacer el cauce de un rio
    al borrarlo). vcount da el tamano del buffer necesario. */
 int g3d_editor_terrain_vcount(void *mesh) {

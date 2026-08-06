@@ -70,6 +70,7 @@ extern "C" {
     int   g3d_light_create(int type, float r, float g, float b);
     int   g3d_light_set_direction(int light_id, float dx, float dy, float dz);
     int   g3d_light_set_intensity(int light_id, float intensity);
+    int   g3d_light_impl_set_color(int light_id, float r, float g, float b);
     void *g3d_gltf_load(const char *filepath);
     void *g3d_fbx_load(const char *filepath);
     void  g3d_fbx_set_recenter(int enabled);
@@ -164,6 +165,41 @@ extern "C" {
     void  g3d_flow_set_speed(float mul);
     int   g3d_river_add_falls(const float *pts_xyz, int n, float width);
     int   g3d_waterfall_add(float tx, float ty, float tz, float bx, float bz, float width, float arc);
+    int   g3d_editor_terrain_grid(void *mesh, int *side, float *size);
+    int   g3d_editor_terrain_vertex(void *mesh, int i, int j, float *out_xyz);
+    void  g3d_editor_terrain_set_vertex_y(void *mesh, int i, int j, float y, int commit);
+    void  g3d_editor_terrain_set_vertex_xz(void *mesh, int i, int j, float x, float z,
+                                           float max_frac, int commit);
+    void  g3d_editor_terrain_save_xz(void *mesh, const char *path);
+    int   g3d_editor_terrain_load_xz(void *mesh, const char *path);
+    int   g3d_editor_terrain_erode(void *mesh, int iterations, float rain, float evap,
+                                   float capacity, float dissolve, float deposit,
+                                   float min_slope, float talus);
+    void  g3d_editor_terrain_commit(void *mesh);
+    void  g3d_scatter_set_base(const char *dir);
+    void  g3d_scatter_set_kind_wind(const char *asset, float wind);
+    float g3d_scatter_get_kind_wind(int kind);
+    int   g3d_scatter_kind_groups(int kind);
+    void  g3d_scatter_set_kind_distance(const char *asset, float dist);
+    float g3d_scatter_get_kind_distance(int kind);
+    void  g3d_instances_set_lod_distance(float d);
+    void  g3d_scatter_set_kind_solid(const char *asset, int solid);
+    void  g3d_scatter_kind_apply(int kind, float wind, float dist, int solid);
+    int   g3d_scatter_get_kind_solid(int kind);
+    int   g3d_scatter_solid_placed(void);
+    int   g3d_scatter_set(int kind, int index, float x, float y, float z, float yaw, float scale);
+    int   g3d_scatter_remove(int kind, int index);
+    int   g3d_scatter_pick(float x, float z, float radius, int *k, int *i);
+    void  g3d_scatter_clear(void);
+    int   g3d_scatter_add(const char *asset, float x, float y, float z, float yaw, float scale);
+    int   g3d_scatter_build(float wind);
+    int   g3d_scatter_count(void);
+    int   g3d_scatter_kinds(void);
+    const char *g3d_scatter_kind_asset(int kind);
+    int   g3d_scatter_kind_count(int kind);
+    int   g3d_scatter_get(int kind, int index, float *out5);
+    int   g3d_scatter_save(const char *path);
+    int   g3d_scatter_load(const char *path, float wind);
     int   g3d_editor_terrain_vcount(void *mesh);
     void  g3d_editor_terrain_snapshot(void *mesh, float *out);
     void  g3d_editor_terrain_restore(void *mesh, const float *in);
@@ -959,16 +995,64 @@ int main(int, char**) {
     std::string script_title;   // como se llama en la barra del editor
     // ---- herramienta activa (toolbar con iconos) ----
     enum Tool { T_SELECT, T_MOVE, T_ROTATE, T_SCALE, T_PLACE, T_RAISE, T_LOWER, T_SMOOTH, T_FLATTEN, T_PAINT,
-                T_HOLE, T_ZONE, T_LAKE, T_RIVER, T_WATERFALL, T_WATERSOURCE };
+                T_HOLE, T_ZONE, T_LAKE, T_RIVER, T_WATERFALL, T_WATERSOURCE, T_VERTEX,
+                T_SCATTER };
     bool hole_fill = false;   // T_HOLE: false=perforar, true=rellenar
     int tool = T_SELECT;
     int  zone_layer = 0;      // T_ZONE: capa (0..3) que se pinta
     bool zone_erase = false;  // T_ZONE: borrar en vez de pintar
     float brush_r = 30.0f, brush_str = 0.5f;   // pincel de terreno
+    // --- T_VERTEX: tocar la rejilla vertice a vertice ---
+    int   vx_px     = 14;      // separacion minima en pixeles entre lineas de la rejilla
+    int   vx_soft   = 0;       // arrastra tambien los vecinos hasta este radio
+    float vx_sens   = 0.06f;   // unidades de mundo por pixel arrastrado
+    int   vx_i = -1, vx_j = -1;      // vertice agarrado
+    float vx_y0 = 0.0f;              // su altura al empezar
+    float vx_mouse_y0 = 0.0f;        // raton al empezar
+    bool  vx_drag = false;
+    std::vector<float> vx_y0_near;   // alturas del vecindario al agarrar
+    std::set<int> vx_sel;                        // vertices seleccionados (j*lado+i)
+    std::vector<std::pair<int,float>> vx_sel_y0; // sus alturas al empezar a mover
+    bool   vx_box = false;                       // arrastrando el rectangulo
+    ImVec2 vx_box_a;
+    float  vx_snap = 0.0f;                       // paso de altura (0 = libre)
+    // --- sol y ciclo dia/noche ---
+    bool  sun_cycle = false;      // el sol se mueve solo
+    float sun_day_sec = 120.0f;   // segundos que dura un dia entero
+    float sun_hour = 90.0f;       // hora de partida, en grados (90 = mediodia)
+    float sun_intensity = 1.5f;   // intensidad al mediodia
+    float sun_azim = 215.0f;      // rumbo del sol cuando el ciclo esta parado
+    float sun_elev = 55.0f;       // altura sobre el horizonte, en grados
+    // --- sembrado de vegetacion ---
+    float sc_density = 6.0f;      // ejemplares por pincelada
+    float sc_scale_min = 0.8f, sc_scale_max = 1.4f;
+    float sc_slope_max = 0.6f;    // pendiente maxima donde puede crecer
+    float sc_ymin = -1000.0f, sc_ymax = 1000.0f;
+    bool  sc_avoid_water = true;
+    float sc_wind = 0.0f;          // balanceo de LA ESPECIE que estas sembrando
+    float sc_dist = 250.0f;        // a que distancia deja de dibujarse esa especie
+    float sc_lod  = 120.0f;        // a partir de aqui, malla de bajo poligono
+    int   sc_mode = 0;             // 0 = sembrar, 1 = borrar, 2 = editar uno
+    bool  sc_solid = false;        // la especie que siembras bloquea el paso
+    int   sc_sel_k = -1, sc_sel_i = -1;   // ejemplar seleccionado
+    bool  sc_erase = false;
+    float sc_radius = 12.0f;
+    // --- erosion hidraulica ---
+    int   ero_iters = 120;
+    float ero_rain = 0.012f, ero_evap = 0.020f, ero_cap = 0.60f;
+    float ero_dis = 0.30f, ero_dep = 0.30f, ero_slope = 0.02f, ero_talus = 0.0f;
+    int    vx_mode = 0;                          // 0 = mover vertice, 1 = seleccionar zona
+    int    vx_axis = 0;                          // 0 = altura, 1 = lateral (XZ)
+    float  vx_lat  = 0.45f;                      // tope lateral, en fraccion de celda
+    float  vx_grab_x = 0.0f, vx_grab_z = 0.0f;   // punto del terreno al agarrar
+    std::vector<std::pair<int,std::pair<float,float>>> vx_sel_xz0;
     ImGuizmo::OPERATION gizmo_op = ImGuizmo::TRANSLATE;
 
     // ---- proyecto: navegador de Assets ----
     std::string assets_dir = project_dir + "/Assets";
+    // La siembra guarda rutas relativas al proyecto (portables al juego); el
+    // editor corre desde otro sitio, asi que le dice donde esta la raiz.
+    g3d_scatter_set_base(project_dir.c_str());
     std::vector<std::string> assets = scan_assets(assets_dir);
     int asset_sel = -1;   // asset "armado" para colocar (-1 = modo seleccion)
     int drag_asset = -1;  // asset que se esta arrastrando (drag&drop desde Assets)
@@ -1011,9 +1095,20 @@ int main(int, char**) {
     // declara aqui para poder vaciarlo al cargar una escena o un proyecto).
     struct EditState { std::vector<SObj> objs; int follow; };
     std::vector<EditState> undo_stack, redo_stack;
+    // El relieve son 25.921 alturas: meterlo en EditState haria enorme cada paso
+    // de deshacer de objetos. Va en su propia pila, y una marca por accion dice
+    // de cual toca sacar, para que Ctrl+Z siga un solo orden cronologico.
+    std::vector<std::vector<float>> terr_undo, terr_redo;
+    std::vector<char> undo_kind, redo_kind;   // 'o' objetos, 't' relieve
     EditState last_state;
     bool state_init = false;
-    auto undo_reset = [&]() { undo_stack.clear(); redo_stack.clear(); state_init = false; };
+    auto undo_reset = [&]() {
+        undo_stack.clear(); redo_stack.clear();
+        terr_undo.clear(); terr_redo.clear();
+        undo_kind.clear(); redo_kind.clear();
+        vx_sel.clear(); vx_sel_y0.clear(); vx_i = vx_j = -1;
+        state_init = false;
+    };
     std::map<std::string, void*> model_cache;
     std::set<void*> posed_static;   // modelos sin esqueleto ya colocados (pose t=0)
     auto load_model = [&](const std::string& file) -> void* {
@@ -1196,20 +1291,71 @@ int main(int, char**) {
         }
         if (obj_sel >= (int)objects.size()) obj_sel = -1;
     };
+    /* Guarda el relieve ANTES de tocarlo. Se llama al empezar cada trazo, no en
+       cada frame del arrastre: si no, un arrastre de dos segundos dejaria cien
+       pasos de deshacer identicos. */
+    auto push_terrain_undo = [&]() {
+        if (playing || !terrain) return;
+        int nv = g3d_editor_terrain_vcount(terrain);
+        if (nv <= 0) return;
+        std::vector<float> snap((size_t)nv);
+        g3d_editor_terrain_snapshot(terrain, snap.data());
+        terr_undo.push_back(std::move(snap));
+        undo_kind.push_back('t');
+        /* Acotado: cada copia son ~100 KB. Al tirar la mas vieja hay que quitar
+           tambien su marca, o el orden de las dos pilas se descuadra. */
+        while (terr_undo.size() > 24) {
+            terr_undo.erase(terr_undo.begin());
+            for (size_t k = 0; k < undo_kind.size(); k++)
+                if (undo_kind[k] == 't') { undo_kind.erase(undo_kind.begin() + k); break; }
+        }
+        redo_stack.clear(); terr_redo.clear(); redo_kind.clear();
+    };
+
     auto do_undo = [&]() {
-        if (playing || undo_stack.empty()) return;
-        redo_stack.push_back(EditState{ objects, cam_follow });
+        if (playing || undo_kind.empty()) return;
+        char k = undo_kind.back();
+        if (k == 't') {
+            if (terr_undo.empty() || !terrain) { undo_kind.pop_back(); return; }
+            int nv = g3d_editor_terrain_vcount(terrain);
+            std::vector<float> cur((size_t)nv);
+            g3d_editor_terrain_snapshot(terrain, cur.data());
+            terr_redo.push_back(std::move(cur)); redo_kind.push_back('t');
+            g3d_editor_terrain_restore(terrain, terr_undo.back().data());
+            terr_undo.pop_back(); undo_kind.pop_back();
+            if (!lakes.empty() || !rivers.empty()) rebuild_water();
+            if (g3d_watersim_active()) watersim_sync(true);
+            status = "Relieve deshecho";
+            return;
+        }
+        if (undo_stack.empty()) { undo_kind.pop_back(); return; }
+        redo_stack.push_back(EditState{ objects, cam_follow }); redo_kind.push_back('o');
         apply_state(undo_stack.back());
         last_state = undo_stack.back();
-        undo_stack.pop_back();
-        status = "Deshecho (quedan " + std::to_string(undo_stack.size()) + ")";
+        undo_stack.pop_back(); undo_kind.pop_back();
+        status = "Deshecho (quedan " + std::to_string(undo_kind.size()) + ")";
     };
     auto do_redo = [&]() {
-        if (playing || redo_stack.empty()) return;
-        undo_stack.push_back(EditState{ objects, cam_follow });
+        if (playing || redo_kind.empty()) return;
+        char k = redo_kind.back();
+        if (k == 't') {
+            if (terr_redo.empty() || !terrain) { redo_kind.pop_back(); return; }
+            int nv = g3d_editor_terrain_vcount(terrain);
+            std::vector<float> cur((size_t)nv);
+            g3d_editor_terrain_snapshot(terrain, cur.data());
+            terr_undo.push_back(std::move(cur)); undo_kind.push_back('t');
+            g3d_editor_terrain_restore(terrain, terr_redo.back().data());
+            terr_redo.pop_back(); redo_kind.pop_back();
+            if (!lakes.empty() || !rivers.empty()) rebuild_water();
+            if (g3d_watersim_active()) watersim_sync(true);
+            status = "Relieve rehecho";
+            return;
+        }
+        if (redo_stack.empty()) { redo_kind.pop_back(); return; }
+        undo_stack.push_back(EditState{ objects, cam_follow }); undo_kind.push_back('o');
         apply_state(redo_stack.back());
         last_state = redo_stack.back();
-        redo_stack.pop_back();
+        redo_stack.pop_back(); redo_kind.pop_back();
         status = "Rehecho";
     };
 
@@ -1648,6 +1794,8 @@ int main(int, char**) {
                 w_deep[0], w_deep[1], w_deep[2], w_shallow[0], w_shallow[1], w_shallow[2],
                 surf_amount, surf_len, surf_speed, surf_runup, surf_height, surf_dir,
                 water_foam, splash_amount, splash_speed);
+        fprintf(f, "SUN %d %.2f %.2f %.3f %.2f %.2f\n",
+                sun_cycle ? 1 : 0, sun_day_sec, sun_hour, sun_intensity, sun_azim, sun_elev);
         fprintf(f, "CAMERA %d %d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %d\n",
                 cam_mode, cam_follow, cam_pos[0], cam_pos[1], cam_pos[2],
                 cam_look[0], cam_look[1], cam_look[2], gcam_dist, cam_height, cam_fwd, cam_sens,
@@ -1695,7 +1843,14 @@ int main(int, char**) {
             fputs("\n", f);
         }
         fclose(f);
-        if (terrain) g3d_editor_terrain_save(terrain, (path + ".terrain").c_str());
+        if (terrain) {
+            g3d_editor_terrain_save(terrain, (path + ".terrain").c_str());
+            // La siembra tambien aparte: diez mil arboles ahogarian la escena.
+            g3d_scatter_save((path + ".scatter").c_str());
+            // Los desvios laterales van aparte: el .terrain lo leen escenas ya
+            // hechas y ampliarlo las romperia.
+            g3d_editor_terrain_save_xz(terrain, (path + ".terrain.xz").c_str());
+        }
         g3d_editor_paint_save((path + ".paint.png").c_str());   // pintado del terreno
         g3d_zone_save((path + ".zones").c_str());               // zonas de barrera
         scene_path = path;
@@ -1714,11 +1869,28 @@ int main(int, char**) {
         objects.clear(); obj_sel = -1;
         lakes.clear(); rivers.clear(); river_draft.clear(); waterfalls.clear();
         // terreno primero: las cuevas/objetos se apoyan en su altura
-        if (terrain) g3d_editor_terrain_load(terrain, (path + ".terrain").c_str());
+        if (terrain) {
+            g3d_editor_terrain_load(terrain, (path + ".terrain").c_str());
+            // Sin fichero de desvios, deja la rejilla limpia: si no, los de la
+            // escena anterior se quedarian puestos en esta.
+            g3d_editor_terrain_load_xz(terrain, (path + ".terrain.xz").c_str());
+            // Sin fichero deja el campo vacio, para que una escena sin siembra no
+            // herede la vegetacion de la anterior.
+            g3d_scatter_load((path + ".scatter").c_str(), 1.0f);
+            g3d_instances_set_lod_distance(sc_lod);
+        }
         g3d_editor_paint_load((path + ".paint.png").c_str());
         if (!g3d_zone_load((path + ".zones").c_str())) g3d_zone_init(161, 400.0f);  // zonas (o limpia)
         char line[512], asset[256], name[256];
         while (fgets(line, sizeof(line), f)) {
+            {   int sc_on; float sd, sh, si, sa, se;
+                if (sscanf(line, "SUN %d %f %f %f %f %f",
+                           &sc_on, &sd, &sh, &si, &sa, &se) == 6) {
+                    sun_cycle = sc_on != 0; sun_day_sec = sd; sun_hour = sh;
+                    sun_intensity = si; sun_azim = sa; sun_elev = se;
+                    continue;
+                }
+            }
             int won; float wl, wa, wln, wsp, wsw, d0,d1,d2, s0,s1,s2, sa,sl,ss,sr, sh,sd, wf,spa,sps;
             int nw = sscanf(line, "WATER %d %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f",
                             &won, &wl, &wa, &wln, &wsp, &wsw, &d0,&d1,&d2, &s0,&s1,&s2,
@@ -2085,21 +2257,113 @@ int main(int, char**) {
         // variables nativas, y el motor las envia a la luz cada FRAME. La direccion
         // sale de target - origen. Para cambiar la luz en marcha basta con tocar
         // intensity o color_r/g/b desde aqui.
-        fprintf(f,
-              "PROCESS escena_sol()\n"
-              "BEGIN\n"
-              "    ctype = C_3D; csubtype = C3D_LIGHT;\n"
-              "    x = 0.0; y = 0.0; z = 0.0;\n"
-              "    target_x = -0.45; target_y = -0.75; target_z = -0.35;   // direccion = target - origen\n"
-              "    intensity = 1.5;\n"
-              "    color_r = 255; color_g = 245; color_b = 219;   // 1.0, 0.96, 0.86\n"
-              "    entity = g3d_light_create(0, 1.0, 1.0, 1.0);   // el color lo pone el hook\n"
-              "    g3d_light_enable_shadow(entity, 1); g3d_set_shadows(1);\n"
-              "    g3d_set_shadow_resolution(%d);   // nitidez de las sombras\n"
-              "    LOOP\n"
-              "        FRAME;\n"
-              "    END\n"
-              "END\n\n", shadow_res);
+        if (!sun_cycle) {
+            /* Sol fijo: el proceso solo publica sus locales una vez y el hook
+               los envia a la luz cada FRAME. */
+            float az = sun_azim * 3.14159265f / 180.0f;
+            float el = sun_elev * 3.14159265f / 180.0f;
+            fprintf(f,
+                  "PROCESS escena_sol()\n"
+                  "BEGIN\n"
+                  "    ctype = C_3D; csubtype = C3D_LIGHT;\n"
+                  "    x = 0.0; y = 0.0; z = 0.0;\n"
+                  "    target_x = %.4f; target_y = %.4f; target_z = %.4f;   // direccion = target - origen\n"
+                  "    intensity = %.3f;\n"
+                  "    color_r = 255; color_g = 245; color_b = 219;\n"
+                  "    entity = g3d_light_create(0, 1.0, 1.0, 1.0);   // el color lo pone el hook\n"
+                  "    g3d_light_enable_shadow(entity, 1); g3d_set_shadows(1);\n"
+                  "    g3d_set_shadow_resolution(%d);\n"
+                  "    LOOP\n"
+                  "        FRAME;\n"
+                  "    END\n"
+                  "END\n\n",
+                  -cosf(az) * cosf(el), -sinf(el), -sinf(az) * cosf(el),
+                  sun_intensity, shadow_res);
+        } else {
+            /* CICLO DIA/NOCHE, entero dentro del proceso. Nada de una funcion de
+               C que lo haga por detras: mover el sol es tocar sus locales, que es
+               justo lo que el hook envia cada FRAME. Asi el ciclo se puede parar,
+               acelerar o saltar a una hora desde el juego sin tocar el motor.
+               La trigonometria de BennuGD2 va en MILESIMAS de grado (comprobado:
+               sin(90000) = 1), de ahi los angulos x1000. */
+            fprintf(f,
+                  "PROCESS escena_sol()\n"
+                  "PRIVATE\n"
+                  "    float hora;    // 0 = amanecer, 90000 = mediodia, 180000 = ocaso\n"
+                  "    float alt;     // altura del sol, -1 (medianoche) .. 1 (mediodia)\n"
+                  "    float luz;     // cuanta luz hay: la altura recortada a 0 de noche\n"
+                  "END\n"
+                  "BEGIN\n"
+                  "    ctype = C_3D; csubtype = C3D_LIGHT;\n"
+                  "    x = 0.0; y = 0.0; z = 0.0;\n"
+                  "    entity = g3d_light_create(0, 1.0, 1.0, 1.0);\n"
+                  "    g3d_light_enable_shadow(entity, 1); g3d_set_shadows(1);\n"
+                  "    g3d_set_shadow_resolution(%d);\n"
+                  "    hora = %.1f;\n"
+                  "    LOOP\n"
+                  "        // Un dia entero cada %.0f segundos.\n"
+                  "        hora = hora + %.4f;\n"
+                  "        IF (hora >= 360000) hora = hora - 360000; END\n"
+                  "\n"
+                  "        alt = sin(hora);\n"
+                  "        luz = alt; IF (luz < 0) luz = 0; END\n"
+                  "\n"
+                  "        // El sol describe un arco: sale por un lado y se pone por el otro.\n"
+                  "        target_x = -cos(hora) * 0.8;\n"
+                  "        target_y = -alt;\n"
+                  "        target_z = -0.35;\n"
+                  "\n"
+                  "        // De noche queda una pizca de luz para que no sea negro absoluto.\n"
+                  "        intensity = 0.05 + %.3f * luz;\n"
+                  "        // Calido al amanecer y al ocaso, blanco al mediodia.\n"
+                  "        color_r = 255;\n"
+                  "        color_g = 150 + 105 * luz;\n"
+                  "        color_b = 90 + 165 * luz;\n"
+                  "\n"
+                  "        // El cielo acompana al sol, o se nota mucho el truco.\n"
+                  "        g3d_sky_set_gradient(0.05 + 0.30*luz, 0.07 + 0.48*luz, 0.15 + 0.70*luz,\n"
+                  "                             0.10 + 0.72*luz, 0.09 + 0.79*luz, 0.18 + 0.78*luz);\n"
+                  "\n"
+                  "        // Para parar el tiempo desde tu codigo: comenta la linea de 'hora'.\n"
+                  "        FRAME;\n"
+                  "    END\n"
+                  "END\n\n",
+                  shadow_res, sun_hour * 1000.0f, sun_day_sec,
+                  360000.0f / (sun_day_sec * 60.0f), sun_intensity);
+        }
+
+        // ---- cada especie sembrada, como proceso BennuGD2 ----
+        // Un bosque no es un objeto por arbol: el proceso ES la especie entera,
+        // que se dibuja de una vez. Sus locales (wind, draw_dist, solid) mandan
+        // sobre ella igual que intensity manda sobre una luz, asi que desde el
+        // juego se puede parar el viento o acercar el recorte sin tocar C.
+        for (int k = 0; k < g3d_scatter_kinds(); k++) {
+            const char* nm = g3d_scatter_kind_asset(k);
+            if (!nm) continue;
+            std::string pn = nm;
+            auto sl = pn.rfind('/'); if (sl != std::string::npos) pn = pn.substr(sl + 1);
+            auto dt = pn.rfind('.');  if (dt != std::string::npos) pn = pn.substr(0, dt);
+            for (auto& c : pn) if (!isalnum((unsigned char)c)) c = '_';
+            fprintf(f,
+                  "PROCESS vegetacion_%s()\n"
+                  "BEGIN\n"
+                  "    ctype = C_3D; csubtype = C3D_SCATTER;\n"
+                  "    // 'entity' ata este proceso a SU especie; los ejemplares ya\n"
+                  "    // los cargo g3d_scatter_load en escena_iniciar.\n"
+                  "    entity = g3d_scatter_group(\"%s\");\n"
+                  "    wind = %.3f;        // balanceo (0 = quieto: rocas, troncos)\n"
+                  "    draw_dist = %.1f;   // mas alla no se dibuja\n"
+                  "    solid = %d;         // 1 = bloquea el paso\n"
+                  "    LOOP\n"
+                  "        // Cambia wind o draw_dist aqui y se aplica solo.\n"
+                  "        FRAME;\n"
+                  "    END\n"
+                  "END\n\n",
+                  pn.c_str(), nm,
+                  g3d_scatter_get_kind_wind(k),
+                  g3d_scatter_get_kind_distance(k),
+                  g3d_scatter_get_kind_solid(k));
+        }
 
         // ---- la camara como proceso BennuGD2 (variables nativas) ----
         // La entidad la crea escena_iniciar y la activa (para que no haya un frame
@@ -2286,6 +2550,21 @@ int main(int, char**) {
         fprintf(f, "    g3d_watersim_set_evaporation(%.4f);\n", ws_evap);
         fputs("    g3d_watersim_settle(60.0);   // el agua ya asentada, como en el editor\n", f);
         // objetos + sus componentes (+ cuerpos fisicos Jolt)
+        if (g3d_scatter_count() > 0)
+            fprintf(f, "    g3d_set_lod(%.1f);   // malla de bajo poligono a lo lejos\n", sc_lod);
+            fprintf(f, "    g3d_scatter_load(\"%s.scatter\", %.3f);   // vegetacion sembrada\n",
+                    rel_relief.substr(0, rel_relief.rfind(".terrain")).c_str(), 1.0f);
+            // Y un PROCESS por especie, para que desde el juego se pueda tocar
+            // como cualquier otra cosa 3D: sus locales mandan sobre su bosque.
+            for (int k = 0; k < g3d_scatter_kinds(); k++) {
+                const char* nm = g3d_scatter_kind_asset(k);
+                if (!nm) continue;
+                std::string pn = nm;
+                auto sl = pn.rfind('/'); if (sl != std::string::npos) pn = pn.substr(sl + 1);
+                auto dt = pn.rfind('.');  if (dt != std::string::npos) pn = pn.substr(0, dt);
+                for (auto& c : pn) if (!isalnum((unsigned char)c)) c = '_';
+                fprintf(f, "    vegetacion_%s();\n", pn.c_str());
+            }
         fputs("    escena_dt = 1.0 / 60.0;\n", f);
         int pj = 0;   // indice de cuerpo fisico (literal)
         for (size_t i = 0; i < objects.size(); i++) {
@@ -2695,7 +2974,7 @@ int main(int, char**) {
             else if (!state_igual(ahora, last_state) &&
                      !ImGuizmo::IsUsing() && !ImGui::IsAnyItemActive() &&
                      !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                undo_stack.push_back(last_state);
+                undo_stack.push_back(last_state); undo_kind.push_back('o');
                 if (undo_stack.size() > 128) undo_stack.erase(undo_stack.begin());
                 redo_stack.clear();
                 last_state = ahora;
@@ -2830,8 +3109,8 @@ int main(int, char**) {
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Editar")) {
-                if (ImGui::MenuItem("Deshacer", "Ctrl+Z", false, !undo_stack.empty())) do_undo();
-                if (ImGui::MenuItem("Rehacer", "Ctrl+Shift+Z", false, !redo_stack.empty())) do_redo();
+                if (ImGui::MenuItem("Deshacer", "Ctrl+Z", false, !undo_kind.empty())) do_undo();
+                if (ImGui::MenuItem("Rehacer", "Ctrl+Shift+Z", false, !redo_kind.empty())) do_redo();
                 ImGui::Separator();
                 if (ImGui::MenuItem("Duplicar", "Ctrl+D", false, obj_sel >= 0)) duplicate_obj(obj_sel);
                 if (ImGui::MenuItem("Copiar",   "Ctrl+C", false, obj_sel >= 0)) copy_obj(obj_sel);
@@ -2863,6 +3142,38 @@ int main(int, char**) {
                 }
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Pinta el terreno actual con las texturas de Assets:\nhierba, roca (empinado), nieve (cima), arena (bajo).");
+                ImGui::Separator();
+                ImGui::TextDisabled("EROSION HIDRAULICA");
+                ImGui::SetNextItemWidth(150);
+                ImGui::SliderInt("Pasadas##ero", &ero_iters, 10, 600);
+                ImGui::SetNextItemWidth(150);
+                ImGui::SliderFloat("Lluvia##ero", &ero_rain, 0.002f, 0.05f, "%.3f");
+                ImGui::SetNextItemWidth(150);
+                ImGui::SliderFloat("Evaporacion##ero", &ero_evap, 0.005f, 0.10f, "%.3f");
+                ImGui::SetNextItemWidth(150);
+                ImGui::SliderFloat("Arrastre##ero", &ero_cap, 0.1f, 2.0f, "%.2f");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Cuanto material puede llevarse una corriente rapida.\n"
+                                      "Mas alto = barrancos mas marcados.");
+                ImGui::SetNextItemWidth(150);
+                ImGui::SliderFloat("Talud##ero", &ero_talus, 0.0f, 1.5f, "%.2f");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Pendiente a partir de la cual el material suelto se\n"
+                                      "desliza. Redondea los picos imposibles. 0 = apagado.");
+                if (ImGui::MenuItem(ICON_FA_WATER " Erosionar terreno") && terrain) {
+                    push_terrain_undo();   // una pasada de erosion se puede deshacer
+                    int n = g3d_editor_terrain_erode(terrain, ero_iters, ero_rain, ero_evap,
+                                                     ero_cap, ero_dis, ero_dep,
+                                                     ero_slope, ero_talus);
+                    // El agua sigue el relieve, y el relieve acaba de cambiar entero.
+                    if (!lakes.empty() || !rivers.empty()) rebuild_water();
+                    if (g3d_watersim_active()) watersim_sync(true);
+                    status = "Erosion aplicada (" + std::to_string(n) + " pasadas)";
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("El agua talla barrancos, los junta en valles y deja\n"
+                                      "lo arrancado en abanicos al pie. Es lo que hace que\n"
+                                      "un terreno parezca un sitio y no ruido.");
                 ImGui::Separator();
                 ImGui::TextDisabled("AGUA AUTOMATICA");
                 ImGui::SetNextItemWidth(150);
@@ -2908,6 +3219,8 @@ int main(int, char**) {
             toolBtn(ICON_FA_ARROWS_DOWN_TO_LINE, T_FLATTEN, "Terreno: nivelar");
             toolBtn(ICON_FA_PAINTBRUSH,          T_PAINT,   "Terreno: pintar textura");
             toolBtn(ICON_FA_CIRCLE_NOTCH,        T_HOLE,    "Terreno: agujero (para bocas de cueva)");
+            toolBtn(ICON_FA_BORDER_ALL,          T_VERTEX,  "Terreno: vertice a vertice (rejilla)");
+            toolBtn(ICON_FA_SEEDLING,            T_SCATTER, "Sembrar vegetacion y rocas");
             ImGui::SameLine(0, 12); ImGui::TextDisabled("|"); ImGui::SameLine(0, 12);
             toolBtn(ICON_FA_DRAW_POLYGON,        T_ZONE,    "Pintar ZONAS de barrera (por donde no pasan ciertos objetos)");
             toolBtn(ICON_FA_DROPLET,             T_LAKE,    "Lago: clic en un hoyo del terreno para llenarlo de agua");
@@ -3167,6 +3480,175 @@ int main(int, char**) {
             lake_prev_on = false; lake_prev_key = -1;
             rebuild_water();
         }
+        // ---- rejilla de vertices ----
+        // Se dibuja el terreno ENTERO, no un parche alrededor del cursor: una
+        // rejilla que persigue al raton no deja ver la forma que estas
+        // modelando, que es justo para lo que sirve verla.
+        //
+        // La malla son 161x161 = 25.921 vertices; dibujarlos todos serian ~52.000
+        // lineas por frame. Asi que el paso se ADAPTA a lo que ocupa una celda en
+        // pantalla: de lejos se salta vertices (una rejilla mas gruesa, que es lo
+        // unico legible a esa distancia) y al acercarte llega a la rejilla real,
+        // vertice a vertice.
+        if (!playing && tool == T_VERTEX && terrain) {
+            int side = 0; float wsize = 0.0f;
+            if (g3d_editor_terrain_grid(terrain, &side, &wsize)) {
+                if (vx_i < 0 || vx_j < 0) { vx_i = side / 2; vx_j = side / 2; }
+
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                auto vert_screen = [&](int i, int j, ImVec2& out) -> bool {
+                    float p[3], p2[2];
+                    if (!g3d_editor_terrain_vertex(terrain, i, j, p)) return false;
+                    if (!g3d_editor_world_to_screen(p[0], p[1], p[2],
+                                                    (float)vp.w, (float)vp.h, p2)) return false;
+                    out = ImVec2(img_min.x + p2[0], img_min.y + p2[1]);
+                    return true;
+                };
+                // Dentro del viewport, con margen para que las lineas que cruzan
+                // el borde se sigan dibujando.
+                // Una linea de menos de unos pocos pixeles no aporta nada y en el
+                // horizonte se juntan miles: alli la rejilla se convertia en una
+                // banda solida de ruido.
+                auto too_short = [&](const ImVec2& a, const ImVec2& b) {
+                    float dx = b.x - a.x, dy = b.y - a.y;
+                    return (dx*dx + dy*dy) < 16.0f;   /* < 4 px */
+                };
+                auto on_screen = [&](const ImVec2& p) {
+                    return p.x > img_min.x - 200.0f && p.x < img_min.x + vp.w + 200.0f &&
+                           p.y > img_min.y - 200.0f && p.y < img_min.y + vp.h + 200.0f;
+                };
+
+                // Cuantos pixeles ocupa una celda junto al vertice activo: de ahi
+                // sale el paso.
+                int stride = 1;
+                {
+                    ImVec2 a, b;
+                    if (vert_screen(vx_i, vx_j, a) &&
+                        vert_screen(vx_i + 1 < side ? vx_i + 1 : vx_i - 1, vx_j, b)) {
+                        float dx = b.x - a.x, dy = b.y - a.y;
+                        float px = sqrtf(dx*dx + dy*dy);
+                        if (px > 0.01f) stride = (int)ceilf((float)vx_px / px);
+                    }
+                    if (stride < 1)  stride = 1;
+                    if (stride > 32) stride = 32;
+                }
+
+                const ImU32 c_dark = IM_COL32(10, 20, 35, 170);
+                const ImU32 c_lite = IM_COL32(150, 225, 255, 225);
+                for (int pass = 0; pass < 2; pass++) {
+                    ImU32 col = pass ? c_lite : c_dark;
+                    float th  = pass ? 1.3f : 2.8f;
+                    for (int j = 0; j < side; j += stride)
+                        for (int i = 0; i < side; i += stride) {
+                            ImVec2 a, b;
+                            if (!vert_screen(i, j, a)) continue;
+                            bool va = on_screen(a);
+                            // Una linea se pinta si ELLA se ve Y su vecina de al
+                            // lado tambien: en el horizonte las filas se juntan
+                            // pero las lineas a lo largo siguen siendo largas, y
+                            // miles superpuestas hacian una banda solida.
+                            ImVec2 nx, nz;
+                            bool wide = (i + stride < side) && vert_screen(i + stride, j, nx)
+                                        && !too_short(a, nx);
+                            bool deep = (j + stride < side) && vert_screen(i, j + stride, nz)
+                                        && !too_short(a, nz);
+                            if (wide && deep && (va || on_screen(nx)))
+                                dl->AddLine(a, nx, col, th);
+                            if (deep && wide && (va || on_screen(nz)))
+                                dl->AddLine(a, nz, col, th);
+                        }
+                }
+                // Los puntos solo cuando la rejilla es la de verdad (paso 1); con
+                // paso mayor marcarian vertices que no son los que vas a tocar.
+                if (stride == 1)
+                    for (int j = 0; j < side; j++)
+                        for (int i = 0; i < side; i++) {
+                            ImVec2 a, nb;
+                            if (!vert_screen(i, j, a) || !on_screen(a)) continue;
+                            // Y solo donde la celda sea legible: en el horizonte
+                            // caben miles de vertices por pixel y el punto deja de
+                            // significar nada -- se convierte en una banda de ruido.
+                            if (i + 1 < side && vert_screen(i + 1, j, nb) && too_short(a, nb))
+                                continue;
+                            if (j + 1 < side && vert_screen(i, j + 1, nb) && too_short(a, nb))
+                                continue;
+                            int di = i - vx_i, dj = j - vx_j;
+                            bool sel  = vx_sel.count(j * side + i) != 0;
+                            bool soft = (!sel && vx_soft > 0 && di*di + dj*dj <= vx_soft*vx_soft);
+                            float rr = sel ? 4.2f : (soft ? 4.0f : 2.8f);
+                            dl->AddCircleFilled(a, rr, IM_COL32(10, 20, 35, 200));
+                            dl->AddCircleFilled(a, sel ? 3.0f : (soft ? 2.8f : 1.7f),
+                                                sel  ? IM_COL32(255, 170, 60, 250) :
+                                                soft ? IM_COL32(120, 235, 205, 245)
+                                                     : IM_COL32(220, 240, 255, 220));
+                        }
+
+                // Los elegidos se dibujan SIEMPRE, aunque la rejilla vaya a paso
+                // grueso o el filtro de legibilidad se coma sus puntos: si no, de
+                // lejos seleccionas y parece que no ha pasado nada.
+                for (int cell : vx_sel) {
+                    ImVec2 a;
+                    if (!vert_screen(cell % side, cell / side, a) || !on_screen(a)) continue;
+                    dl->AddCircleFilled(a, 4.5f, IM_COL32(10, 20, 35, 210));
+                    dl->AddCircleFilled(a, 3.0f, IM_COL32(255, 170, 60, 250));
+                }
+
+                // El cierre del rectangulo va AQUI y no en el bloque del raton:
+                // aquel exige el cursor sobre el viewport, y durante un arrastre
+                // ImGui deja de reportarlo en cuanto otro elemento se vuelve
+                // activo. La soltada se perdia, la seleccion no llegaba a hacerse
+                // nunca y el rectangulo se quedaba pintado.
+                if (vx_box && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    ImGuiIO& io2 = ImGui::GetIO();
+                    ImVec2 b = io2.MousePos;
+                    float x0 = vx_box_a.x < b.x ? vx_box_a.x : b.x;
+                    float x1 = vx_box_a.x < b.x ? b.x : vx_box_a.x;
+                    float y0 = vx_box_a.y < b.y ? vx_box_a.y : b.y;
+                    float y1 = vx_box_a.y < b.y ? b.y : vx_box_a.y;
+                    // Un clic sin arrastre es un clic, no "no seleccionar nada":
+                    // si limpiara, cualquier toque perderia lo que llevas elegido.
+                    if ((x1 - x0) >= 3.0f || (y1 - y0) >= 3.0f) {
+                        if (!io2.KeyCtrl) vx_sel.clear();   // Ctrl suma
+                        for (int j = 0; j < side; j++)
+                            for (int i = 0; i < side; i++) {
+                                float p[3], p2[2];
+                                if (!g3d_editor_terrain_vertex(terrain, i, j, p)) continue;
+                                if (!g3d_editor_world_to_screen(p[0], p[1], p[2],
+                                                                (float)vp.w, (float)vp.h, p2)) continue;
+                                float px = img_min.x + p2[0], py = img_min.y + p2[1];
+                                if (px >= x0 && px <= x1 && py >= y0 && py <= y1)
+                                    vx_sel.insert(j * side + i);
+                            }
+                        status = "Seleccionados " + std::to_string(vx_sel.size()) + " vertices";
+                    }
+                    vx_box = false;
+                }
+
+                if (vx_box) {
+                    ImVec2 b = ImGui::GetIO().MousePos;
+                    dl->AddRectFilled(vx_box_a, b, IM_COL32(255, 170, 60, 40));
+                    dl->AddRect(vx_box_a, b, IM_COL32(255, 190, 80, 220), 0.0f, 0, 1.5f);
+                }
+
+                // El vertice activo. Este SI sigue al raton: es el que vas a mover.
+                ImVec2 c;
+                if (vert_screen(vx_i, vx_j, c)) {
+                    ImU32 hot = vx_drag ? IM_COL32(255, 190, 60, 255)
+                                        : IM_COL32(255, 255, 255, 255);
+                    dl->AddCircleFilled(c, 7.0f, IM_COL32(10, 20, 35, 220));
+                    dl->AddCircleFilled(c, 5.0f, hot);
+                    dl->AddCircle(c, 11.0f, hot, 0, 2.5f);
+                    float pv[3];
+                    if (g3d_editor_terrain_vertex(terrain, vx_i, vx_j, pv)) {
+                        char lbl[64];
+                        snprintf(lbl, sizeof lbl, "y=%.2f", pv[1]);
+                        dl->AddText(ImVec2(c.x + 15.0f, c.y - 7.0f), IM_COL32(10,20,35,220), lbl);
+                        dl->AddText(ImVec2(c.x + 14.0f, c.y - 8.0f), IM_COL32(255,255,255,240), lbl);
+                    }
+                }
+            }
+        }
+
         // ---- interaccion del viewport segun la herramienta ----
         if (!playing && vp_hovered && !ImGuizmo::IsOver()) {
             ImVec2 mp = ImGui::GetIO().MousePos;
@@ -3192,6 +3674,9 @@ int main(int, char**) {
                         prev = p; have_prev = true;
                     } else have_prev = false;
                 }
+                // el relieve de antes del trazo, para poder deshacerlo
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                    tool != T_PAINT && tool != T_ZONE) push_terrain_undo();
                 // esculpir mientras se mantiene el boton izquierdo
                 if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                     float amt = brush_str * 0.5f;
@@ -3212,6 +3697,219 @@ int main(int, char**) {
                 if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
                     if (!lakes.empty() || !rivers.empty()) rebuild_water();
                     if (g3d_watersim_active()) watersim_sync(true);   // el agua sigue el relieve nuevo
+                }
+            } else if (tool == T_SCATTER && terrain && asset_sel >= 0 &&
+                       g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
+                // ---- SEMBRAR ----
+                // Lo que quita el aspecto generado no es el terreno, es lo que
+                // crece encima. Se siembra por REGLAS (pendiente, altura, agua)
+                // para que la vegetacion respete el sitio en vez de salpicarlo:
+                // hierba en el llano, nada colgando de un risco ni bajo el agua.
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                const int NC = 40;
+                ImVec2 prev; bool have_prev = false;
+                ImU32 ring = sc_erase ? IM_COL32(255,120,90,230) : IM_COL32(120,230,120,230);
+                for (int k = 0; k <= NC; k++) {
+                    float a = 6.2831853f * k / NC;
+                    float wx = hit[0] + cosf(a) * sc_radius, wz = hit[2] + sinf(a) * sc_radius;
+                    float wy = g3d_editor_terrain_height(terrain, wx, wz);
+                    float p2[2];
+                    if (g3d_editor_world_to_screen(wx, wy, wz, (float)vp.w, (float)vp.h, p2)) {
+                        ImVec2 pt(img_min.x + p2[0], img_min.y + p2[1]);
+                        if (have_prev) dl->AddLine(prev, pt, ring, 2.0f);
+                        prev = pt; have_prev = true;
+                    } else have_prev = false;
+                }
+
+                if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    if (sc_mode == 2) {
+                        // EDITAR: un clic elige el ejemplar mas cercano.
+                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                            if (!g3d_scatter_pick(hit[0], hit[2], sc_radius, &sc_sel_k, &sc_sel_i))
+                                { sc_sel_k = sc_sel_i = -1; }
+                    } else if (sc_mode == 1) {
+                        // Borrar: se reconstruye la siembra sin lo que cae dentro
+                        // del pincel. Es O(todo), pero solo mientras borras.
+                        std::vector<std::string> names;
+                        std::vector<std::vector<std::array<float,5>>> keep;
+                        for (int k = 0; k < g3d_scatter_kinds(); k++) {
+                            const char* nm = g3d_scatter_kind_asset(k);
+                            names.push_back(nm ? nm : "");
+                            keep.push_back({});
+                            int n = g3d_scatter_kind_count(k);
+                            for (int i = 0; i < n; i++) {
+                                float v[5];
+                                if (!g3d_scatter_get(k, i, v)) continue;
+                                float dx = v[0] - hit[0], dz = v[2] - hit[2];
+                                if (dx*dx + dz*dz > sc_radius * sc_radius)
+                                    keep.back().push_back({v[0],v[1],v[2],v[3],v[4]});
+                            }
+                        }
+                        g3d_scatter_clear();
+                        for (size_t k = 0; k < names.size(); k++)
+                            for (auto& v : keep[k])
+                                g3d_scatter_add(names[k].c_str(), v[0], v[1], v[2], v[3], v[4]);
+                        g3d_scatter_build(1.0f);
+                    } else {
+                        std::string asset = "Assets/" + assets[asset_sel];
+                        // El viento es de esta especie, no del sembrado entero.
+                        g3d_scatter_set_kind_wind(asset.c_str(), sc_wind);
+                        g3d_scatter_set_kind_distance(asset.c_str(), sc_dist);
+                        g3d_scatter_set_kind_solid(asset.c_str(), sc_solid ? 1 : 0);
+                        int placed = 0;
+                        int tries = (int)(sc_density * 4.0f) + 4;
+                        for (int t = 0; t < tries && placed < (int)sc_density; t++) {
+                            float a = (rand() / (float)RAND_MAX) * 6.2831853f;
+                            float r = sqrtf(rand() / (float)RAND_MAX) * sc_radius;
+                            float wx = hit[0] + cosf(a) * r, wz = hit[2] + sinf(a) * r;
+                            float wy = g3d_editor_terrain_height(terrain, wx, wz);
+                            if (wy < sc_ymin || wy > sc_ymax) continue;
+                            // Pendiente por diferencias: nada crece en una pared.
+                            const float e = 1.5f;
+                            float hx = g3d_editor_terrain_height(terrain, wx + e, wz)
+                                     - g3d_editor_terrain_height(terrain, wx - e, wz);
+                            float hz = g3d_editor_terrain_height(terrain, wx, wz + e)
+                                     - g3d_editor_terrain_height(terrain, wx, wz - e);
+                            float slope = sqrtf(hx*hx + hz*hz) / (2.0f * e);
+                            if (slope > sc_slope_max) continue;
+                            // Mojado = la superficie del agua esta por encima del
+                            // suelo. Sembrar dentro de un lago es de las cosas que
+                            // mas delatan un sembrado automatico.
+                            if (sc_avoid_water && g3d_watersim_active() &&
+                                g3d_water_level_at(wx, wz) > wy + 0.02f) continue;
+                            float sc = sc_scale_min +
+                                       (sc_scale_max - sc_scale_min) * (rand() / (float)RAND_MAX);
+                            g3d_scatter_add(asset.c_str(), wx, wy, wz,
+                                            (rand() / (float)RAND_MAX) * 360.0f, sc);
+                            placed++;
+                        }
+                        if (placed) g3d_scatter_build(1.0f);
+                    }
+                }
+            } else if (tool == T_VERTEX && terrain) {
+                // ---- VERTICE A VERTICE: raton ----
+                // El dibujo de la rejilla no esta aqui: se pinta siempre que la
+                // herramienta este activa. Aqui solo se elige y se arrastra.
+                ImGuiIO& io = ImGui::GetIO();
+                int side = 0; float wsize = 0.0f;
+                bool grid_ok = g3d_editor_terrain_grid(terrain, &side, &wsize) != 0;
+
+                // La altura se ajusta al paso pedido: es lo que da mesetas y
+                // escalones limpios en vez de bultos.
+                auto snapped = [&](float y) {
+                    return (vx_snap > 0.001f) ? roundf(y / vx_snap) * vx_snap : y;
+                };
+
+                if (grid_ok && !vx_drag && !vx_box &&
+                    g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
+                    float step = wsize / (float)(side - 1);
+                    int ci = (int)floorf((hit[0] + wsize * 0.5f) / step + 0.5f);
+                    int cj = (int)floorf((hit[2] + wsize * 0.5f) / step + 0.5f);
+                    if (ci < 0) ci = 0; if (cj < 0) cj = 0;
+                    if (ci > side - 1) ci = side - 1;
+                    if (cj > side - 1) cj = side - 1;
+                    vx_i = ci; vx_j = cj;
+                }
+
+                // --- SELECCION POR RECTANGULO ---
+                // Modo explicito en vez de un modificador: de cerca el vertice mas
+                // proximo siempre cae bajo el cursor, asi que "pulsar en hueco" no
+                // se puede distinguir; y un Shift que no llegue te mueve el terreno
+                // en vez de seleccionar, que es peor que no poder seleccionar.
+                if (grid_ok && vx_mode == 1 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    vx_box = true; vx_box_a = io.MousePos;
+                }
+                // --- AGARRAR ---
+                if (grid_ok && !vx_box && vx_mode == 0 && vx_i >= 0 &&
+                    ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    float pv[3];
+                    if (g3d_editor_terrain_vertex(terrain, vx_i, vx_j, pv)) {
+                        push_terrain_undo();
+                        vx_y0 = pv[1];
+                        vx_mouse_y0 = io.MousePos.y;
+                        vx_drag = true;
+                        // Para el arrastre lateral: donde toca el suelo el rayo del
+                        // raton al empezar. El desplazamiento sale de la diferencia
+                        // con el punto de cada frame, asi que la mano y el vertice
+                        // van juntos sea cual sea el angulo de camara.
+                        vx_grab_x = hit[0]; vx_grab_z = hit[2];
+                        vx_sel_xz0.clear();
+                        if (vx_sel.count(vx_j * side + vx_i))
+                            for (int cell : vx_sel) {
+                                float q[3];
+                                if (g3d_editor_terrain_vertex(terrain, cell % side, cell / side, q))
+                                    vx_sel_xz0.push_back({ cell, { q[0], q[2] } });
+                            }
+                        else vx_sel_xz0.push_back({ vx_j * side + vx_i, { pv[0], pv[2] } });
+                        // Si el vertice agarrado esta en la seleccion, se mueve
+                        // TODA ella; si no, solo el (con su caida suave).
+                        vx_sel_y0.clear();
+                        if (vx_sel.count(vx_j * side + vx_i)) {
+                            for (int cell : vx_sel) {
+                                float q[3];
+                                if (g3d_editor_terrain_vertex(terrain, cell % side, cell / side, q))
+                                    vx_sel_y0.push_back({ cell, q[1] });
+                            }
+                        } else {
+                            int n = 2 * vx_soft + 1;
+                            vx_y0_near.assign((size_t)n * n, 0.0f);
+                            for (int j = 0; j < n; j++)
+                                for (int i = 0; i < n; i++) {
+                                    float q[3];
+                                    if (g3d_editor_terrain_vertex(terrain, vx_i - vx_soft + i,
+                                                                  vx_j - vx_soft + j, q))
+                                        vx_y0_near[(size_t)j * n + i] = q[1];
+                                }
+                        }
+                    }
+                }
+
+                // --- ARRASTRAR ---
+                if (vx_drag && vx_axis == 1 && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    // LATERAL: se sigue el punto del terreno bajo el raton.
+                    float cur[3];
+                    if (g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, cur)) {
+                        float ddx = cur[0] - vx_grab_x, ddz = cur[2] - vx_grab_z;
+                        for (auto& sv : vx_sel_xz0)
+                            g3d_editor_terrain_set_vertex_xz(terrain, sv.first % side,
+                                                             sv.first / side,
+                                                             sv.second.first + ddx,
+                                                             sv.second.second + ddz,
+                                                             vx_lat, 0);
+                        g3d_editor_terrain_commit(terrain);
+                    }
+                } else if (vx_drag && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    float dy = (vx_mouse_y0 - io.MousePos.y) * vx_sens;
+                    if (!vx_sel_y0.empty()) {
+                        for (auto& sv : vx_sel_y0)
+                            g3d_editor_terrain_set_vertex_y(terrain, sv.first % side,
+                                                            sv.first / side,
+                                                            snapped(sv.second + dy), 0);
+                    } else {
+                        g3d_editor_terrain_set_vertex_y(terrain, vx_i, vx_j,
+                                                        snapped(vx_y0 + dy), 0);
+                        if (vx_soft > 0) {
+                            int n = 2 * vx_soft + 1;
+                            for (int j = 0; j < n; j++)
+                                for (int i = 0; i < n; i++) {
+                                    int gi = vx_i - vx_soft + i, gj = vx_j - vx_soft + j;
+                                    if (gi == vx_i && gj == vx_j) continue;
+                                    float di = (float)(gi - vx_i), dj = (float)(gj - vx_j);
+                                    float d = sqrtf(di*di + dj*dj);
+                                    if (d > (float)vx_soft) continue;
+                                    float w = 1.0f - d / (float)(vx_soft + 1);
+                                    g3d_editor_terrain_set_vertex_y(terrain, gi, gj,
+                                            snapped(vx_y0_near[(size_t)j * n + i] + dy * w), 0);
+                                }
+                        }
+                    }
+                    g3d_editor_terrain_commit(terrain);
+                }
+                if (vx_drag && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                    vx_drag = false; vx_sel_y0.clear(); vx_sel_xz0.clear();
+                    g3d_editor_terrain_commit(terrain);
+                    if (!lakes.empty() || !rivers.empty()) rebuild_water();
+                    if (g3d_watersim_active()) watersim_sync(true);
                 }
             } else if (tool == T_RIVER && terrain &&
                        g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
@@ -3281,22 +3979,46 @@ int main(int, char**) {
                     ? g3d_lake_spill_level_r(hit[0], hit[2], lake_radius) - 0.3f   // borde LOCAL
                     : lake_level;
                 if (lake_auto) lake_level = lvl;   // el slider sigue al automatico
+                // Un nivel por debajo del suelo no se puede colocar. Antes eso
+                // se rechazaba EN SILENCIO mientras la previsualizacion de agua
+                // se seguia dibujando: parecia colocado, la escena se guardaba
+                // sin el lago y en el juego no salia nada. Ahora ni se
+                // previsualiza y se avisa sobre el cursor.
+                bool lake_ok = (lvl > th + 0.05f);
+
                 // previsualiza (solo rehace el agua cuando cambia la celda o el nivel)
                 long key = ((long)(hit[0]*0.5f)*100003L + (long)(hit[2]*0.5f)) * 1000L + (long)(lvl*4.0f);
                 lake_prev = { hit[0], hit[2], lvl, lake_depth, lake_radius, current_fx() };
-                if (!lake_prev_on || key != lake_prev_key) {
-                    lake_prev_on = true; lake_prev_key = key;
+                if (lake_ok) {
+                    if (!lake_prev_on || key != lake_prev_key) {
+                        lake_prev_on = true; lake_prev_key = key;
+                        rebuild_water();
+                    }
+                } else if (lake_prev_on) {
+                    lake_prev_on = false; lake_prev_key = -1;
                     rebuild_water();
                 }
-                status = (lvl <= th + 0.05f)
-                    ? "El nivel queda por debajo del suelo aqui (sube con la rueda)."
-                    : "Rueda: nivel " + std::to_string((int)lvl) + "  |  clic para colocar el lago";
+
+                if (!lake_ok) {
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    ImVec2 c = ImGui::GetIO().MousePos;
+                    const char* msg = "El nivel queda BAJO el suelo: sube con la rueda";
+                    ImVec2 ts = ImGui::CalcTextSize(msg);
+                    dl->AddRectFilled(ImVec2(c.x + 14, c.y - 10),
+                                      ImVec2(c.x + 22 + ts.x, c.y + 12 + ts.y),
+                                      IM_COL32(120, 20, 20, 220), 4.0f);
+                    dl->AddText(ImVec2(c.x + 18, c.y - 6), IM_COL32(255, 230, 230, 255), msg);
+                }
+                status = lake_ok
+                    ? "Rueda: nivel " + std::to_string((int)lvl) + "  |  clic para colocar el lago"
+                    : "El nivel queda por debajo del suelo aqui (sube con la rueda).";
                 // clic: confirma el lago de la previsualizacion
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && lvl > th + 0.05f) {
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && lake_ok) {
                     lakes.push_back({ hit[0], hit[2], lvl, lake_depth, lake_radius, current_fx() });
                     lake_prev_on = false; lake_prev_key = -1;
                     rebuild_water();
-                    status = "Lago anadido (nivel " + std::to_string((int)lvl) + ")";
+                    status = "Lago anadido (nivel " + std::to_string((int)lvl) +
+                             ") -- van " + std::to_string(lakes.size());
                 }
             } else if (tool == T_WATERFALL && terrain &&
                        g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
@@ -3671,6 +4393,208 @@ int main(int, char**) {
             ImGui::Checkbox("Rellenar (quitar agujero)", &hole_fill);
             ImGui::TextWrapped("Perfora el terreno para ver la cueva de debajo. "
                                "Excava primero la cueva (modo cueva).");
+            ImGui::Separator();
+        }
+        {
+            ImGui::SeparatorText(ICON_FA_SUN "  Sol y ciclo dia/noche");
+            ImGui::Checkbox("El sol se mueve", &sun_cycle);
+            if (sun_cycle) {
+                ImGui::SliderFloat("Dura un dia", &sun_day_sec, 10.0f, 900.0f, "%.0f s");
+                ImGui::SliderFloat("Hora", &sun_hour, 0.0f, 360.0f, "%.0f grados");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("0 = amanecer, 90 = mediodia, 180 = atardecer,\n"
+                                      "270 = medianoche. Es por donde ARRANCA el ciclo.");
+            } else {
+                ImGui::SliderFloat("Rumbo", &sun_azim, 0.0f, 360.0f, "%.0f grados");
+                ImGui::SliderFloat("Altura", &sun_elev, -10.0f, 90.0f, "%.0f grados");
+            }
+            ImGui::SliderFloat("Intensidad", &sun_intensity, 0.0f, 4.0f, "%.2f");
+            ImGui::TextDisabled("Se emite como PROCESS escena_sol() con sus locales.");
+            ImGui::Separator();
+        }
+        if (tool == T_SCATTER) {
+            ImGui::SeparatorText(ICON_FA_SEEDLING "  Sembrar");
+            if (asset_sel < 0)
+                ImGui::TextColored(ImVec4(1,0.7f,0.3f,1),
+                                   "Elige antes un asset en el panel de la izquierda.");
+            else
+                ImGui::Text("Sembrando: %s", assets[asset_sel].c_str());
+            /* Uno por linea: el Inspector es estrecho y en una sola fila el
+               tercer modo queda pegado al borde y no se encuentra. */
+            ImGui::SeparatorText("Modo");
+            ImGui::RadioButton("Sembrar##scm", &sc_mode, 0);
+            ImGui::RadioButton("Borrar##scm", &sc_mode, 1);
+            ImGui::RadioButton("Editar uno (clic para elegir)##scm", &sc_mode, 2);
+            ImGui::Separator();
+            ImGui::SliderFloat("Radio##sc", &sc_radius, 3.0f, 60.0f, "%.0f");
+            ImGui::SliderFloat("Densidad##sc", &sc_density, 1.0f, 40.0f, "%.0f por pincelada");
+            ImGui::SliderFloat("Escala min", &sc_scale_min, 0.1f, 3.0f, "%.2f");
+            ImGui::SliderFloat("Escala max", &sc_scale_max, 0.1f, 3.0f, "%.2f");
+            if (sc_scale_max < sc_scale_min) sc_scale_max = sc_scale_min;
+            ImGui::SliderFloat("Pendiente maxima", &sc_slope_max, 0.05f, 2.0f, "%.2f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("No siembra donde el suelo sea mas empinado que esto.\n"
+                                  "Un arbol colgando de un risco delata el sembrado.");
+            ImGui::SliderFloat("Altura minima", &sc_ymin, -100.0f, 100.0f, "%.0f");
+            ImGui::SliderFloat("Altura maxima", &sc_ymax, -100.0f, 200.0f, "%.0f");
+            ImGui::Checkbox("Evitar el agua", &sc_avoid_water);
+            ImGui::SliderFloat("Distancia de dibujo", &sc_dist, 40.0f, 1200.0f, "%.0f u");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Mas alla no se dibuja. Es POR ESPECIE: la hierba no\n"
+                                  "hace falta verla lejos y un arbol si.");
+            if (ImGui::SliderFloat("Distancia de LOD", &sc_lod, 0.0f, 800.0f, "%.0f u"))
+                g3d_instances_set_lod_distance(sc_lod);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("A partir de aqui se dibuja con una malla de bajo\n"
+                                  "poligono generada sola. 0 = apagado (venia asi).\n"
+                                  "Es lo que sostiene un bosque de miles de copias.");
+            ImGui::SliderFloat("Viento de esta especie", &sc_wind, 0.0f, 1.5f, "%.2f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Balanceo en el shader: un bosque se mueve sin animar\n"
+                                  "un solo arbol. Es POR ESPECIE -- deja 0 para rocas y\n"
+                                  "troncos, o se balancearan como si fueran hierba.");
+            if (g3d_scatter_kinds() > 0) {
+                ImGui::TextDisabled("Sembrado:");
+                for (int k = 0; k < g3d_scatter_kinds(); k++) {
+                    const char* nm = g3d_scatter_kind_asset(k);
+                    /* Editable EN SITIO: antes esto solo se leia, asi que para
+                       cambiarle el viento a una especie ya sembrada habia que
+                       volver a sembrarla. */
+                    ImGui::PushID(k);
+                    ImGui::Text("%s  x%d", nm ? nm : "?", g3d_scatter_kind_count(k));
+                    float kw = g3d_scatter_get_kind_wind(k);
+                    float kd = g3d_scatter_get_kind_distance(k);
+                    bool  ks = g3d_scatter_get_kind_solid(k) != 0;
+                    bool ch = false;
+                    ImGui::SetNextItemWidth(110);
+                    ch |= ImGui::SliderFloat("viento", &kw, 0.0f, 1.5f, "%.2f");
+                    ImGui::SetNextItemWidth(110);
+                    ch |= ImGui::SliderFloat("hasta", &kd, 40.0f, 1200.0f, "%.0f u");
+                    ch |= ImGui::Checkbox("solido", &ks);
+                    if (ch) {
+                        g3d_scatter_kind_apply(k, kw, kd, ks ? 1 : 0);
+                        if (ks != (g3d_scatter_get_kind_solid(k) != 0))
+                            g3d_scatter_build(1.0f);
+                    }
+                    ImGui::PopID();
+                }
+            }
+            ImGui::Checkbox("Bloquea el paso (solido)", &sc_solid);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Pone un colisionador por ejemplar. El motor admite 512\n"
+                                  "cajas en total, asi que esto es para troncos y rocas\n"
+                                  "grandes -- no para hierba.");
+            {
+                int sp = g3d_scatter_solid_placed();
+                if (sp > 0) ImGui::TextDisabled("%d colisionadores de 512", sp);
+            }
+            // --- edicion de un ejemplar ---
+            if (sc_mode == 2) {
+                ImGui::SeparatorText("Ejemplar elegido");
+                float v[5];
+                if (sc_sel_k >= 0 && g3d_scatter_get(sc_sel_k, sc_sel_i, v)) {
+                    ImGui::Text("%s  #%d", g3d_scatter_kind_asset(sc_sel_k), sc_sel_i);
+                    bool ch = false;
+                    ch |= ImGui::SliderFloat("Tamano##one", &v[4], 0.05f, 6.0f, "%.2f");
+                    ch |= ImGui::SliderFloat("Giro##one",   &v[3], 0.0f, 360.0f, "%.0f grados");
+                    ch |= ImGui::DragFloat3("Posicion##one", v, 0.1f);
+                    if (ch) {
+                        g3d_scatter_set(sc_sel_k, sc_sel_i, v[0], v[1], v[2], v[3], v[4]);
+                        g3d_scatter_build(1.0f);
+                    }
+                    if (ImGui::Button("Quitar este")) {
+                        g3d_scatter_remove(sc_sel_k, sc_sel_i);
+                        sc_sel_k = sc_sel_i = -1;
+                        g3d_scatter_build(1.0f);
+                    }
+                } else {
+                    ImGui::TextDisabled("Haz clic sobre uno en la escena.");
+                }
+            }
+            ImGui::Text("%d plantados (%d especies)", g3d_scatter_count(), g3d_scatter_kinds());
+            if (ImGui::Button("Quitar toda la siembra")) { g3d_scatter_clear(); g3d_scatter_build(1.0f); }
+            ImGui::Separator();
+        }
+        if (tool == T_VERTEX) {
+            ImGui::SeparatorText(ICON_FA_BORDER_ALL "  Vertice a vertice");
+            ImGui::TextWrapped("Arrastra un vertice arriba o abajo. El pincel redondea "
+                               "todo; esto es lo que da aristas, escalones y crestas.");
+            ImGui::RadioButton("Mover vertice", &vx_mode, 0); ImGui::SameLine();
+            ImGui::RadioButton("Seleccionar zona", &vx_mode, 1);
+            if (vx_mode == 0) {
+                ImGui::RadioButton("Altura", &vx_axis, 0); ImGui::SameLine();
+                ImGui::RadioButton("Lateral", &vx_axis, 1);
+                if (vx_axis == 1) {
+                    ImGui::SliderFloat("Tope lateral", &vx_lat, 0.05f, 0.45f, "%.2f de celda");
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Un vertice no puede salirse de su celda: la fisica,\n"
+                                          "el picado y el agua dan por hecho que la rejilla es\n"
+                                          "regular y solo miran la altura. Dentro de ese tope,\n"
+                                          "lo que ellos creen y lo que se ve no llega a media\n"
+                                          "celda de diferencia.");
+                }
+            }
+            ImGui::Separator();
+            ImGui::SliderInt("Densidad", &vx_px, 6, 40, "%d px");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Separacion minima entre lineas. De lejos la rejilla se\n"
+                                  "aclara sola; acercandote llega a la rejilla real,\n"
+                                  "vertice a vertice.");
+            ImGui::SliderInt("Arrastre suave", &vx_soft, 0, 6, "%d vecinos");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("0 = solo ese vertice (aristas duras).\n"
+                                  "Mas alto arrastra tambien alrededor, para una loma.");
+            ImGui::SliderFloat("Sensibilidad", &vx_sens, 0.01f, 0.3f, "%.3f u/pixel");
+            ImGui::SliderFloat("Paso de altura", &vx_snap, 0.0f, 4.0f, "%.2f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("0 = libre. Con paso, las alturas caen en multiplos:\n"
+                                  "mesetas y escalones limpios en vez de bultos.");
+
+            ImGui::SeparatorText("Seleccion");
+            ImGui::TextWrapped("En 'Seleccionar zona', arrastra un rectangulo sobre la "
+                               "rejilla (Ctrl suma a lo ya elegido). Vuelve a 'Mover "
+                               "vertice' y arrastra uno de los elegidos: se mueven todos.");
+            ImGui::Text("%d vertices elegidos", (int)vx_sel.size());
+            if (!vx_sel.empty()) {
+                int lado = 0; float wsz = 0.0f;
+                bool ok = terrain && g3d_editor_terrain_grid(terrain, &lado, &wsz);
+                if (ImGui::Button("Nivelar a la altura del activo") && ok) {
+                    float pv[3];
+                    if (g3d_editor_terrain_vertex(terrain, vx_i, vx_j, pv)) {
+                        push_terrain_undo();
+                        for (int cell : vx_sel)
+                            g3d_editor_terrain_set_vertex_y(terrain, cell % lado,
+                                                            cell / lado, pv[1], 0);
+                        g3d_editor_terrain_commit(terrain);
+                        if (!lakes.empty() || !rivers.empty()) rebuild_water();
+                        if (g3d_watersim_active()) watersim_sync(true);
+                        status = "Nivelados " + std::to_string(vx_sel.size()) + " vertices";
+                    }
+                }
+                if (ImGui::Button("Nivelar a la media") && ok) {
+                    double sum = 0; int n = 0;
+                    for (int cell : vx_sel) {
+                        float q[3];
+                        if (g3d_editor_terrain_vertex(terrain, cell % lado, cell / lado, q))
+                            { sum += q[1]; n++; }
+                    }
+                    if (n) {
+                        push_terrain_undo();
+                        float avg = (float)(sum / n);
+                        for (int cell : vx_sel)
+                            g3d_editor_terrain_set_vertex_y(terrain, cell % lado,
+                                                            cell / lado, avg, 0);
+                        g3d_editor_terrain_commit(terrain);
+                        if (!lakes.empty() || !rivers.empty()) rebuild_water();
+                        if (g3d_watersim_active()) watersim_sync(true);
+                        status = "Nivelados a la media";
+                    }
+                }
+                if (ImGui::Button("Quitar seleccion")) vx_sel.clear();
+            }
+            if (vx_i >= 0)
+                ImGui::Text("Vertice (%d, %d)", vx_i, vx_j);
+            ImGui::TextDisabled("Ctrl+Z deshace tambien el relieve.");
             ImGui::Separator();
         }
         if (tool == T_RAISE || tool == T_LOWER || tool == T_SMOOTH || tool == T_FLATTEN) {
@@ -4184,6 +5108,32 @@ int main(int, char**) {
                 g3d_entity_impl_set_rotation(o.entity, 0.0f, o.ry, 0.0f);
                 g3d_entity_impl_set_scale(o.entity, o.scale, o.scale, o.scale);
             }
+
+        // ---- sol ----
+        // El mismo calculo que se emite al juego, para que lo que ves aqui sea
+        // lo que luego corre: si el editor lo aproximara de otra forma, el ciclo
+        // se veria distinto al jugar.
+        {
+            if (sun_cycle && sun_day_sec > 0.1f)
+                sun_hour += 360.0f * ImGui::GetIO().DeltaTime / sun_day_sec;
+            while (sun_hour >= 360.0f) sun_hour -= 360.0f;
+            float ang = sun_cycle ? sun_hour : sun_elev;
+            float el  = sun_cycle ? sinf(sun_hour * 3.14159265f / 180.0f)
+                                  : sinf(sun_elev * 3.14159265f / 180.0f);
+            float az  = sun_cycle ? sun_hour : sun_azim;
+            float k = el < 0.0f ? 0.0f : el;
+            float dx = -cosf(az * 3.14159265f / 180.0f) * 0.8f;
+            float dz = sun_cycle ? -0.35f
+                                 : -sinf(sun_azim * 3.14159265f / 180.0f) * 0.8f;
+            g3d_light_set_direction(light, dx, -el, dz);
+            g3d_light_set_intensity(light, 0.05f + sun_intensity * k);
+            g3d_light_impl_set_color(light, 1.0f,
+                                (150.0f + 105.0f * k) / 255.0f,
+                                (90.0f + 165.0f * k) / 255.0f);
+            g3d_sky_set_gradient(0.05f + 0.30f*k, 0.07f + 0.48f*k, 0.15f + 0.70f*k,
+                                 0.10f + 0.72f*k, 0.09f + 0.79f*k, 0.18f + 0.78f*k);
+            (void)ang;
+        }
 
         // ---- agua (mar/lago global) ----
         g3d_water_render_set_surf(surf_amount, surf_len, surf_speed, surf_runup);

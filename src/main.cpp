@@ -234,6 +234,7 @@ extern "C" {
     void  g3d_watersim_set_evaporation(float rate);
     void  g3d_watersim_set_flow_scale(float s);
     void  g3d_watersim_settle(float seconds);
+    void  g3d_waterfield_clear_water(void);
     void  g3d_fluid_clear(void);
     void  g3d_fluid_set_style(float amp, float len, float speed, float dr, float dg, float db,
                               float sr, float sg, float sb, unsigned int tex, float opacity);
@@ -471,6 +472,7 @@ int main(int, char**) {
     struct WSource { float x, z, rate; };
     std::vector<WSource> wsources;     // fuentes colocadas (para guardar/regenerar)
     float ws_rate = 6.0f;              // caudal de la proxima fuente (potente: llena rapido)
+    float ws_prefill = 60.0f;   // segundos de agua ya corrida al arrancar el juego
     float ws_evap = 0.0f;             // evaporacion (0 = el agua se QUEDA, no se seca)
     float ws_flow = 1.0f;             // velocidad de flujo
 
@@ -662,6 +664,10 @@ int main(int, char**) {
         g3d_fluid_clear();
         g3d_flow_clear();
         g3d_water_clear_ripple_sources();
+        /* Y el agua del campo unificado, que es donde acaban de verdad lagos y
+           rios. Sin esto solo se podia ANADIR: borrar un lago dejaba su agua, y
+           la previsualizacion inundaba el mapa con solo pasar el raton. */
+        g3d_waterfield_clear_water();
         if (lakes.empty() && rivers.empty() && waterfalls.empty() && !lake_prev_on) return;
         g3d_scene_set_terrain_collider(terrain);   // refresca el heightfield
         // Bloquea los cauces de los rios ANTES de crear los lagos: asi el relleno
@@ -786,7 +792,7 @@ int main(int, char**) {
         g3d_watersim_set_flow_scale(ws_flow);
         g3d_watersim_clear_sources();
         for (auto& s : wsources) g3d_watersim_add_source(s.x, s.z, s.rate);
-        if (resettle) g3d_watersim_settle(60.0f);   // llena de golpe hasta su nivel estable
+        if (resettle) g3d_watersim_settle(ws_prefill);   // lo mismo que vera el juego
     };
 
     // AUTO-PINTAR el terreno con las texturas de Assets segun ALTURA y PENDIENTE:
@@ -1016,6 +1022,7 @@ int main(int, char**) {
     bool   vx_box = false;                       // arrastrando el rectangulo
     ImVec2 vx_box_a;
     float  vx_snap = 0.0f;                       // paso de altura (0 = libre)
+    bool  show_fps = false;   // el juego generado muestra fps y coste en pantalla
     // --- sol y ciclo dia/noche ---
     bool  sun_cycle = false;      // el sol se mueve solo
     float sun_day_sec = 120.0f;   // segundos que dura un dia entero
@@ -1099,12 +1106,21 @@ int main(int, char**) {
     // de deshacer de objetos. Va en su propia pila, y una marca por accion dice
     // de cual toca sacar, para que Ctrl+Z siga un solo orden cronologico.
     std::vector<std::vector<float>> terr_undo, terr_redo;
+    /* La siembra se guarda leyendola con sus propios accesores: no hace falta
+       tocar el modulo, y una copia de diez mil ejemplares son ~200 KB. */
+    struct ScSnapKind {
+        std::string asset; float wind, dist; int solid;
+        std::vector<std::array<float,5>> items;
+    };
+    typedef std::vector<ScSnapKind> ScSnap;
+    std::vector<ScSnap> sc_undo, sc_redo;
     std::vector<char> undo_kind, redo_kind;   // 'o' objetos, 't' relieve
     EditState last_state;
     bool state_init = false;
     auto undo_reset = [&]() {
         undo_stack.clear(); redo_stack.clear();
         terr_undo.clear(); terr_redo.clear();
+        sc_undo.clear(); sc_redo.clear();
         undo_kind.clear(); redo_kind.clear();
         vx_sel.clear(); vx_sel_y0.clear(); vx_i = vx_j = -1;
         state_init = false;
@@ -1291,6 +1307,53 @@ int main(int, char**) {
         }
         if (obj_sel >= (int)objects.size()) obj_sel = -1;
     };
+    auto scatter_snapshot = [&]() -> ScSnap {
+        ScSnap snap;
+        for (int k = 0; k < g3d_scatter_kinds(); k++) {
+            const char* nm = g3d_scatter_kind_asset(k);
+            if (!nm) continue;
+            ScSnapKind sk;
+            sk.asset = nm;
+            sk.wind  = g3d_scatter_get_kind_wind(k);
+            sk.dist  = g3d_scatter_get_kind_distance(k);
+            sk.solid = g3d_scatter_get_kind_solid(k);
+            int n = g3d_scatter_kind_count(k);
+            sk.items.reserve(n);
+            for (int i = 0; i < n; i++) {
+                float v[5];
+                if (g3d_scatter_get(k, i, v))
+                    sk.items.push_back({v[0],v[1],v[2],v[3],v[4]});
+            }
+            snap.push_back(std::move(sk));
+        }
+        return snap;
+    };
+    auto scatter_restore = [&](const ScSnap& snap) {
+        g3d_scatter_clear();
+        for (auto& sk : snap) {
+            for (auto& v : sk.items)
+                g3d_scatter_add(sk.asset.c_str(), v[0], v[1], v[2], v[3], v[4]);
+            g3d_scatter_set_kind_wind(sk.asset.c_str(), sk.wind);
+            g3d_scatter_set_kind_distance(sk.asset.c_str(), sk.dist);
+            g3d_scatter_set_kind_solid(sk.asset.c_str(), sk.solid);
+        }
+        g3d_scatter_build(1.0f);
+    };
+    /* Guarda la siembra ANTES de tocarla. Un trazo entero es UN paso: si se
+       guardara por ejemplar, deshacer una pincelada de veinte arboles pediria
+       veinte Ctrl+Z. */
+    auto push_scatter_undo = [&]() {
+        if (playing) return;
+        sc_undo.push_back(scatter_snapshot());
+        undo_kind.push_back('s');
+        while (sc_undo.size() > 24) {
+            sc_undo.erase(sc_undo.begin());
+            for (size_t k = 0; k < undo_kind.size(); k++)
+                if (undo_kind[k] == 's') { undo_kind.erase(undo_kind.begin()+k); break; }
+        }
+        redo_stack.clear(); terr_redo.clear(); sc_redo.clear(); redo_kind.clear();
+    };
+
     /* Guarda el relieve ANTES de tocarlo. Se llama al empezar cada trazo, no en
        cada frame del arrastre: si no, un arrastre de dos segundos dejaria cien
        pasos de deshacer identicos. */
@@ -1315,6 +1378,14 @@ int main(int, char**) {
     auto do_undo = [&]() {
         if (playing || undo_kind.empty()) return;
         char k = undo_kind.back();
+        if (k == 's') {
+            if (sc_undo.empty()) { undo_kind.pop_back(); return; }
+            sc_redo.push_back(scatter_snapshot()); redo_kind.push_back('s');
+            scatter_restore(sc_undo.back());
+            sc_undo.pop_back(); undo_kind.pop_back();
+            status = "Siembra deshecha";
+            return;
+        }
         if (k == 't') {
             if (terr_undo.empty() || !terrain) { undo_kind.pop_back(); return; }
             int nv = g3d_editor_terrain_vcount(terrain);
@@ -1338,6 +1409,14 @@ int main(int, char**) {
     auto do_redo = [&]() {
         if (playing || redo_kind.empty()) return;
         char k = redo_kind.back();
+        if (k == 's') {
+            if (sc_redo.empty()) { redo_kind.pop_back(); return; }
+            sc_undo.push_back(scatter_snapshot()); undo_kind.push_back('s');
+            scatter_restore(sc_redo.back());
+            sc_redo.pop_back(); redo_kind.pop_back();
+            status = "Siembra rehecha";
+            return;
+        }
         if (k == 't') {
             if (terr_redo.empty() || !terrain) { redo_kind.pop_back(); return; }
             int nv = g3d_editor_terrain_vcount(terrain);
@@ -1794,6 +1873,12 @@ int main(int, char**) {
                 w_deep[0], w_deep[1], w_deep[2], w_shallow[0], w_shallow[1], w_shallow[2],
                 surf_amount, surf_len, surf_speed, surf_runup, surf_height, surf_dir,
                 water_foam, splash_amount, splash_speed);
+        /* Manantiales. Estaban en memoria con un comentario que decia "para
+           guardar", pero nadie los escribia: colocabas uno, guardabas la escena
+           y al reabrirla ya no estaba. */
+        for (auto& sw : wsources)
+            fprintf(f, "SOURCE %.4f %.4f %.4f\n", sw.x, sw.z, sw.rate);
+        fprintf(f, "FLOWCFG %.4f %.4f %.1f\n", ws_evap, ws_rate, ws_prefill);
         fprintf(f, "SUN %d %.2f %.2f %.3f %.2f %.2f\n",
                 sun_cycle ? 1 : 0, sun_day_sec, sun_hour, sun_intensity, sun_azim, sun_elev);
         fprintf(f, "CAMERA %d %d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %d\n",
@@ -1868,6 +1953,7 @@ int main(int, char**) {
         for (auto& o : objects) if (o.entity >= 0) g3d_entity_impl_destroy(o.entity);
         objects.clear(); obj_sel = -1;
         lakes.clear(); rivers.clear(); river_draft.clear(); waterfalls.clear();
+        wsources.clear();   // los de la escena anterior no son de esta
         // terreno primero: las cuevas/objetos se apoyan en su altura
         if (terrain) {
             g3d_editor_terrain_load(terrain, (path + ".terrain").c_str());
@@ -1883,6 +1969,19 @@ int main(int, char**) {
         if (!g3d_zone_load((path + ".zones").c_str())) g3d_zone_init(161, 400.0f);  // zonas (o limpia)
         char line[512], asset[256], name[256];
         while (fgets(line, sizeof(line), f)) {
+            {   float sx2, sz2, sr2;
+                if (sscanf(line, "SOURCE %f %f %f", &sx2, &sz2, &sr2) == 3) {
+                    wsources.push_back({ sx2, sz2, sr2 });
+                    continue;
+                }
+                float fe, fr, fp;
+                int nf = sscanf(line, "FLOWCFG %f %f %f", &fe, &fr, &fp);
+                if (nf >= 2) {
+                    ws_evap = fe; ws_rate = fr;
+                    if (nf >= 3) ws_prefill = fp;   // escenas viejas: se queda el defecto
+                    continue;
+                }
+            }
             {   int sc_on; float sd, sh, si, sa, se;
                 if (sscanf(line, "SUN %d %f %f %f %f %f",
                            &sc_on, &sd, &sh, &si, &sa, &se) == 6) {
@@ -2019,6 +2118,11 @@ int main(int, char**) {
         }
         fclose(f);
         rebuild_water();   // dibujar los lagos cargados (con el relieve ya puesto)
+        /* Y arrancar la simulacion si la escena trae manantiales. Todas las demas
+           llamadas a watersim_sync van tras "if (g3d_watersim_active())", y al
+           cargar una escena todavia NO hay campo -- asi que los manantiales
+           guardados no se creaban nunca y el agua no aparecia. */
+        if (!wsources.empty()) watersim_sync(true);
         status = "Escena cargada (" + std::to_string(objects.size()) + " objetos)";
     };
 
@@ -2270,7 +2374,7 @@ int main(int, char**) {
                   "    target_x = %.4f; target_y = %.4f; target_z = %.4f;   // direccion = target - origen\n"
                   "    intensity = %.3f;\n"
                   "    color_r = 255; color_g = 245; color_b = 219;\n"
-                  "    entity = g3d_light_create(0, 1.0, 1.0, 1.0);   // el color lo pone el hook\n"
+                  "    entity = g3d_light_create(0);   // sin color: lo ponen color_r/g/b\n"
                   "    g3d_light_enable_shadow(entity, 1); g3d_set_shadows(1);\n"
                   "    g3d_set_shadow_resolution(%d);\n"
                   "    LOOP\n"
@@ -2296,7 +2400,8 @@ int main(int, char**) {
                   "BEGIN\n"
                   "    ctype = C_3D; csubtype = C3D_LIGHT;\n"
                   "    x = 0.0; y = 0.0; z = 0.0;\n"
-                  "    entity = g3d_light_create(0, 1.0, 1.0, 1.0);\n"
+                  "    color_r = 255; color_g = 245; color_b = 219;   // el LOOP los mueve con el sol\n"
+                  "    entity = g3d_light_create(0);   // sin color: lo ponen color_r/g/b\n"
                   "    g3d_light_enable_shadow(entity, 1); g3d_set_shadows(1);\n"
                   "    g3d_set_shadow_resolution(%d);\n"
                   "    hora = %.1f;\n"
@@ -2330,6 +2435,58 @@ int main(int, char**) {
                   "END\n\n",
                   shadow_res, sun_hour * 1000.0f, sun_day_sec,
                   360000.0f / (sun_day_sec * 60.0f), sun_intensity);
+        }
+
+        if (show_fps) {
+            /* Medir el coste tiene que ser barato: el texto se rehace una vez por
+               segundo, no en cada frame. Un contador que cuesta lo que mide no
+               sirve para medir. */
+            /* write_var se enlaza UNA vez y el texto sigue a la variable. Con
+               write() habria que borrar el anterior en cada refresco, y
+               delete_text no esta disponible aqui. */
+            fputs("GLOBAL string g3d_dbg_txt;\n"
+                  "PROCESS depurar_coste()\n"
+                  "PRIVATE\n"
+                  "    int frames; int t0; int fps;\n"
+                  "END\n"
+                  "BEGIN\n"
+                  "    frames = 0; t0 = timer[0]; fps = 0;\n"
+                  "    g3d_dbg_txt = \"...\";\n"
+                  "    write_var(0, 8, 8, 0, g3d_dbg_txt);   // se enlaza una sola vez\n"
+                  "    LOOP\n"
+                  "        frames = frames + 1;\n"
+                  "        IF (timer[0] - t0 >= 100)   // timer va en centesimas\n"
+                  "            fps = frames * 100 / (timer[0] - t0);\n"
+                  "            frames = 0; t0 = timer[0];\n"
+                  "            g3d_dbg_txt = \"FPS \" + fps + \"   dibujos \" + g3d_draw_calls() +\n"
+                  "                          \"   triangulos \" + g3d_triangles();\n"
+                  "        END\n"
+                  "        FRAME;\n"
+                  "    END\n"
+                  "END\n\n", f);
+        }
+
+        if (water_on) {
+            /* El agua como proceso: lo que cambia en marcha (oleaje, espuma,
+               rompiente, salpicaduras) sale de sus locales, asi que desde el
+               juego se puede levantar una tormenta sin tocar C. Lo que es de
+               autoria -- color, textura, nivel -- se queda como llamadas de una
+               vez en escena_iniciar, porque no tiene sentido reenviarlo cada
+               frame. */
+            fprintf(f,
+                  "PROCESS escena_agua()\n"
+                  "BEGIN\n"
+                  "    ctype = C_3D; csubtype = C3D_WATER;\n"
+                  "    entity = 0;   // el agua es UNA: basta con no ser -1\n"
+                  "    water.waves = %.4f; water.wave_len = %.4f; water.wave_speed = %.4f;\n"
+                  "    water.foam = %.4f; water.surf = %.4f; water.splash = %.4f;\n"
+                  "    target_x = %.2f;   // rumbo de las olas de playa, en grados\n"
+                  "    LOOP\n"
+                  "        // Sube water.waves y water.surf aqui y tienes tormenta.\n"
+                  "        FRAME;\n"
+                  "    END\n"
+                  "END\n\n",
+                  w_amp, w_len, w_speed, water_foam, surf_height, splash_amount, surf_dir);
         }
 
         // ---- cada especie sembrada, como proceso BennuGD2 ----
@@ -2424,6 +2581,8 @@ int main(int, char**) {
         fputs("    scene = g3d_scene_create(\"juego\"); g3d_scene_set_active(scene);\n", f);
         fputs("    camera = g3d_camera_create(); g3d_camera_set_active(camera);\n", f);
         fputs("    escena_sol();   // la luz del sol (proceso con vars nativas)\n", f);
+        if (show_fps) fputs("    depurar_coste();   // fps y coste en pantalla\n", f);
+        if (water_on) fputs("    escena_agua();   // el agua, con sus locales\n", f);
         fputs("    g3d_sky_set_gradient(0.35,0.55,0.85, 0.82,0.88,0.96); g3d_sky_enable(1);\n", f);
         // terreno: mismo grid/worldsize que el editor (160 / 400), plano y luego
         // se le aplica el relieve esculpido y el pintado guardados en la escena.
@@ -2462,16 +2621,11 @@ int main(int, char**) {
         // Cada masa de agua fija SU estilo (olas/color/textura) justo antes de
         // crearse, para que el motor lo capture como propio de esa zona.
         if (!lakes.empty() || !rivers.empty() || !waterfalls.empty()) {
-            auto emit_fx = [&](const WaterFX& x) {
-                fprintf(f, "    g3d_fluid_style(%.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, 0.88);\n",
-                        x.amp, x.len, x.speed,
-                        x.deep[0], x.deep[1], x.deep[2], x.shallow[0], x.shallow[1], x.shallow[2]);
-                if (x.tex >= 0 && x.tex < (int)paints.size())
-                    fprintf(f, "    g3d_fluid_set_texture(g3d_load_texture(\"Assets/%s\"));\n",
-                            paints[x.tex].file.c_str());
-                else
-                    fputs("    g3d_fluid_set_texture(0);\n", f);
-            };
+            /* El estilo por masa de agua ya no se emite: con el campo unificado
+               esas llamadas no las lee nadie -- son de las mallas viejas, que ya
+               no se dibujan. Los exports siguen existiendo para scripts que los
+               usen, pero el juego generado ya no los arrastra. */
+            auto emit_fx = [&](const WaterFX& x) { (void)x; };
             // Secuencia el estado del motor igual que el preview para poder recortar
             // cada rio contra los lagos + rios YA anadidos (no contra si mismo). Al
             // final se restaura con rebuild_water().
@@ -2479,7 +2633,6 @@ int main(int, char**) {
             // Bloquea los cauces ANTES de crear los lagos (que no suban por el rio),
             // tanto en el motor (preview del recorte) como en el juego generado.
             g3d_fluid_block_reset();
-            fputs("    g3d_fluid_block_reset();\n", f);
             for (auto& rv : rivers) {
                 int n = (int)rv.pts.size() / 2; if (n < 2) continue;
                 std::vector<float> bx(n * 3);
@@ -2515,10 +2668,8 @@ int main(int, char**) {
                 // CASCADAS del rio: camino COMPLETO -> lamina donde el cauce cae fuerte.
                 int nf = (int)rv.pts.size() / 2;
                 if (nf >= 2) {
-                    fprintf(f, "    g3d_flow_set_color(%.4f, %.4f, %.4f);\n",
-                            rv.wf.color[0], rv.wf.color[1], rv.wf.color[2]);
-                    fprintf(f, "    g3d_flow_set_foam(%.3f); g3d_flow_set_speed(%.3f);\n", rv.wf.foam, rv.wf.speed);
-                    fputs("    g3d_flow_set_texture(0);\n", f);
+                    /* Sin g3d_flow_set_*: ese estilo era de las cintas viejas,
+                       que el campo unificado ya no dibuja. */
                     fprintf(f, "    g3d_river_begin(%.3f, %.3f);\n", rv.width, rv.depth*0.8f);
                     for (int k = 0; k < nf; k++)
                         fprintf(f, "    g3d_river_point(%.3f, %.3f);\n", rv.pts[k*2], rv.pts[k*2+1]);
@@ -2530,14 +2681,7 @@ int main(int, char**) {
             }
             // CASCADAS (colocadas a mano): elemento propio, con su estilo de flujo.
             for (auto& w : waterfalls) {
-                fprintf(f, "    g3d_flow_set_color(%.4f, %.4f, %.4f);\n",
-                        w.fx.color[0], w.fx.color[1], w.fx.color[2]);
-                fprintf(f, "    g3d_flow_set_foam(%.3f); g3d_flow_set_speed(%.3f);\n", w.fx.foam, w.fx.speed);
-                if (w.fx.tex >= 0 && w.fx.tex < (int)paints.size())
-                    fprintf(f, "    g3d_flow_set_texture(g3d_load_texture(\"Assets/%s\"));\n",
-                            paints[w.fx.tex].file.c_str());
-                else
-                    fputs("    g3d_flow_set_texture(0);\n", f);
+                /* El estilo de flujo era de las cintas viejas: fuera. */
                 fprintf(f, "    g3d_waterfall_add(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n",
                         w.top[0], w.top[1], w.top[2], w.base[0], w.base[2], w.width, w.arc);
                 apply_wf(w.fx); g3d_waterfall_add(w.top[0], w.top[1], w.top[2], w.base[0], w.base[2], w.width, w.arc);
@@ -2547,8 +2691,18 @@ int main(int, char**) {
         // La simulacion del agua tiene que arrancar como en el editor. Sin esto,
         // el juego empieza con el cauce SECO y tarda minutos en llenarse desde el
         // manantial, asi que lo que compones aqui no es lo que luego se ve.
+        /* Los MANANTIALES tambien viajan al juego. Sin ellos, un rio nacido de
+           una fuente se veia al componer y no existia al jugar: la simulacion
+           arrancaba sin nada que verter. */
+        for (auto& sw : wsources)
+            fprintf(f, "    g3d_watersim_add_source(%.3f, %.3f, %.3f);\n",
+                    sw.x, sw.z, sw.rate);
         fprintf(f, "    g3d_watersim_set_evaporation(%.4f);\n", ws_evap);
-        fputs("    g3d_watersim_settle(60.0);   // el agua ya asentada, como en el editor\n", f);
+        /* PRE-LLENADO. En el editor es util ver el rio llenarse poco a poco; en
+           el juego casi nunca -- quieres empezar con el agua donde va a estar.
+           Estos segundos se simulan de golpe antes del primer frame. */
+        fprintf(f, "    g3d_watersim_settle(%.1f);   // el agua ya corrida al arrancar\n",
+                ws_prefill);
         // objetos + sus componentes (+ cuerpos fisicos Jolt)
         if (g3d_scatter_count() > 0)
             fprintf(f, "    g3d_set_lod(%.1f);   // malla de bajo poligono a lo lejos\n", sc_lod);
@@ -3721,6 +3875,11 @@ int main(int, char**) {
                     } else have_prev = false;
                 }
 
+                // Un trazo entero es UN paso de deshacer, asi que la
+                // instantanea se toma al pulsar, no mientras se arrastra.
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && sc_mode != 2)
+                    push_scatter_undo();
+
                 if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                     if (sc_mode == 2) {
                         // EDITAR: un clic elige el ejemplar mas cercano.
@@ -3974,7 +4133,19 @@ int main(int, char**) {
                 float th = g3d_editor_terrain_height(terrain, hit[0], hit[2]);
                 // rueda del raton -> ajusta el nivel manual (y desactiva el automatico)
                 float wheel = ImGui::GetIO().MouseWheel;
-                if (wheel != 0.0f) { lake_auto = false; lake_level += wheel * 1.0f; }
+                if (wheel != 0.0f) {
+                    /* Al pasar a manual, se parte del nivel que se esta VIENDO.
+                       Antes se partia del ultimo valor manual -- de fabrica -1.0 --
+                       asi que la primera vuelta de rueda mandaba el agua a una
+                       altura sin relacion con lo que habia en pantalla: casi
+                       siempre bajo tierra, donde ni se coloca ni se previsualiza.
+                       Desde fuera parecia que la rueda no hacia nada. */
+                    if (lake_auto) {
+                        lake_level = g3d_lake_spill_level_r(hit[0], hit[2], lake_radius) - 0.3f;
+                        lake_auto = false;
+                    }
+                    lake_level += wheel * 1.0f;
+                }
                 float lvl = lake_auto
                     ? g3d_lake_spill_level_r(hit[0], hit[2], lake_radius) - 0.3f   // borde LOCAL
                     : lake_level;
@@ -4396,6 +4567,12 @@ int main(int, char**) {
             ImGui::Separator();
         }
         {
+            ImGui::Checkbox("Mostrar FPS en el juego (depuracion)", &show_fps);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Escribe fps, llamadas de dibujo y triangulos en una\n"
+                                  "esquina del juego. Es como se ve QUE cuesta, en vez de\n"
+                                  "notar solo que va lento.");
+            ImGui::Separator();
             ImGui::SeparatorText(ICON_FA_SUN "  Sol y ciclo dia/noche");
             ImGui::Checkbox("El sol se mueve", &sun_cycle);
             if (sun_cycle) {
@@ -4472,6 +4649,7 @@ int main(int, char**) {
                     ch |= ImGui::SliderFloat("hasta", &kd, 40.0f, 1200.0f, "%.0f u");
                     ch |= ImGui::Checkbox("solido", &ks);
                     if (ch) {
+                        if (ImGui::IsItemActivated()) push_scatter_undo();
                         g3d_scatter_kind_apply(k, kw, kd, ks ? 1 : 0);
                         if (ks != (g3d_scatter_get_kind_solid(k) != 0))
                             g3d_scatter_build(1.0f);
@@ -4499,10 +4677,14 @@ int main(int, char**) {
                     ch |= ImGui::SliderFloat("Giro##one",   &v[3], 0.0f, 360.0f, "%.0f grados");
                     ch |= ImGui::DragFloat3("Posicion##one", v, 0.1f);
                     if (ch) {
+                        /* Solo al EMPEZAR a arrastrar el deslizador: si no, cada
+                           pixel de arrastre dejaria su propio paso. */
+                        if (ImGui::IsItemActivated()) push_scatter_undo();
                         g3d_scatter_set(sc_sel_k, sc_sel_i, v[0], v[1], v[2], v[3], v[4]);
                         g3d_scatter_build(1.0f);
                     }
                     if (ImGui::Button("Quitar este")) {
+                        push_scatter_undo();
                         g3d_scatter_remove(sc_sel_k, sc_sel_i);
                         sc_sel_k = sc_sel_i = -1;
                         g3d_scatter_build(1.0f);
@@ -4512,7 +4694,7 @@ int main(int, char**) {
                 }
             }
             ImGui::Text("%d plantados (%d especies)", g3d_scatter_count(), g3d_scatter_kinds());
-            if (ImGui::Button("Quitar toda la siembra")) { g3d_scatter_clear(); g3d_scatter_build(1.0f); }
+            if (ImGui::Button("Quitar toda la siembra")) { push_scatter_undo(); g3d_scatter_clear(); g3d_scatter_build(1.0f); }
             ImGui::Separator();
         }
         if (tool == T_VERTEX) {
@@ -4626,7 +4808,13 @@ int main(int, char**) {
                                "Luego haz clic dentro del hoyo: el agua lo rellena con su forma.");
             ImGui::Checkbox("Nivel automatico (hasta el borde)", &lake_auto);
             if (!lake_auto)
-                ImGui::SliderFloat("Nivel (altura)", &lake_level, -30.0f, 40.0f, "%.1f");
+                if (ImGui::SliderFloat("Nivel (altura)", &lake_level, -30.0f, 40.0f, "%.1f")) {
+                    /* El deslizador esta en el panel, o sea que el raton NO esta
+                       sobre la escena y la previsualizacion no se recompone sola.
+                       Sin esto habia que mover el nivel y luego volver a pasar el
+                       cursor por encima para ver el efecto. */
+                    lake_prev_key = -1;
+                }
             ImGui::SliderFloat("Profundidad", &lake_depth, 0.5f, 20.0f, "%.1f");
             ImGui::SliderFloat("Radio max", &lake_radius, 0.0f, 200.0f, lake_radius < 1.0f ? "sin limite" : "%.0f");
             ImGui::TextDisabled("Radio max acota el llenado a un circulo: para hoyos ABIERTOS\n"
@@ -4736,7 +4924,29 @@ int main(int, char**) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = el agua se QUEDA (llena y no se seca). Mas = rios finos / charcos que se secan.");
             if (ImGui::SliderFloat("Velocidad flujo", &ws_flow, 0.3f, 3.0f, "%.1f")) { if (g3d_watersim_active()) watersim_sync(false); }
             ImGui::Separator();
+            /* Si o no, sin numero: nadie sabe cuantos segundos hacen falta -- eso
+               depende del caudal y del terreno. Lo unico que se decide de verdad
+               es si el agua ya esta corrida al empezar o si arranca seca. */
+            bool prefill_on = (ws_prefill > 0.5f);
+            if (ImGui::Checkbox("Empezar con el agua ya corrida", &prefill_on))
+                ws_prefill = prefill_on ? 400.0f : 0.0f;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Marcado: el juego arranca con el rio ya lleno.\n"
+                                  "Sin marcar: arranca seco y se va llenando -- para una\n"
+                                  "presa que se abre o una inundacion que empieza cuando\n"
+                                  "el jugador hace algo.");
             ImGui::Text("Manantiales: %d", (int)wsources.size());
+            /* Un caudal constante sin salida NI evaporacion no se estabiliza
+               nunca: medido sobre un terreno real, el volumen crece sin parar
+               (60 s -> 360, 300 s -> 1591) y el agua acaba saliendose del cauce.
+               No es un fallo, es que no tiene a donde ir. */
+            if (!wsources.empty() && ws_evap < 0.005f) {
+                ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
+                    "Con evaporacion 0 el agua NO para de crecer:");
+                ImGui::TextWrapped("un manantial vierte sin parar y no tiene salida, "
+                                   "asi que antes o despues se sale del cauce. Sube la "
+                                   "evaporacion, baja el caudal, o dale salida al mar.");
+            }
             if (!wsources.empty() && ImGui::Button("Quitar todos los manantiales")) {
                 wsources.clear(); g3d_watersim_clear_sources(); g3d_watersim_shutdown();
                 status = "Simulacion de agua vaciada";

@@ -2480,13 +2480,16 @@ int main(int, char**) {
                   "    entity = 0;   // el agua es UNA: basta con no ser -1\n"
                   "    water.waves = %.4f; water.wave_len = %.4f; water.wave_speed = %.4f;\n"
                   "    water.foam = %.4f; water.surf = %.4f; water.splash = %.4f;\n"
+                  "    water.evaporation = %.4f;   // sube = sequia, baja = crecida\n"
+                  "    water.flow = %.3f;          // velocidad de la corriente\n"
                   "    target_x = %.2f;   // rumbo de las olas de playa, en grados\n"
                   "    LOOP\n"
                   "        // Sube water.waves y water.surf aqui y tienes tormenta.\n"
                   "        FRAME;\n"
                   "    END\n"
                   "END\n\n",
-                  w_amp, w_len, w_speed, water_foam, surf_height, splash_amount, surf_dir);
+                  w_amp, w_len, w_speed, water_foam, surf_height, splash_amount,
+                  ws_evap, ws_flow, surf_dir);
         }
 
         // ---- cada especie sembrada, como proceso BennuGD2 ----
@@ -2530,7 +2533,7 @@ int main(int, char**) {
         {
             std::string cp =
                 "PROCESS escena_camara(int cam)\n"
-                "PRIVATE float tx; float ty; float tz;\nEND\n"
+                "PRIVATE float tx; float ty; float tz; float dist;\nEND\n"
                 "BEGIN\n"
                 "    ctype = C_3D; csubtype = C3D_CAMERA;\n"
                 "    entity = cam;\n";
@@ -2547,10 +2550,22 @@ int main(int, char**) {
             if (follow) {
                 cp += "        g3d_entity_get_position(follow_ent, &tx, &ty, &tz);\n";
                 if (cam_mode == 1) {          // tercera persona
+                    /* Brazo de camara CON COLISION. Sin esto la camara se mete
+                       dentro de una loma y el personaje desaparece: se ve el
+                       interior del terreno. g3d_camera_safe_distance acorta el
+                       brazo hasta justo antes del estorbo -- terreno incluido,
+                       que es lo que el raycast normal no mira. */
                     snprintf(b, sizeof(b),
-                        "        x = tx; y = ty + %.3f; z = tz - %.3f;\n"
+                        "        // brazo de camara: se acorta si hay terreno o algo en medio\n"
+                        "        dist = g3d_camera_safe_distance(tx, ty + 1.0, tz,\n"
+                        "                                        0.0, %.3f, -%.3f,\n"
+                        "                                        %.3f, 0.6);\n"
+                        "        x = tx; y = ty + 1.0 + dist * %.4f; z = tz - dist * %.4f;\n"
                         "        target_x = tx; target_y = ty + 1.0; target_z = tz;\n",
-                        cam_height, gcam_dist);
+                        cam_height - 1.0f, gcam_dist,
+                        sqrtf((cam_height-1.0f)*(cam_height-1.0f) + gcam_dist*gcam_dist),
+                        (cam_height - 1.0f) / sqrtf((cam_height-1.0f)*(cam_height-1.0f) + gcam_dist*gcam_dist),
+                        gcam_dist / sqrtf((cam_height-1.0f)*(cam_height-1.0f) + gcam_dist*gcam_dist));
                 } else if (cam_mode == 2) {   // primera persona (FPS)
                     snprintf(b, sizeof(b),
                         "        // escena_yaw / escena_pitch los escribe el jugador con el raton\n"
@@ -4920,7 +4935,7 @@ int main(int, char**) {
                                "los precipicios, con fisica. Clic derecho quita el mas cercano.");
             if (ImGui::SliderFloat("Caudal fuente", &ws_rate, 0.5f, 30.0f, "%.1f")) {}
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Potencia del manantial: mas = llena mas rapido y hace mas rio.");
-            if (ImGui::SliderFloat("Evaporacion", &ws_evap, 0.0f, 0.4f, "%.2f")) { if (g3d_watersim_active()) watersim_sync(true); }
+            if (ImGui::SliderFloat("Evaporacion", &ws_evap, 0.0f, 0.12f, "%.3f")) { if (g3d_watersim_active()) watersim_sync(true); }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = el agua se QUEDA (llena y no se seca). Mas = rios finos / charcos que se secan.");
             if (ImGui::SliderFloat("Velocidad flujo", &ws_flow, 0.3f, 3.0f, "%.1f")) { if (g3d_watersim_active()) watersim_sync(false); }
             ImGui::Separator();

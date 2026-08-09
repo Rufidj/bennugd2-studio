@@ -2974,6 +2974,15 @@ int main(int, char**) {
 
     ViewportFBO vp;
     ViewportFBO prevFbo;      // FBO del visor de animaciones
+    /* Ventanita con lo que vera el jugador. Colocar la camara mirando un frustum
+       de alambre es adivinar: lo que importa es el encuadre, y eso solo se ve
+       renderizando de verdad desde ella. Cuesta un segundo pase, asi que viene
+       apagada y se enciende cuando se esta colocando la camara. */
+    ViewportFBO camFbo;
+    bool show_cam_view = false;
+    // Donde quedo la camara del juego este frame, para el pase de render.
+    float camview_p[3] = { 0, 0, 0 }, camview_t[3] = { 0, 0, 1 };
+    bool  camview_ok = false;
     float cam_yaw = 3.6f, cam_pitch = 0.35f, cam_dist = 14.0f;
     float vcam_target[3] = { 0.0f, 2.0f, 0.0f };   // pivote de la camara del viewport (se mueve con WASD)
     int vp_w = 1280, vp_h = 720;      // tamano de la ventana de viewport (px)
@@ -3663,9 +3672,10 @@ int main(int, char**) {
            posicion que arrastrar: la camara se calcula cada frame a partir del
            personaje, y cam_pos no se usa para nada. Poner el gizmo en cam_pos
            dejaba el gizmo lejisimos y sin efecto ninguno. */
-        auto cam_anchor = [&](float out[3], int *out_follow) -> bool {
+        auto cam_anchor = [&](float out[3], float look[3], int *out_follow) -> bool {
             if (cam_mode == 0) {
                 out[0]=cam_pos[0]; out[1]=cam_pos[1]; out[2]=cam_pos[2];
+                if (look) { look[0]=cam_look[0]; look[1]=cam_look[1]; look[2]=cam_look[2]; }
                 if (out_follow) *out_follow = -1;
                 return true;
             }
@@ -3676,18 +3686,22 @@ int main(int, char**) {
             float tx = objects[fi].x, ty = objects[fi].y, tz = objects[fi].z;
             if (cam_mode == 1)      { float ob = cam_orbit * 0.0174533f;
                                       out[0]=tx+sinf(ob)*gcam_dist; out[1]=ty+cam_height;
-                                      out[2]=tz-cosf(ob)*gcam_dist; }
+                                      out[2]=tz-cosf(ob)*gcam_dist;
+                                      if (look) { look[0]=tx; look[1]=ty+1.0f; look[2]=tz; } }
             else if (cam_mode == 2) {
                 float ry = objects[fi].ry, sf = sinf(ry), cf = cosf(ry);
                 out[0]=tx+sf*cam_fwd; out[1]=ty+cam_height; out[2]=tz+cf*cam_fwd;
+                if (look) { look[0]=tx+sf*(cam_fwd+10.0f); look[1]=ty+cam_height;
+                            look[2]=tz+cf*(cam_fwd+10.0f); }
             }
-            else                    { out[0]=tx; out[1]=ty+gcam_dist; out[2]=tz+0.5f; }
+            else                    { out[0]=tx; out[1]=ty+gcam_dist; out[2]=tz+0.5f;
+                                      if (look) { look[0]=tx; look[1]=ty; look[2]=tz; } }
             return true;
         };
 
         if (gizmo_tool && obj_sel < 0 && cam_gizmo) {
             float anchor[3]; int follow = -1;
-            if (cam_anchor(anchor, &follow)) {
+            if (cam_anchor(anchor, nullptr, &follow)) {
             float view[16], proj[16], model[16];
             g3d_editor_get_view(view); g3d_editor_get_proj(proj);
             float t[3] = { anchor[0], anchor[1], anchor[2] };
@@ -3779,28 +3793,14 @@ int main(int, char**) {
         // Dibuja un frustum amarillo donde quedara la camara y su linea de mira,
         // para saber donde se esta colocando (o desde donde seguira al objeto).
         {
-            float cp[3], ct[3]; bool have = true;
-            if (cam_mode == 0) {
-                cp[0]=cam_pos[0]; cp[1]=cam_pos[1]; cp[2]=cam_pos[2];
-                ct[0]=cam_look[0]; ct[1]=cam_look[1]; ct[2]=cam_look[2];
-            } else {
-                int fi = (cam_follow >= 0 && cam_follow < (int)objects.size()) ? cam_follow
-                         : (obj_sel >= 0 ? obj_sel : -1);
-                if (fi < 0) have = false;
-                else {
-                    float tx=objects[fi].x, ty=objects[fi].y, tz=objects[fi].z;
-                    if (cam_mode == 1)      { float ob = cam_orbit * 0.0174533f;
-                                              cp[0]=tx+sinf(ob)*gcam_dist; cp[1]=ty+cam_height;
-                                              cp[2]=tz-cosf(ob)*gcam_dist;
-                                              ct[0]=tx; ct[1]=ty+1.0f; ct[2]=tz; }
-                    else if (cam_mode == 2) {
-                        float ry = objects[cam_follow].ry, sf = sinf(ry), cf = cosf(ry);
-                        cp[0]=tx+sf*cam_fwd; cp[1]=ty+cam_height; cp[2]=tz+cf*cam_fwd;
-                        ct[0]=tx+sf*(cam_fwd+10.0f); ct[1]=ty+cam_height; ct[2]=tz+cf*(cam_fwd+10.0f);
-                    }
-                    else                    { cp[0]=tx; cp[1]=ty+gcam_dist; cp[2]=tz+0.5f; ct[0]=tx; ct[1]=ty; ct[2]=tz; }
-                }
-            }
+            /* El mismo calculo que usan el gizmo y la ventana de previsualizacion.
+               Estaba repetido aqui, y ESA es la razon de que el gizmo saliera en
+               otro sitio: dos copias de la misma cuenta que dejaron de coincidir.
+               Con una sola funcion ya no pueden discrepar. */
+            float cp[3], ct[3];
+            bool have = cam_anchor(cp, ct, nullptr);
+            camview_ok = have;
+            if (have) { for (int q = 0; q < 3; q++) { camview_p[q] = cp[q]; camview_t[q] = ct[q]; } }
             if (have) {
                 float fwd[3]={ct[0]-cp[0],ct[1]-cp[1],ct[2]-cp[2]};
                 float fl=sqrtf(fwd[0]*fwd[0]+fwd[1]*fwd[1]+fwd[2]*fwd[2]); if(fl<1e-4f)fl=1;
@@ -5387,6 +5387,13 @@ int main(int, char**) {
         }
         ImGui::SeparatorText("Camara");
         ImGui::SliderFloat("Distancia", &cam_dist, 5.0f, 60.0f);
+        ImGui::Checkbox("Ver lo que vera el jugador", &show_cam_view);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Abre una ventanita con la escena renderizada DESDE la\n"
+                              "camara del juego, para colocarla mirando el encuadre\n"
+                              "y no un frustum de alambre.\n"
+                              "Cuesta un segundo pase de render: si van justas las\n"
+                              "fps, apagala.");
         if (ImGui::Checkbox("Mover la camara con el gizmo", &cam_gizmo) && cam_gizmo) {
             /* La casilla tiene que bastarse sola. El gizmo pedia ADEMAS la
                herramienta Mover activa y ningun objeto elegido -- dos condiciones
@@ -5399,7 +5406,7 @@ int main(int, char**) {
                Y ha de ser la camara DE VERDAD: siguiendo a un personaje, cam_pos
                es un valor muerto y la vista se iba a donde no habia nada. */
             float anchor[3];
-            if (cam_anchor(anchor, nullptr)) {
+            if (cam_anchor(anchor, nullptr, nullptr)) {
                 vcam_target[0] = anchor[0];
                 vcam_target[1] = anchor[1];
                 vcam_target[2] = anchor[2];
@@ -5551,6 +5558,35 @@ int main(int, char**) {
             ImGui::End();
         }
 
+        /* --- VENTANITA: lo que vera el jugador ---
+           El frustum de alambre dice donde esta la camara, pero no como queda el
+           encuadre. Esto es la escena renderizada de verdad desde ella, mientras
+           se coloca. */
+        if (show_cam_view) {
+            ImGui::SetNextWindowSize(ImVec2(400, 260), ImGuiCond_FirstUseEver);
+            ImGui::Begin("Vista de la camara", &show_cam_view);
+            if (!camview_ok) {
+                ImGui::TextColored(ImVec4(1,0.7f,0.2f,1), "La camara sigue a un objeto");
+                ImGui::TextWrapped("Elige a cual en el panel de Camara y aqui saldra su vista.");
+            } else {
+                ImVec2 av = ImGui::GetContentRegionAvail();
+                if (av.y < 40.0f) av.y = 40.0f;
+                /* Se respeta la proporcion de la ventana del juego: si aqui se
+                   viera mas ancho de lo que se vera jugando, el encuadre que
+                   eliges no es el que sale. */
+                float ar = 16.0f / 9.0f;
+                float w = av.x, h = w / ar;
+                if (h > av.y) { h = av.y; w = h * ar; }
+                if (w < 16.0f) { w = 16.0f; h = 9.0f; }
+                camFbo.resize((int)w, (int)h);
+                ImGui::Image((ImTextureID)(intptr_t)camFbo.tex, ImVec2(w, h), ImVec2(0,0), ImVec2(1,1));
+                const char *nm[4] = { "fija", "tercera persona", "primera persona", "cenital" };
+                ImGui::TextDisabled("%s%s", nm[cam_mode & 3],
+                                    (cam_mode == 1 && cam_25d) ? "  -  2.5D" : "");
+            }
+            ImGui::End();
+        }
+
         // --- VISOR DE ANIMACIONES (doble clic en un asset/objeto) ---
         if (show_anim && anim_model) {
             ImGui::SetNextWindowSize(ImVec2(560, 520), ImGuiCond_FirstUseEver);
@@ -5681,6 +5717,30 @@ int main(int, char**) {
             g3d_renderer_render();
             g3d_scene_set_active(scene);          // restaurar la escena/camara principal
             g3d_camera_set_active(cam);
+        }
+
+        /* ---- VENTANITA: la escena vista DESDE LA CAMARA DEL JUEGO ----
+           Se reutiliza la camara del editor movida a su sitio, no una segunda:
+           asi lo que se ve aqui es exactamente lo que dibuja el motor. La camara
+           del editor se recalcula entera al principio del frame siguiente
+           (vcam_target + yaw + pitch + distancia), asi que moverla aqui no deja
+           rastro y no hace falta guardar nada. */
+        if (show_cam_view && camview_ok && camFbo.w > 0) {
+            g3d_camera_set_position(cam, camview_p[0], camview_p[1], camview_p[2]);
+            g3d_camera_look_at(cam, camview_t[0], camview_t[1], camview_t[2], 0.0f, 1.0f, 0.0f);
+            g3d_editor_set_aspect(camFbo.h > 0 ? (float)camFbo.w / (float)camFbo.h : 1.777f);
+            g3d_renderer_set_target(camFbo.fbo);
+            g3d_renderer_set_viewport_physical(0, 0, (unsigned)camFbo.w, (unsigned)camFbo.h);
+            glBindFramebuffer(GL_FRAMEBUFFER, camFbo.fbo);
+            glViewport(0, 0, camFbo.w, camFbo.h);
+            g3d_renderer_render();
+            /* Y se devuelve donde estaba: si no, el viewport de abajo se dibuja
+               desde la camara del juego y parece que el editor ha dado un salto. */
+            float rx = vcam_target[0] + sinf(cam_yaw) * cosf(cam_pitch) * cam_dist;
+            float ry = vcam_target[1] + sinf(cam_pitch) * cam_dist + 1.0f;
+            float rz = vcam_target[2] + cosf(cam_yaw) * cosf(cam_pitch) * cam_dist;
+            g3d_camera_set_position(cam, rx, ry, rz);
+            g3d_camera_look_at(cam, vcam_target[0], vcam_target[1], vcam_target[2], 0.0f, 1.0f, 0.0f);
         }
 
         // ---- render del MOTOR a la textura del viewport ----

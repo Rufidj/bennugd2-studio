@@ -2134,6 +2134,12 @@ int main(int, char**) {
                 void* m = load_model(asset);
                 if (!m) continue;
                 int e = g3d_model_spawn(scene, m, x, y, z, 0.0f, 0.0f);
+                /* SOLIDO, igual que al colocarlo a mano. Faltaba justo aqui: lo
+                   que colocabas en la sesion quedaba marcado, pero al reabrir la
+                   escena no, y entonces el agua dejaba de verlo. Sin esta marca
+                   el rio no rodea la roca, no salpica en ella y la cascada no se
+                   parte -- las tres cosas leen la misma lista. */
+                if (e >= 0) g3d_entity_impl_set_collider(e, 1);
                 SObj o; o.asset = asset; o.name = name; o.entity = e;
                 o.x = x; o.y = y; o.z = z; o.ry = ry; o.scale = sc;
                 // fisica opcional (escenas antiguas no la traen -> se queda por defecto)

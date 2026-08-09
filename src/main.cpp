@@ -393,6 +393,14 @@ int main(int, char**) {
     float cam_look[3] = { 0.0f,  2.0f,   0.0f };  // punto de mira (modo Fija)
     float gcam_dist   = 8.0f;                   // distancia detras/altura del objetivo
     float cam_height = 3.0f;                    // altura de la camara sobre el objetivo
+    // Alrededor de que angulo orbita la camara al personaje, en grados. 0 es a la
+    // espalda, que es lo de siempre; 90 lo pone de PERFIL, que es como se ve un
+    // plataformas 2.5D. Sin este angulo la tercera persona estaba clavada detras y
+    // no habia forma de pedir otra cosa.
+    float cam_orbit = 0.0f;
+    // Plataformas de perfil: la profundidad se bloquea a proposito y solo se anda
+    // por el eje de la pantalla. Sin esto el personaje se va al fondo y se pierde.
+    bool  cam_25d = false;
     // FPS: cuanto se adelanta la camara respecto al centro del personaje. Sin esto
     // queda DENTRO del modelo y se ven las caras interiores de la cabeza y el
     // torso. Adelantada lo justo, se siguen viendo los brazos y las piernas.
@@ -1007,6 +1015,7 @@ int main(int, char**) {
     int tool = T_SELECT;
     int  zone_layer = 0;      // T_ZONE: capa (0..3) que se pinta
     bool zone_erase = false;  // T_ZONE: borrar en vez de pintar
+    bool  cam_gizmo = false;   // el gizmo mueve la CAMARA cuando no hay objeto elegido
     float brush_r = 30.0f, brush_str = 0.5f;   // pincel de terreno
     // --- T_VERTEX: tocar la rejilla vertice a vertice ---
     int   vx_px     = 14;      // separacion minima en pixeles entre lineas de la rejilla
@@ -1569,13 +1578,56 @@ int main(int, char**) {
                 "        wx = sin(facing) * adel + cos(facing) * lat;\n"
                 "        wz = cos(facing) * adel - sin(facing) * lat;\n";
             } else {
-                fmt +=
+                /* Los controles van RESPECTO A LA CAMARA, no a los ejes del mundo.
+                   Estaban clavados a los ejes (W = +Z siempre), que solo coincide
+                   con la camara a la espalda: girada de perfil, la D llevaba al
+                   personaje HACIA la camara en vez de a la derecha de la pantalla.
+                   El angulo es constante en la escena, asi que los factores se
+                   calculan aqui una vez y no en cada frame. */
+                /* La derecha de la pantalla es cross(mirada, arriba), que es lo que
+                   hace mat4_look_at. Medido proyectando un paso con la matematica
+                   del motor: con la camara a la espalda sale -X, o sea que la A y
+                   la D iban CAMBIADAS desde siempre. El cenital se midio aparte y
+                   ese si estaba bien, por eso solo se corrige la tercera persona. */
+                float ob = cam_orbit * 0.0174533f;
+                float fx = -sinf(ob), fz =  cosf(ob);   // hacia donde mira la camara
+                float rx = -cosf(ob), rz = -sinf(ob);   // la derecha de la PANTALLA
+                char mv[1400];
+                if (cam_mode == 1 && cam_25d) {
+                    snprintf(mv, sizeof(mv),
+                "        // ---------- CONTROLES (2.5D: solo izquierda y derecha) ----------\n"
+                "        // Plataformas de perfil: la profundidad esta bloqueada a proposito.\n"
+                "        // Si quieres que ademas se pueda entrar y salir del plano, anade\n"
+                "        // aqui el eje que falta (adel) como en la plantilla normal.\n"
+                "        lat = 0.0;\n"
+                "        IF (key(_D) OR key(_RIGHT)) lat = lat + 1.0; END\n"
+                "        IF (key(_A) OR key(_LEFT))  lat = lat - 1.0; END\n"
+                "        wx = lat * %.4f; wz = lat * %.4f;   // eje de la pantalla\n",
+                        rx, rz);
+                } else if (cam_mode == 1) {
+                    snprintf(mv, sizeof(mv),
+                "        // ---------- CONTROLES (respecto a la camara) ----------\n"
+                "        // La camara mira al personaje desde %.0f grados, asi que W lleva\n"
+                "        // hacia el fondo DE LA PANTALLA y D a su derecha, no a los ejes\n"
+                "        // del mundo. Los factores son el seno y el coseno de ese angulo.\n"
+                "        adel = 0.0; lat = 0.0;\n"
+                "        IF (key(_W) OR key(_UP))    adel = adel + 1.0; END\n"
+                "        IF (key(_S) OR key(_DOWN))  adel = adel - 1.0; END\n"
+                "        IF (key(_D) OR key(_RIGHT)) lat  = lat  + 1.0; END\n"
+                "        IF (key(_A) OR key(_LEFT))  lat  = lat  - 1.0; END\n"
+                "        wx = adel * %.4f + lat * %.4f;\n"
+                "        wz = adel * %.4f + lat * %.4f;\n",
+                        cam_orbit, fx, rx, fz, rz);
+                } else {
+                    snprintf(mv, sizeof(mv),
                 "        // ---------- CONTROLES ----------\n"
                 "        wx = 0.0; wz = 0.0;\n"
                 "        IF (key(_W)) wz = wz + 1.0; END\n"
                 "        IF (key(_S)) wz = wz - 1.0; END\n"
                 "        IF (key(_D)) wx = wx + 1.0; END\n"
-                "        IF (key(_A)) wx = wx - 1.0; END\n";
+                "        IF (key(_A)) wx = wx - 1.0; END\n");
+                }
+                fmt += mv;
             }
             fmt +=
                 "        spd = %.3f;\n"
@@ -1881,10 +1933,10 @@ int main(int, char**) {
         fprintf(f, "FLOWCFG %.4f %.4f %.1f\n", ws_evap, ws_rate, ws_prefill);
         fprintf(f, "SUN %d %.2f %.2f %.3f %.2f %.2f\n",
                 sun_cycle ? 1 : 0, sun_day_sec, sun_hour, sun_intensity, sun_azim, sun_elev);
-        fprintf(f, "CAMERA %d %d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %d\n",
+        fprintf(f, "CAMERA %d %d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %d %.2f %d\n",
                 cam_mode, cam_follow, cam_pos[0], cam_pos[1], cam_pos[2],
                 cam_look[0], cam_look[1], cam_look[2], gcam_dist, cam_height, cam_fwd, cam_sens,
-                shadow_res);
+                shadow_res, cam_orbit, cam_25d ? 1 : 0);
         auto fprint_fx = [&](const WaterFX& x) {
             fprintf(f, " FX %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %d",
                     x.amp, x.len, x.speed, x.deep[0], x.deep[1], x.deep[2],
@@ -2063,13 +2115,16 @@ int main(int, char**) {
                          &w.arc) >= 13) {
                   w.fx.tex = wt; waterfalls.push_back(w); continue; } }
             int cm, cfol, sres = 2048; float px,py,pz, lx,ly,lz, cd, ch, cf = 0.45f, cs = 120.0f;
-            int nleidos = sscanf(line, "CAMERA %d %d %f %f %f %f %f %f %f %f %f %f %d",
-                       &cm, &cfol, &px,&py,&pz, &lx,&ly,&lz, &cd, &ch, &cf, &cs, &sres);
+            float corb = 0.0f;   // las escenas de antes van a la espalda, angulo 0
+            int c25 = 0;
+            int nleidos = sscanf(line, "CAMERA %d %d %f %f %f %f %f %f %f %f %f %f %d %f %d",
+                       &cm, &cfol, &px,&py,&pz, &lx,&ly,&lz, &cd, &ch, &cf, &cs, &sres, &corb, &c25);
             if (nleidos >= 10) {   // las escenas de antes no traen el adelanto
                 cam_mode = cm; cam_follow = cfol;
                 cam_pos[0]=px; cam_pos[1]=py; cam_pos[2]=pz;
                 cam_look[0]=lx; cam_look[1]=ly; cam_look[2]=lz;
                 gcam_dist = cd; cam_height = ch; cam_fwd = cf; cam_sens = cs;
+                cam_orbit = corb; cam_25d = (c25 != 0);
                 shadow_res = sres; g3d_renderer_set_shadow_resolution((unsigned)shadow_res);
                 continue;
             }
@@ -2533,7 +2588,7 @@ int main(int, char**) {
         {
             std::string cp =
                 "PROCESS escena_camara(int cam)\n"
-                "PRIVATE float tx; float ty; float tz; float dist;\nEND\n"
+                "PRIVATE float tx; float ty; float tz; float dist; float libre;\nEND\n"
                 "BEGIN\n"
                 "    ctype = C_3D; csubtype = C3D_CAMERA;\n"
                 "    entity = cam;\n";
@@ -2546,6 +2601,18 @@ int main(int, char**) {
                     cam_look[0], cam_look[1], cam_look[2]);
                 cp += b;
             }
+            /* El brazo de camara ya no apunta solo hacia atras: lleva el angulo de
+               orbita, que es lo que permite ver al personaje de perfil (2.5D) o de
+               frente sin tocar el codigo a mano. Con angulo 0 sale exactamente lo
+               de antes. */
+            float ob_rad = cam_orbit * 0.0174533f;
+            float armx = sinf(ob_rad) * gcam_dist;
+            float army = cam_height - 1.0f;
+            float armz = -cosf(ob_rad) * gcam_dist;
+            float armlen = sqrtf(armx*armx + army*army + armz*armz);
+            if (armlen < 0.01f) armlen = 0.01f;
+            if (follow && cam_mode == 1) { snprintf(b, sizeof(b),
+                    "    dist = %.3f;   // el brazo empieza entero\n", armlen); cp += b; }
             cp += "    LOOP\n";
             if (follow) {
                 cp += "        g3d_entity_get_position(follow_ent, &tx, &ty, &tz);\n";
@@ -2556,16 +2623,20 @@ int main(int, char**) {
                        brazo hasta justo antes del estorbo -- terreno incluido,
                        que es lo que el raycast normal no mira. */
                     snprintf(b, sizeof(b),
-                        "        // brazo de camara: se acorta si hay terreno o algo en medio\n"
-                        "        dist = g3d_camera_safe_distance(tx, ty + 1.0, tz,\n"
-                        "                                        0.0, %.3f, -%.3f,\n"
-                        "                                        %.3f, 0.6);\n"
-                        "        x = tx; y = ty + 1.0 + dist * %.4f; z = tz - dist * %.4f;\n"
+                        "        // Brazo de camara: se acorta si hay terreno o algo en medio.\n"
+                        "        libre = g3d_camera_safe_distance(tx, ty + 1.0, tz,\n"
+                        "                                         %.4f, %.4f, %.4f,\n"
+                        "                                         %.3f, 0.6);\n"
+                        "        // Entra DEPRISA y sale despacio. Al reves se ve el interior\n"
+                        "        // de la loma un fotograma; y volviendo de golpe al salir, la\n"
+                        "        // camara pega un tiron cada vez que rozas una roca.\n"
+                        "        IF (libre < dist) dist = libre;   // estorbo: al sitio, ya\n"
+                        "        ELSE dist = dist + (libre - dist) * 0.08; END   // libre: despacio\n"
+                        "        x = tx + dist * %.4f; y = ty + 1.0 + dist * %.4f;\n"
+                        "        z = tz + dist * %.4f;\n"
                         "        target_x = tx; target_y = ty + 1.0; target_z = tz;\n",
-                        cam_height - 1.0f, gcam_dist,
-                        sqrtf((cam_height-1.0f)*(cam_height-1.0f) + gcam_dist*gcam_dist),
-                        (cam_height - 1.0f) / sqrtf((cam_height-1.0f)*(cam_height-1.0f) + gcam_dist*gcam_dist),
-                        gcam_dist / sqrtf((cam_height-1.0f)*(cam_height-1.0f) + gcam_dist*gcam_dist));
+                        armx, army, armz, armlen,
+                        armx / armlen, army / armlen, armz / armlen);
                 } else if (cam_mode == 2) {   // primera persona (FPS)
                     snprintf(b, sizeof(b),
                         "        // escena_yaw / escena_pitch los escribe el jugador con el raton\n"
@@ -3042,12 +3113,25 @@ int main(int, char**) {
         if (sim_pch>=0 && sim_player_idx>=0 && sim_player_idx<(int)objects.size()){
             auto& p=objects[sim_player_idx];
             sim_pprevx=g3d_char_x(sim_pch); sim_pprevz=g3d_char_z(sim_pch);
+            /* Mismos controles que el juego generado: relativos a la CAMARA, para
+               que probar dentro del editor se parezca a jugar. Con la camara a la
+               espalda (angulo 0) sale exactamente lo de siempre. */
             float wx=0,wz=0;
             if (!io.WantTextInput){
-                if (ImGui::IsKeyDown(ImGuiKey_W)) wz+=1.0f;
-                if (ImGui::IsKeyDown(ImGuiKey_S)) wz-=1.0f;
-                if (ImGui::IsKeyDown(ImGuiKey_D)) wx+=1.0f;
-                if (ImGui::IsKeyDown(ImGuiKey_A)) wx-=1.0f;
+                float adel=0, lat=0;
+                if (ImGui::IsKeyDown(ImGuiKey_W) || ImGui::IsKeyDown(ImGuiKey_UpArrow))    adel+=1.0f;
+                if (ImGui::IsKeyDown(ImGuiKey_S) || ImGui::IsKeyDown(ImGuiKey_DownArrow))  adel-=1.0f;
+                if (ImGui::IsKeyDown(ImGuiKey_D) || ImGui::IsKeyDown(ImGuiKey_RightArrow)) lat +=1.0f;
+                if (ImGui::IsKeyDown(ImGuiKey_A) || ImGui::IsKeyDown(ImGuiKey_LeftArrow))  lat -=1.0f;
+                if (cam_mode == 1 && cam_25d) adel = 0.0f;   // 2.5D: sin profundidad
+                if (cam_mode == 1) {
+                    /* Igual que el juego: la derecha es la de la PANTALLA. */
+                    float ob = cam_orbit * 0.0174533f;
+                    wx = adel * -sinf(ob) + lat * -cosf(ob);
+                    wz = adel *  cosf(ob) + lat * -sinf(ob);
+                } else {
+                    wx = lat; wz = adel;   // fija y cenital: ejes del mundo, como estaban
+                }
             }
             float spd = (io.KeyShift ? p.run_speed : p.walk_speed);
             wl=sqrtf(wx*wx+wz*wz);
@@ -3099,7 +3183,9 @@ int main(int, char**) {
             g3d_camera_set_position(cam,cam_pos[0],cam_pos[1],cam_pos[2]);
             g3d_camera_look_at(cam,cam_look[0],cam_look[1],cam_look[2],0.0f,1.0f,0.0f);
         } else if (cam_mode==1){
-            g3d_camera_set_position(cam,tx,ty+cam_height,tz-gcam_dist);
+            float ob = cam_orbit * 0.0174533f;
+            g3d_camera_set_position(cam, tx + sinf(ob)*gcam_dist, ty+cam_height,
+                                         tz - cosf(ob)*gcam_dist);
             g3d_camera_look_at(cam,tx,ty+1.0f,tz,0.0f,1.0f,0.0f);
         } else if (cam_mode==2){
             // igual que en el juego: mira hacia donde mira, y adelantada para no
@@ -3566,6 +3652,129 @@ int main(int, char**) {
             }
         }
 
+        /* ---- GIZMO DE LA CAMARA ----
+           Colocar la camara a base de deslizadores es adivinar. Con el gizmo se
+           arrastra donde se quiere y se ve el frustum moverse: el mismo gesto que
+           para un objeto, que es lo que uno espera.
+           Con Mover se lleva el ojo; con Rotar se gira el punto de mira
+           alrededor de el, que es lo que de verdad se quiere decidir. */
+        /* Donde esta DE VERDAD la camara del juego, y a que sigue.
+           En modo libre es cam_pos. En los modos que siguen a un objeto NO hay
+           posicion que arrastrar: la camara se calcula cada frame a partir del
+           personaje, y cam_pos no se usa para nada. Poner el gizmo en cam_pos
+           dejaba el gizmo lejisimos y sin efecto ninguno. */
+        auto cam_anchor = [&](float out[3], int *out_follow) -> bool {
+            if (cam_mode == 0) {
+                out[0]=cam_pos[0]; out[1]=cam_pos[1]; out[2]=cam_pos[2];
+                if (out_follow) *out_follow = -1;
+                return true;
+            }
+            int fi = (cam_follow >= 0 && cam_follow < (int)objects.size()) ? cam_follow
+                     : (obj_sel >= 0 ? obj_sel : -1);
+            if (fi < 0) return false;
+            if (out_follow) *out_follow = fi;
+            float tx = objects[fi].x, ty = objects[fi].y, tz = objects[fi].z;
+            if (cam_mode == 1)      { float ob = cam_orbit * 0.0174533f;
+                                      out[0]=tx+sinf(ob)*gcam_dist; out[1]=ty+cam_height;
+                                      out[2]=tz-cosf(ob)*gcam_dist; }
+            else if (cam_mode == 2) {
+                float ry = objects[fi].ry, sf = sinf(ry), cf = cosf(ry);
+                out[0]=tx+sf*cam_fwd; out[1]=ty+cam_height; out[2]=tz+cf*cam_fwd;
+            }
+            else                    { out[0]=tx; out[1]=ty+gcam_dist; out[2]=tz+0.5f; }
+            return true;
+        };
+
+        if (gizmo_tool && obj_sel < 0 && cam_gizmo) {
+            float anchor[3]; int follow = -1;
+            if (cam_anchor(anchor, &follow)) {
+            float view[16], proj[16], model[16];
+            g3d_editor_get_view(view); g3d_editor_get_proj(proj);
+            float t[3] = { anchor[0], anchor[1], anchor[2] };
+            float r[3] = { 0.0f, 0.0f, 0.0f };
+            float sc[3] = { 1.0f, 1.0f, 1.0f };
+            /* El giro se expresa como el rumbo actual hacia el objetivo, para que
+               al rotar el gizmo la mira se mueva desde donde ya estaba. */
+            float dx = cam_look[0] - cam_pos[0];
+            float dz = cam_look[2] - cam_pos[2];
+            float dy = cam_look[1] - cam_pos[1];
+            float horiz = sqrtf(dx*dx + dz*dz);
+            r[1] = atan2f(dx, dz) * 57.29578f;
+            r[0] = -atan2f(dy, horiz > 1e-4f ? horiz : 1e-4f) * 57.29578f;
+            /* En tercera persona SI se puede girar: es lo que decide desde donde
+               se ve al personaje -- a la espalda, de perfil para un plataformas
+               2.5D, o de frente. En primera persona y cenital el angulo lo manda
+               el modo, asi que ahi solo queda mover.
+               Rotando, el gizmo arranca desde el angulo de orbita actual. */
+            ImGuizmo::OPERATION op = (cam_mode == 0 || cam_mode == 1)
+                                   ? gizmo_op : ImGuizmo::TRANSLATE;
+            if (cam_mode == 1) { r[0] = 0.0f; r[1] = cam_orbit; r[2] = 0.0f; }
+            ImGuizmo::RecomposeMatrixFromComponents(t, r, sc, model);
+            ImGuizmo::Manipulate(view, proj, op, ImGuizmo::WORLD, model);
+            if (ImGuizmo::IsUsing()) {
+                ImGuizmo::DecomposeMatrixToComponents(model, t, r, sc);
+                if (cam_mode == 0) {
+                    cam_pos[0] = t[0]; cam_pos[1] = t[1]; cam_pos[2] = t[2];
+                    /* La distancia al objetivo se conserva: girar apunta a otro
+                       sitio, no acerca ni aleja. */
+                    float dist = sqrtf(dx*dx + dy*dy + dz*dz);
+                    if (dist < 0.1f) dist = 0.1f;
+                    float yaw = r[1] * 0.0174533f, pitch = r[0] * 0.0174533f;
+                    cam_look[0] = cam_pos[0] + sinf(yaw) * cosf(pitch) * dist;
+                    cam_look[1] = cam_pos[1] - sinf(pitch) * dist;
+                    cam_look[2] = cam_pos[2] + cosf(yaw) * cosf(pitch) * dist;
+                } else {
+                    /* Aqui el arrastre se traduce a los parametros que SI manda el
+                       modo: a que altura va la camara y cuanto se separa. Es lo
+                       que uno quiere ajustar a ojo de una camara de seguimiento. */
+                    float tx = objects[follow].x, ty = objects[follow].y, tz = objects[follow].z;
+                    if (cam_mode == 1) {
+                        cam_height = t[1] - ty;
+                        if (gizmo_op == ImGuizmo::ROTATE) {
+                            /* Girando se cambia SOLO el angulo: la distancia se
+                               conserva, que es lo que uno espera al rotar. */
+                            cam_orbit = r[1];
+                        } else {
+                            /* Arrastrando, la posicion se lee como orbita: cuanto
+                               se ha separado y desde que lado se mira. Asi el
+                               mismo gesto sirve para ponerla de perfil. */
+                            float ax = t[0] - tx, az = t[2] - tz;
+                            float rad = sqrtf(ax*ax + az*az);
+                            if (rad > 0.05f) {
+                                gcam_dist = rad;
+                                cam_orbit = atan2f(ax, -az) * 57.29578f;
+                            }
+                        }
+                        while (cam_orbit < 0.0f)   cam_orbit += 360.0f;
+                        while (cam_orbit >= 360.0f) cam_orbit -= 360.0f;
+                    } else if (cam_mode == 2) {
+                        float ry = objects[follow].ry, sf = sinf(ry), cf = cosf(ry);
+                        cam_height = t[1] - ty;
+                        cam_fwd    = (t[0] - tx) * sf + (t[2] - tz) * cf;
+                    } else {
+                        gcam_dist  = t[1] - ty;
+                    }
+                    /* Solo se limita lo que este arrastre ha tocado: pasarle un
+                       minimo a un parametro que ni se movio lo cambiaria a
+                       traicion. */
+                    if (cam_mode != 2 && gcam_dist  < 0.5f) gcam_dist  = 0.5f;
+                    if (cam_mode != 3 && cam_height < 0.1f) cam_height = 0.1f;
+                    if (cam_mode == 3)
+                        status = "Camara cenital: altura " + std::to_string((int)gcam_dist);
+                    else if (cam_mode == 1)
+                        status = "Camara: altura " + std::to_string((int)cam_height) +
+                                 "  distancia " + std::to_string((int)gcam_dist) +
+                                 "  angulo " + std::to_string((int)cam_orbit) + " grados";
+                    else
+                        status = "Camara: altura " + std::to_string((int)cam_height) +
+                                 "  adelanto " + std::to_string((int)cam_fwd);
+                }
+            }
+            } else {
+                status = "El gizmo de camara necesita un objeto al que seguir";
+            }
+        }
+
         // ---- PREVIEW de la camara principal del juego en el viewport ----
         // Dibuja un frustum amarillo donde quedara la camara y su linea de mira,
         // para saber donde se esta colocando (o desde donde seguira al objeto).
@@ -3580,7 +3789,10 @@ int main(int, char**) {
                 if (fi < 0) have = false;
                 else {
                     float tx=objects[fi].x, ty=objects[fi].y, tz=objects[fi].z;
-                    if (cam_mode == 1)      { cp[0]=tx; cp[1]=ty+cam_height; cp[2]=tz-gcam_dist; ct[0]=tx; ct[1]=ty+1.0f; ct[2]=tz; }
+                    if (cam_mode == 1)      { float ob = cam_orbit * 0.0174533f;
+                                              cp[0]=tx+sinf(ob)*gcam_dist; cp[1]=ty+cam_height;
+                                              cp[2]=tz-cosf(ob)*gcam_dist;
+                                              ct[0]=tx; ct[1]=ty+1.0f; ct[2]=tz; }
                     else if (cam_mode == 2) {
                         float ry = objects[cam_follow].ry, sf = sinf(ry), cf = cosf(ry);
                         cp[0]=tx+sf*cam_fwd; cp[1]=ty+cam_height; cp[2]=tz+cf*cam_fwd;
@@ -4522,6 +4734,30 @@ int main(int, char**) {
                 } else {
                     ImGui::SliderFloat("Distancia", &gcam_dist, 1.0f, 30.0f, "%.1f");
                     ImGui::SliderFloat("Altura", &cam_height, 0.0f, 20.0f, "%.1f");
+                    /* Desde donde se mira al personaje. Estaba clavada a su
+                       espalda, y eso deja fuera un plataformas 2.5D, que quiere
+                       verlo de perfil. */
+                    ImGui::SliderFloat("Angulo", &cam_orbit, 0.0f, 360.0f, "%.0f grados");
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("0 = a la espalda (lo de siempre)\n"
+                                          "90 / 270 = de PERFIL, para un 2.5D\n"
+                                          "180 = de frente");
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Perfil")) { cam_orbit = 90.0f; cam_25d = true; }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Espalda")) { cam_orbit = 0.0f; cam_25d = false; }
+                    /* Girar la camara no basta: con los controles pegados a los ejes
+                       del mundo, de perfil la D llevaba al personaje hacia el fondo.
+                       Esto ata los controles a la pantalla y, ademas, bloquea la
+                       profundidad, que es lo que hace que sea un plataformas. */
+                    ImGui::Checkbox("Plataformas 2.5D (bloquear profundidad)", &cam_25d);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Solo izquierda/derecha y salto: el personaje no puede\n"
+                                          "irse al fondo. Los controles se generan RESPECTO A LA\n"
+                                          "CAMARA, asi que la D siempre lleva a la derecha de la\n"
+                                          "pantalla, mires desde donde mires.\n"
+                                          "Ojo: afecta a la plantilla del jugador al CREARLA. Si su\n"
+                                          "script ya existe, borralo para regenerarlo.");
                 }
             }
             if (cam_follow < 0)
@@ -5151,6 +5387,36 @@ int main(int, char**) {
         }
         ImGui::SeparatorText("Camara");
         ImGui::SliderFloat("Distancia", &cam_dist, 5.0f, 60.0f);
+        if (ImGui::Checkbox("Mover la camara con el gizmo", &cam_gizmo) && cam_gizmo) {
+            /* La casilla tiene que bastarse sola. El gizmo pedia ADEMAS la
+               herramienta Mover activa y ningun objeto elegido -- dos condiciones
+               invisibles, asi que marcabas y no pasaba nada. */
+            if (tool != T_MOVE && tool != T_ROTATE && tool != T_SCALE) tool = T_MOVE;
+            obj_sel = -1;
+            /* Y se lleva la vista HASTA la camara. Estaba en (0,45,-90) mientras
+               tu mirabas a otro sitio: el gizmo se dibujaba fuera de pantalla, o
+               sea que "no aparecia" aunque el codigo corriera perfectamente.
+               Y ha de ser la camara DE VERDAD: siguiendo a un personaje, cam_pos
+               es un valor muerto y la vista se iba a donde no habia nada. */
+            float anchor[3];
+            if (cam_anchor(anchor, nullptr)) {
+                vcam_target[0] = anchor[0];
+                vcam_target[1] = anchor[1];
+                vcam_target[2] = anchor[2];
+                if (cam_dist < 12.0f) cam_dist = 12.0f;
+                status = "Gizmo de camara: vista llevada hasta ella";
+            } else {
+                status = "Elige a que objeto sigue la camara para poder moverla";
+            }
+        }
+        if (cam_gizmo && obj_sel >= 0)
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+                               "Deselecciona el objeto para mover la camara.");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Con Mover/Rotar activos y NINGUN objeto elegido, el gizmo\n"
+                              "arrastra la camara del juego en vez de un objeto.\n"
+                              "Mover lleva el ojo; Rotar gira la mira sin cambiar la\n"
+                              "distancia al objetivo.");
 
         ImGui::SeparatorText("Sombras");
         // Calidad del shadow map. Se aplica al viewport al momento para verlo.

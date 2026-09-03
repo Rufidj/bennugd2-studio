@@ -90,6 +90,11 @@ endif()
 # Asi el editor usa exactamente el mismo motor que el juego, sin duplicar su
 # estado ni su codigo.
 set(LIBMOD3D_SO  "${BGD_BIN}/libmod_3d${CMAKE_SHARED_LIBRARY_SUFFIX}")
+# El runtime de BennuGD2: de el sale la tabla de conversion de charset que usan
+# sus fuentes (iso8859_1_to_cp850), para que el HUD del editor elija el mismo
+# glifo que write() en el juego. Ya venia cargado como dependencia de libmod_3d,
+# pero hay que enlazarlo explicitamente para poder usar sus simbolos.
+set(BGDRTM_SO    "${BGD_BIN}/libbgdrtm${CMAKE_SHARED_LIBRARY_SUFFIX}")
 
 # ---- El libmod_3d encontrado, ¿es el que necesita el editor? ----
 # El editor usa una API de libmod_3d que NO existe en el modulo original de
@@ -146,6 +151,7 @@ set(IMGUI_SRC
 add_executable(editor3d
     src/main.cpp
     src/engine_bridge.c
+    src/hud2d.c             # lectura de FPG/FNT nativos para el previo del HUD 2D
     ${IMGUI_SRC}
 )
 
@@ -169,10 +175,12 @@ target_include_directories(editor3d PRIVATE
 
 target_link_libraries(editor3d
     ${LIBMOD3D_SO}          # el motor (arrastra bgdrtm/bggfx como dependencias suyas)
+    ${BGDRTM_SO}            # runtime de BennuGD2 (tablas de charset de las fuentes)
     ${SDL2_LIBRARIES}
     SDL2_image
     ${OPENGL_LIBRARIES}
     ${CMAKE_DL_LIBS}
+    z                       # los graficos de BennuGD2 (fpg/fnt) vienen con gzip
     m
 )
 

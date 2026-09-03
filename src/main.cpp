@@ -49,9 +49,29 @@ static std::vector<std::string> scan_textures(const std::string& dir) {
 #include "imfilebrowser.h"       // explorador de archivos (ImGui::FileBrowser)
 #include "IconsFontAwesome6.h"   // macros ICON_FA_* para la toolbar
 #include <SDL_opengl.h>
+#include "hud2d.h"             // FPG/FNT/PNG nativos: el previo del HUD 2D
 
 // ---- API C del motor (core de libmod_3d, sin la capa BennuGD2) --------------
 extern "C" {
+    /* ---- sprites 2D en el mundo 3D (personajes estilo HD-2D) ---- */
+    int   g3d_sprite_create(int scene_id, float x, float y, float z);
+    void  g3d_sprite_destroy(int id);
+    void  g3d_sprite_set_position(int id, float x, float y, float z);
+    void  g3d_sprite_set_texture(int id, unsigned tex, int px_w, int px_h,
+                                 float uscale, float vscale);
+    void  g3d_sprite_set_cell(int id, int x, int y, int w, int h);
+    void  g3d_sprite_set_anchor(int id, float ax, float ay);
+    void  g3d_sprite_set_height(int id, float h);
+    void  g3d_sprite_set_pixels_per_unit(int id, float ppu);
+    void  g3d_sprite_set_billboard(int id, int mode);
+    void  g3d_sprite_set_cutout(int id, float t);
+    void  g3d_sprite_set_shadow(int id, int on);
+    void  g3d_sprite_set_smooth(int id, int on);
+    void  g3d_sprite_set_lit(int id, int on);
+    void  g3d_sprite_set_snap(int id, int on);
+    void  g3d_sprite_set_visible(int id, int v);
+    void  g3d_sprites_clear(void);
+
     int   g3d_renderer_init(unsigned width, unsigned height);
     void  g3d_renderer_render(void);
     void  g3d_renderer_set_viewport_physical(unsigned x, unsigned y, unsigned w, unsigned h);
@@ -1010,7 +1030,7 @@ int main(int, char**) {
     // ---- herramienta activa (toolbar con iconos) ----
     enum Tool { T_SELECT, T_MOVE, T_ROTATE, T_SCALE, T_PLACE, T_RAISE, T_LOWER, T_SMOOTH, T_FLATTEN, T_PAINT,
                 T_HOLE, T_ZONE, T_LAKE, T_RIVER, T_WATERFALL, T_WATERSOURCE, T_VERTEX,
-                T_SCATTER };
+                T_SCATTER, T_HUD, T_SPRITE };
     bool hole_fill = false;   // T_HOLE: false=perforar, true=rellenar
     int tool = T_SELECT;
     int  zone_layer = 0;      // T_ZONE: capa (0..3) que se pinta
@@ -1107,6 +1127,600 @@ int main(int, char**) {
     };
     std::vector<SObj> objects;
     int obj_sel = -1;
+
+    // ---- HUD 2D: los graficos y los textos de BennuGD2 encima de la escena ----
+    // Cada elemento acaba siendo un PROCESS de BennuGD2 con SUS LOCALES
+    // (file/graph/x/y/z/size/angle/flags/alpha) o un write() con una fuente
+    // .fnt. Aqui solo se guarda que hay y donde, y se dibuja igual que lo hara
+    // el juego para poder colocarlo a ojo.
+    // La pantalla del juego es la que monta escena_iniciar: set_mode(1280,720).
+    const float HUD_W = 1280.0f, HUD_H = 720.0f;
+    struct HudItem {
+        int type = 0;                 // 0 = grafico, 1 = texto
+        std::string name;             // nombre del PROCESS generado
+        // --- grafico ---
+        std::string asset;            // fichero de Assets (.png/.jpg o .fpg/.f16/.f32)
+        int   code = 0;               // grafico dentro del FPG (el que va en graph)
+        float size = 100.0f;          // local size (100 = tamano real)
+        float angle = 0.0f;           // grados; el .prg los pasa a milesimas
+        int   flags = 0;              // 1 = espejo horizontal, 2 = vertical, 3 = los dos
+        // --- texto ---
+        std::string font;             // .fnt/.fnx de Assets ("" = fuente 0 del sistema)
+        std::string text = "texto";   // texto fijo
+        std::string var;              // GLOBAL a mostrar con write_var ("" = texto fijo)
+        int   vartype = 0;            // 0 = int, 1 = float, 2 = string
+        int   align = 0;              // ALIGN_* (0 = arriba-izquierda)
+        // --- comunes ---
+        float x = 40.0f, y = 40.0f;   // en pixeles de la pantalla del juego
+        int   z = -100;               // el 3D se dibuja el ultimo por detras: aqui solo ordena el HUD
+        int   alpha = 255;
+        int   col[4] = { 255, 255, 255, 255 };   // color del texto (write_set_rgba)
+    };
+    std::vector<HudItem> hud;
+    int  hud_sel = -1;
+    bool hud_show = true;             // ver el HUD encima del viewport
+    bool hud_drag = false;            // arrastrando un elemento con el raton
+    float hud_grab_x = 0.0f, hud_grab_y = 0.0f;
+    char hud_fpg_filter[64] = "";     // filtro del selector visual de graficos del FPG
+
+    // ---- HOJAS DE SPRITES (personajes 2D para el mundo 3D, estilo HD-2D) ----
+    // Se carga un PNG con todos los fotogramas y el editor los detecta solo por
+    // los huecos transparentes; luego se agrupan en animaciones. Cada fotograma
+    // guarda su ancla (centro-abajo de su banda), que es lo que hace que el
+    // personaje no baile al animar cuando los recortes son de distinto tamano.
+    struct SprFrame { int x, y, w, h, ax, ay; int band = 0; };
+    struct SprAnim  { std::string name; int fps = 10; std::vector<int> frames; };
+    struct SheetDef {
+        std::string image;              // fichero dentro de Assets
+        int w = 0, h = 0;               // tamano de la hoja
+        int cols = 0, rows = 0;         // rejilla, si la hoja es regular
+        std::vector<SprFrame> frames;
+        std::vector<SprAnim>  anims;
+    };
+    SheetDef sheet;
+    // Todas las hojas que hagan falta (cada sprite colocado usa la suya). La
+    // ABIERTA no se lee de aqui: manda 'sheet', que es la que estas editando.
+    std::map<std::string, SheetDef> sheet_cache;
+    std::vector<int> sheet_sel;         // fotogramas seleccionados (para hacer animaciones)
+    float sheet_zoom = 2.0f;
+    int   sheet_anim_sel = -1;
+    float sheet_anim_t = 0.0f;          // reloj del previo de la animacion
+    char  sheet_anim_name[64] = "andar";
+    int   sheet_grid_cols = 0, sheet_grid_rows = 0;   // rejilla a mano
+    int   sheet_split_n = 4;      // partir una animacion en trozos de N fotogramas
+    bool  sheet_limpiar = true;   // quitar los creditos del rip y juntar trozos sueltos
+    int   sheet_frame_split = 2;  // partir un fotograma en N (dos personajes pegados)
+    // Recorte a mano: celda, margen y separacion, como en cualquier programa de
+    // sprites. Se ve encima de la hoja antes de aplicarlo.
+    int   sheet_cell_w = 32, sheet_cell_h = 32;
+    int   sheet_off_x = 0, sheet_off_y = 0;
+    int   sheet_gap_x = 0, sheet_gap_y = 0;
+    bool  sheet_ver_rejilla = false;   // dibujar la rejilla encima de la hoja
+    bool  sheet_dibujar = false;       // dibujar un fotograma arrastrando el raton
+    ImVec2 sheet_drag_ini(0, 0);
+    bool  sheet_drag_on = false;
+    std::string sheet_msg;
+    bool sheet_refrescar = false;   // se ha creado una hoja sin fondo: releer Assets
+    bool sheet_quitar_fondo = true; // los rips con el fondo pintado -> copia transparente
+    bool show_spr_win = false;      // la ventana de sprites 3D (flotante, no acoplada)
+    size_t sheet_firma_guardada = 0; // como estaba la hoja la ultima vez que se guardo
+    // Las animaciones las montas TU. El agrupado automatico esta ahi por si
+    // quieres un punto de partida, pero apagado: llenaba la lista de fila1_1,
+    // fila1_2... y tapaba las tuyas.
+    bool sheet_auto_anims = false;
+
+    // Fichero .sheet junto al PNG: lo escribe el editor y lo lee la generacion
+    // del juego (fotogramas + animaciones).
+    auto hud_is_fpg = [](const std::string& f) {
+        std::string s = f; for (auto& c : s) c = (char)tolower(c);
+        if (s.size() < 4) return false;
+        std::string e = s.substr(s.size() - 4);
+        return e == ".fpg" || e == ".f16" || e == ".f32";
+    };
+    auto sheet_path_of = [&](const std::string& img) {
+        return assets_dir + "/" + img.substr(0, img.rfind('.')) + ".sheet";
+    };
+    auto sheet_save = [&]() {
+        if (sheet.image.empty()) return;
+        FILE* f = fopen(sheet_path_of(sheet.image).c_str(), "w");
+        if (!f) { sheet_msg = "ERROR: no puedo guardar la hoja"; return; }
+        fprintf(f, "BGD2SHEET 1\nimage=%s\nsize=%d %d\ngrid=%d %d\n",
+                sheet.image.c_str(), sheet.w, sheet.h, sheet.cols, sheet.rows);
+        for (auto& fr : sheet.frames)
+            fprintf(f, "frame=%d %d %d %d %d %d %d\n", fr.x, fr.y, fr.w, fr.h, fr.ax, fr.ay, fr.band);
+        for (auto& an : sheet.anims) {
+            fprintf(f, "anim=%s %d %d", an.name.c_str(), an.fps, (int)an.frames.size());
+            for (int k : an.frames) fprintf(f, " %d", k);
+            fputc('\n', f);
+        }
+        fclose(f);
+        sheet_msg = "Hoja guardada en " + fs::path(sheet_path_of(sheet.image)).filename().string();
+    };
+    auto sheet_load_file = [&](const std::string& img) -> bool {
+        FILE* f = fopen(sheet_path_of(img).c_str(), "r");
+        if (!f) return false;
+        sheet = SheetDef(); sheet.image = img;
+        char line[4096];
+        while (fgets(line, sizeof(line), f)) {
+            int a, b, c, d, e, g;
+            if (sscanf(line, "size=%d %d", &a, &b) == 2) { sheet.w = a; sheet.h = b; continue; }
+            if (sscanf(line, "grid=%d %d", &a, &b) == 2) { sheet.cols = a; sheet.rows = b; continue; }
+            {   int bd = 0;
+                int nf = sscanf(line, "frame=%d %d %d %d %d %d %d", &a,&b,&c,&d,&e,&g,&bd);
+                if (nf >= 6) { sheet.frames.push_back({ a,b,c,d,e,g,bd }); continue; }
+            }
+            if (!strncmp(line, "anim=", 5)) {
+                char nom[128]; int fps = 10, n = 0, pos = 0;
+                if (sscanf(line + 5, "%127s %d %d%n", nom, &fps, &n, &pos) >= 3) {
+                    SprAnim an; an.name = nom; an.fps = fps;
+                    const char* p2 = line + 5 + pos;
+                    for (int k = 0; k < n; k++) {
+                        int fr; int used = 0;
+                        if (sscanf(p2, " %d%n", &fr, &used) != 1) break;
+                        an.frames.push_back(fr); p2 += used;
+                    }
+                    sheet.anims.push_back(an);
+                }
+                continue;
+            }
+        }
+        fclose(f);
+        return !sheet.frames.empty();
+    };
+    // Detectar los fotogramas de la hoja (los huecos transparentes mandan).
+    auto sheet_detect = [&](const std::string& img_orig) {
+        std::string img = img_orig;
+        // Los rips traen el fondo PINTADO (blanco, magenta, un panel de color...).
+        // Si se deja asi, en el juego el personaje sale con su recuadro, porque el
+        // recorte alfa no tiene nada que recortar. Se hace una copia con el fondo
+        // en transparente y se trabaja con ella; el original no se toca.
+        if (sheet_quitar_fondo) {
+            std::string base = img.substr(0, img.rfind('.'));
+            if (base.size() < 9 || base.substr(base.size() - 9) != "_sinfondo") {
+                std::string nuevo = base + "_sinfondo.png";
+                int r2 = h2_make_transparent((assets_dir + "/" + img).c_str(),
+                                             (assets_dir + "/" + nuevo).c_str());
+                if (r2 == 1) { img = nuevo; sheet_refrescar = true; }
+            }
+        }
+        sheet = SheetDef(); sheet.image = img;
+        sheet_sel.clear(); sheet_anim_sel = -1;
+        std::vector<H2Rect> r(4096);
+        int sw = 0, sh = 0;
+        int n = h2_detect_frames((assets_dir + "/" + img).c_str(), r.data(), (int)r.size(),
+                                 &sw, &sh, sheet_limpiar ? 1 : 0);
+        sheet.w = sw; sheet.h = sh;
+        for (int i = 0; i < n; i++)
+            sheet.frames.push_back({ r[i].x, r[i].y, r[i].w, r[i].h, r[i].ax, r[i].ay, r[i].band });
+        int c = 0, rr = 0;
+        if (n > 0 && h2_guess_grid(r.data(), n, sw, sh, &c, &rr)) { sheet.cols = c; sheet.rows = rr; }
+        sheet_grid_cols = sheet.cols; sheet_grid_rows = sheet.rows;
+
+        // ---- y las ANIMACIONES, si las quieres automaticas ----
+        // Por defecto NO: la lista se llenaba de fila1_1, fila1_2... y no habia
+        // quien encontrara las tuyas. Con la casilla puesta salen como punto de
+        // partida y luego las renombras o las rehaces.
+        // Una hoja se lee por filas: cada banda es un grupo de poses. Dentro de la
+        // banda, una animacion es una racha de fotogramas de tamano parecido; en
+        // cuanto el tamano pega un salto (un ataque con lanza mide el doble que
+        // andar) empieza otra.
+        sheet.anims.clear();
+        if (sheet_auto_anims && !sheet.frames.empty()) {
+            int nb = 0;
+            for (auto& fr : sheet.frames) if (fr.band + 1 > nb) nb = fr.band + 1;
+            for (int b = 0; b < nb; b++) {
+                std::vector<int> banda;
+                for (int i = 0; i < (int)sheet.frames.size(); i++)
+                    if (sheet.frames[i].band == b) banda.push_back(i);
+                if (banda.empty()) continue;
+                std::vector<std::vector<int>> grupos;
+                std::vector<int> act;
+                for (size_t k = 0; k < banda.size(); k++) {
+                    const SprFrame& f2 = sheet.frames[banda[k]];
+                    if (!act.empty()) {
+                        const SprFrame& pv = sheet.frames[act.back()];
+                        int tw = pv.w / 4 > 3 ? pv.w / 4 : 3;      // 25% (minimo 3 px)
+                        int th = pv.h / 4 > 3 ? pv.h / 4 : 3;
+                        if (abs(f2.w - pv.w) > tw || abs(f2.h - pv.h) > th) {
+                            grupos.push_back(act); act.clear();
+                        }
+                    }
+                    act.push_back(banda[k]);
+                }
+                if (!act.empty()) grupos.push_back(act);
+                // Los grupos de UN fotograma seguidos son casi siempre la misma
+                // secuencia (un ataque donde cada pose mide distinto porque el arma
+                // sale mas o menos), no animaciones de un fotograma: se juntan.
+                {
+                    std::vector<std::vector<int>> fus;
+                    for (auto& g2 : grupos) {
+                        if (g2.size() == 1 && !fus.empty() && fus.back().size() <= 2 &&
+                            fus.back().size() + 1 <= 8)
+                            fus.back().push_back(g2[0]);
+                        else
+                            fus.push_back(g2);
+                    }
+                    grupos.swap(fus);
+                }
+                // En una rejilla regular cada fila es UNA animacion entera (esa es
+                // la disposicion de siempre), asi que ahi no se parte por tamano.
+                if (sheet.cols > 0 && sheet.rows > 0) { grupos.clear(); grupos.push_back(banda); }
+                for (size_t gi = 0; gi < grupos.size(); gi++) {
+                    SprAnim an;
+                    an.name = "fila" + std::to_string(b + 1) +
+                              (grupos.size() > 1 ? "_" + std::to_string((int)gi + 1) : "");
+                    an.fps = 10;
+                    an.frames = grupos[gi];
+                    sheet.anims.push_back(an);
+                }
+            }
+            // En rejilla, una animacion mas con TODAS las filas seguidas: es lo que
+            // pide el sprite cuando tiene varias posturas (4, 8 o 16 direcciones),
+            // que espera los fotogramas por direcciones, una detras de otra.
+            if (sheet.cols > 0 && sheet.rows > 1) {
+                SprAnim an; an.name = "todas_las_direcciones"; an.fps = 10;
+                for (int i = 0; i < (int)sheet.frames.size(); i++) an.frames.push_back(i);
+                sheet.anims.push_back(an);
+            }
+        }
+        sheet_msg = std::to_string(n) + " fotogramas" +
+                    (sheet.cols ? "  (rejilla " + std::to_string(sheet.cols) + "x" +
+                                  std::to_string(sheet.rows) + ")"
+                                : "  (hoja irregular)") +
+                    "  y " + std::to_string((int)sheet.anims.size()) + " animaciones";
+        if (img != img_orig)
+            sheet_msg += "\nFondo quitado: se trabaja con " + img + " (el original se queda igual).";
+        sheet_cache[sheet.image] = sheet;   // que los sprites ya colocados vean esto
+    };
+    // Rehacer los fotogramas como rejilla regular, cuando la deteccion no es lo
+    // que quieres (la hoja partida en columnas x filas de celdas fijas).
+    auto sheet_make_grid = [&](int cols, int rows) {
+        if (cols < 1 || rows < 1 || sheet.w <= 0) return;
+        sheet.frames.clear(); sheet_sel.clear();
+        int cw = sheet.w / cols, ch = sheet.h / rows;
+        for (int r2 = 0; r2 < rows; r2++)
+            for (int c2 = 0; c2 < cols; c2++)
+                sheet.frames.push_back({ c2 * cw, r2 * ch, cw, ch, cw / 2, ch - 1 });
+        sheet.cols = cols; sheet.rows = rows;
+        for (int r2 = 0; r2 < rows; r2++)
+            for (int c2 = 0; c2 < cols; c2++) sheet.frames[r2 * cols + c2].band = r2;
+        sheet.anims.clear();
+        if (sheet_auto_anims) {      // una animacion por fila, y otra con todas
+            for (int r2 = 0; r2 < rows; r2++) {
+                SprAnim an; an.name = "fila" + std::to_string(r2 + 1); an.fps = 10;
+                for (int c2 = 0; c2 < cols; c2++) an.frames.push_back(r2 * cols + c2);
+                sheet.anims.push_back(an);
+            }
+            if (rows > 1) {
+                SprAnim an; an.name = "todas_las_direcciones"; an.fps = 10;
+                for (int i = 0; i < cols * rows; i++) an.frames.push_back(i);
+                sheet.anims.push_back(an);
+            }
+        }
+        sheet_msg = std::to_string(cols * rows) + " fotogramas (rejilla a mano " +
+                    std::to_string(cols) + "x" + std::to_string(rows) + ") y " +
+                    std::to_string((int)sheet.anims.size()) + " animaciones";
+    };
+
+    // Al tocar los fotogramas (partir, unir, borrar) los NUMEROS cambian. Antes se
+    // vaciaban las animaciones y perdias el trabajo; ahora se renumeran: mapa[i] es
+    // el numero nuevo del fotograma i, o -1 si ha desaparecido.
+    auto sheet_remap = [&](const std::vector<int>& mapa) {
+        for (auto& an : sheet.anims) {
+            std::vector<int> nu;
+            for (int fr : an.frames) {
+                if (fr < 0 || fr >= (int)mapa.size()) continue;
+                int n2 = mapa[fr];
+                if (n2 < 0) continue;
+                if (!nu.empty() && nu.back() == n2) continue;   // no repetir seguidos
+                nu.push_back(n2);
+            }
+            an.frames.swap(nu);
+        }
+    };
+
+    // La hoja de una imagen: del .sheet guardado, o detectandola al vuelo.
+    // Abrir una hoja para trabajar: manda SIEMPRE lo que haya guardado en su
+    // .sheet (fotogramas y animaciones que has hecho tu), y solo se detecta si no
+    // hay nada. Se mira tambien el .sheet de la copia sin fondo, que es con la que
+    // se trabaja de verdad -- si no, elegir el original en la lista re-detectaba y
+    // se llevaba por delante las animaciones.
+    auto sheet_open = [&](const std::string& img) -> const char* {
+        // Un FPG tambien vale como hoja: se junta en un PNG con transparencia
+        // (una vez) y a partir de ahi es una hoja normal. Los fotogramas y sus
+        // anclas salen del propio FPG -- su punto de control 0, que en un FPG de
+        // personajes suele estar en los pies.
+        if (hud_is_fpg(img)) {
+            std::string base2 = img.substr(0, img.rfind('.'));
+            std::string png = base2 + "_hoja.png";
+            std::string rpng = assets_dir + "/" + png;
+            std::vector<H2Rect> r(1024);
+            int sw = 0, sh = 0, n = 0;
+            if (!fs::exists(rpng))
+                n = h2_fpg_to_sheet((assets_dir + "/" + img).c_str(), rpng.c_str(),
+                                    r.data(), (int)r.size(), &sw, &sh);
+            if (n > 0) {
+                sheet = SheetDef(); sheet.image = png; sheet.w = sw; sheet.h = sh;
+                for (int i = 0; i < n; i++)
+                    sheet.frames.push_back({ r[i].x, r[i].y, r[i].w, r[i].h,
+                                             r[i].ax, r[i].ay, r[i].band });
+                sheet_refrescar = true;
+                sheet_msg = std::to_string(n) + " graficos del FPG juntados en " + png;
+                return "detectada";
+            }
+            if (fs::exists(rpng)) {           // ya estaba hecha: se abre esa
+                if (sheet_load_file(png)) return "guardada";
+                sheet_detect(png);
+                return "detectada";
+            }
+            return "detectada";
+        }
+        std::string base = img.substr(0, img.rfind('.'));
+        bool ya_sin = (base.size() >= 9 && base.substr(base.size() - 9) == "_sinfondo");
+        if (!ya_sin) {
+            std::string sinf = base + "_sinfondo.png";
+            if (fs::exists(assets_dir + "/" + sinf) && sheet_load_file(sinf)) return "guardada";
+        }
+        if (sheet_load_file(img)) return "guardada";
+        sheet_detect(img);
+        return "detectada";
+    };
+
+    // Resumen de como esta la hoja ahora mismo. Comparandolo con el del ultimo
+    // guardado se sabe si hay cambios, sin marcarlos en cada sitio que la toca.
+    auto sheet_firma = [&]() {
+        size_t h = 1469598103934665603ull;
+        auto mez = [&](long long v) { h ^= (size_t)v; h *= 1099511628211ull; };
+        for (auto& f2 : sheet.frames) {
+            mez(f2.x); mez(f2.y); mez(f2.w); mez(f2.h); mez(f2.ax); mez(f2.ay);
+        }
+        for (auto& a2 : sheet.anims) {
+            for (char c : a2.name) mez(c);
+            mez(a2.fps);
+            for (int k : a2.frames) mez(k);
+        }
+        return h;
+    };
+
+    auto sheet_of = [&](const std::string& img) -> SheetDef* {
+        if (img.empty()) return nullptr;
+        // La hoja ABIERTA manda siempre: es la que estas editando. Antes se
+        // devolvia la copia de la cache (la de cuando colocaste el sprite), y por
+        // eso las animaciones que creabas a mano no salian en sus desplegables.
+        if (img == sheet.image && !sheet.frames.empty()) return &sheet;
+        auto it = sheet_cache.find(img);
+        if (it != sheet_cache.end()) return &it->second;
+        SheetDef d; d.image = img;
+        // se reaprovecha la logica de arriba tirando de una copia temporal
+        SheetDef guardar = sheet;
+        sheet_open(img);
+        d = sheet;
+        sheet = guardar;
+        return &(sheet_cache[img] = d);
+    };
+
+    // Los recursos se leen una vez y se quedan cacheados por nombre de fichero.
+    std::map<std::string, H2Img>  hud_imgs;
+    std::map<std::string, H2Fpg>  hud_fpgs;
+    std::map<std::string, H2Font> hud_fonts;
+    auto hud_scan_gfx  = [&] { return scan_dir(assets_dir, { ".png",".jpg",".jpeg",".bmp",".tga",".fpg",".f16",".f32" }); };
+    auto hud_scan_fnt  = [&] { return scan_dir(assets_dir, { ".fnt",".fnx" }); };
+    std::vector<std::string> hud_gfx_files  = hud_scan_gfx();
+    std::vector<std::string> hud_font_files = hud_scan_fnt();
+    auto hud_img = [&](const std::string& file) -> H2Img* {
+        auto it = hud_imgs.find(file);
+        if (it == hud_imgs.end()) {
+            H2Img im = {};
+            h2_load_image((assets_dir + "/" + file).c_str(), &im);
+            it = hud_imgs.emplace(file, im).first;
+        }
+        return it->second.tex ? &it->second : nullptr;
+    };
+    auto hud_fpg = [&](const std::string& file) -> H2Fpg* {
+        auto it = hud_fpgs.find(file);
+        if (it == hud_fpgs.end()) {
+            H2Fpg fp = {};
+            h2_load_fpg((assets_dir + "/" + file).c_str(), &fp);
+            it = hud_fpgs.emplace(file, fp).first;
+        }
+        return it->second.n ? &it->second : nullptr;
+    };
+    auto hud_font = [&](const std::string& file) -> H2Font* {
+        auto it = hud_fonts.find(file);
+        if (it == hud_fonts.end()) {
+            H2Font ft = {};
+            h2_load_fnt((assets_dir + "/" + file).c_str(), &ft);
+            it = hud_fonts.emplace(file, ft).first;
+        }
+        return it->second.tex ? &it->second : nullptr;
+    };
+    // El grafico de un elemento: suelto (map_load) o uno de dentro del FPG.
+    auto hud_item_img = [&](const HudItem& h) -> H2Img* {
+        if (h.type != 0 || h.asset.empty()) return nullptr;
+        if (!hud_is_fpg(h.asset)) return hud_img(h.asset);
+        H2Fpg* fp = hud_fpg(h.asset);
+        if (!fp) return nullptr;
+        for (int i = 0; i < fp->n; i++) if (fp->g[i].code == h.code) return &fp->g[i].img;
+        return nullptr;
+    };
+    // ---- SPRITES colocados en la escena ----
+    // Cada uno acabara siendo un PROCESS con csubtype = C3D_SPRITE.
+    // Una accion del personaje: se dispara con una tecla, con un boton del mando o
+    // con los dos, y hace sonar una animacion, llamar a codigo tuyo, o ambas.
+    struct SprAccion {
+        std::string nombre = "accion";
+        std::string tecla;        // vacia = sin tecla
+        std::string boton;        // vacio = sin boton del mando
+        std::string anim;         // animacion de la hoja (opcional)
+        int espejo = 0;
+        int una_vez = 1;          // 1 = suena entera al pulsar; 0 = mientras la aguantes
+        std::string llama;        // PROCESS o FUNCTION tuyo que se llama al dispararla
+    };
+    struct SprObj {
+        std::string name;          // nombre del PROCESS generado
+        std::string sheet;         // imagen (hoja) dentro de Assets
+        std::string anim;          // animacion que reproduce ("" = primer fotograma)
+        float x = 0, y = 0, z = 0; // posicion en el mundo
+        float height = 2.5f;       // alto en unidades del fotograma mas alto
+        int   dirs = 1;            // posturas segun la camara (1, 4, 8, 16)
+        int   billboard = 0;       // 0 = de pie, 1 = de cara del todo
+        int   shadow = 1;
+        int   smooth = 0;
+        float cutout = 0.5f;
+        int   entity = -1;         // sprite del motor (para verlo en el editor)
+        float t = 0.0f;            // reloj de la animacion en el editor
+        // ---- comportamiento: lo mismo que un objeto 3D ----
+        // fisica: 0 = ninguna (decorativo), 1 = caja, 2 = esfera, 3 = capsula,
+        //         4 = cilindro, 5 = muro invisible (solo colisiona, no cae)
+        int   phys = 0;
+        float mass = 1.0f, bounce = 0.2f, friction = 0.5f, csize = 1.0f, density = 0.5f;
+        int   buoyant = 0;
+        // jugador: char controller con sus teclas y sus animaciones por estado
+        int   is_player = 0;
+        float walk_speed = 12.0f, run_speed = 26.0f, jump_force = 13.0f;
+        float char_radius = 0.6f, char_height = 3.0f;
+        int   zone_layer = -1;          // capa de barrera que le corta el paso
+        std::string an_idle, an_walk, an_run, an_jump;   // animaciones por estado
+        std::string k_up = "_W", k_down = "_S", k_left = "_A", k_right = "_D";
+        std::string k_jump = "_SPACE", k_run = "_L_SHIFT";
+        // Animacion POR TECLA: si la pones, manda sobre la de estado mientras esa
+        // tecla este pulsada (asi se hace un juego 2D de toda la vida: una
+        // animacion para cada direccion). Vacia = se usa la del estado.
+        std::string an_up, an_down, an_left, an_right;
+        // Espejo por tecla: con una sola animacion "hacia la izquierda" se
+        // resuelve la derecha marcando esto (el motor la voltea con flags = 1).
+        int fx_up = 0, fx_down = 0, fx_left = 0, fx_right = 0;
+        // Mando: moverse con el stick/cruceta y botones para saltar y correr.
+        // Velocidad de la animacion de ESTE personaje. 0 = la que traiga la
+        // animacion en la hoja; con otro valor, manda este.
+        int fps = 0;
+        int iluminado = 1;         // le afecta la luz de la escena (se apaga de noche)
+        int ajuste_px = 1;         // se ajusta a pixeles de pantalla (no tiembla)
+        int usar_mando = 0;
+        std::string b_jump, b_run;
+        // Y todas las acciones que quieras (atacar, cubrirse, hablar...).
+        std::vector<SprAccion> acciones;
+        // ---- NPC: estorbar e interactuar ----
+        // 'solido' le pone una caja de colision que le SIGUE (los muros normales
+        // son fijos), para que corte el paso aunque patrulle.
+        int   solido = 0;
+        float sol_radio = 0.6f;
+        // Interaccion por cercania: el clasico "acercate y pulsa E para hablar".
+        int   inter_on = 0;
+        float inter_radio = 3.0f;
+        std::string inter_tecla = "_E", inter_boton = "JOY_BUTTON_A";
+        std::string inter_anim, inter_llama;
+        int   inter_mirar = 1;      // se gira hacia el jugador al acercarse
+        // ---- comportamiento: que hace cuando nadie le toca ----
+        // 0 = quieto, 1 = patrulla entre A y B, 2 = sigue al jugador, 3 = huye
+        int   comport = 0;
+        float com_vel = 3.0f;       // unidades por segundo
+        float com_radio = 12.0f;    // a partir de que distancia se entera (seguir/huir)
+        float com_bx = 0.0f, com_bz = 0.0f;   // el punto B de la patrulla
+    };
+    std::vector<SprObj> sprites;
+    int spr_sel = -1;
+    int spr_follow = -1;          // sprite al que sigue la camara (-1 = ninguno)
+    // Teclas que se pueden elegir para los controles (constantes de BennuGD2).
+    // Todas las de BennuGD2 (libbginput), no un punado: si quieres la K para el
+    // ataque y la L para bloquear, tienen que estar.
+    static const char* TECLAS[] = {
+        "_W", "_A", "_S", "_D", "_UP", "_DOWN", "_LEFT", "_RIGHT",
+        "_SPACE", "_ENTER", "_TAB", "_ESC", "_BACKSPACE",
+        "_L_SHIFT", "_R_SHIFT", "_L_CONTROL", "_R_CONTROL", "_L_ALT", "_R_ALT",
+        "_Q", "_E", "_R", "_T", "_Y", "_U", "_I", "_O", "_P",
+        "_F", "_G", "_H", "_J", "_K", "_L",
+        "_Z", "_X", "_C", "_V", "_B", "_N", "_M",
+        "_1", "_2", "_3", "_4", "_5", "_6", "_7", "_8", "_9", "_0",
+        "_F1", "_F2", "_F3", "_F4", "_F5", "_F6", "_F7", "_F8",
+        "_F9", "_F10", "_F11", "_F12",
+        "_HOME", "_END", "_PGUP", "_PGDN", "_INS", "_DEL",
+        "_COMMA", "_POINT", "_MINUS", "_PLUS", "_SEMICOLON", "_APOSTROPHE"
+    };
+    const int NTECLAS = (int)(sizeof(TECLAS) / sizeof(TECLAS[0]));
+    // Botones del mando, con los nombres de BennuGD2 (JOY_BUTTON_*).
+    static const char* BOTONES[] = {
+        "JOY_BUTTON_A", "JOY_BUTTON_B", "JOY_BUTTON_X", "JOY_BUTTON_Y",
+        "JOY_BUTTON_LEFTSHOULDER", "JOY_BUTTON_RIGHTSHOULDER",
+        "JOY_BUTTON_BACK", "JOY_BUTTON_START", "JOY_BUTTON_GUIDE",
+        "JOY_BUTTON_LEFTSTICK", "JOY_BUTTON_RIGHTSTICK",
+        "JOY_BUTTON_DPAD_UP", "JOY_BUTTON_DPAD_DOWN",
+        "JOY_BUTTON_DPAD_LEFT", "JOY_BUTTON_DPAD_RIGHT"
+    };
+    const int NBOTONES = (int)(sizeof(BOTONES) / sizeof(BOTONES[0]));
+
+    // Refresca en el motor un sprite colocado, para verlo en el viewport igual
+    // que se vera en el juego (mismo dibujante).
+    auto spr_sync = [&](SprObj& o, float dt) {
+        SheetDef* sh = sheet_of(o.sheet);
+        H2Img* im = o.sheet.empty() ? nullptr : hud_img(o.sheet);
+        if (!sh || !im || sh->frames.empty()) {
+            if (o.entity >= 0) g3d_sprite_set_visible(o.entity, 0);
+            return;
+        }
+        if (o.entity < 0) o.entity = g3d_sprite_create(scene, o.x, o.y, o.z);
+        if (o.entity < 0) return;
+        g3d_sprite_set_visible(o.entity, 1);
+        g3d_sprite_set_position(o.entity, o.x, o.y, o.z);
+        g3d_sprite_set_texture(o.entity, im->tex, im->w, im->h, 1.0f, 1.0f);
+        g3d_sprite_set_billboard(o.entity, o.billboard);
+        g3d_sprite_set_cutout(o.entity, o.cutout);
+        g3d_sprite_set_shadow(o.entity, o.shadow);
+        g3d_sprite_set_smooth(o.entity, o.smooth);
+        g3d_sprite_set_lit(o.entity, o.iluminado);
+        g3d_sprite_set_snap(o.entity, o.ajuste_px);
+        // El alto lo marca el fotograma MAS ALTO de la hoja; los demas guardan su
+        // proporcion (si no, un salto o un ataque cambiarian de tamano).
+        int maxh = 1;
+        for (auto& f : sh->frames) if (f.h > maxh) maxh = f.h;
+        g3d_sprite_set_height(o.entity, 0.0f);
+        g3d_sprite_set_pixels_per_unit(o.entity, (o.height > 0.01f) ? maxh / o.height : 32.0f);
+        // fotograma que toca
+        const SprAnim* an = nullptr;
+        for (auto& a : sh->anims) if (a.name == o.anim) { an = &a; break; }
+        int idx = 0;
+        if (an && !an->frames.empty()) {
+            o.t += dt * (o.fps > 0 ? o.fps : an->fps);   // los fps del personaje mandan
+            idx = an->frames[((int)o.t) % (int)an->frames.size()];
+        }
+        if (idx < 0 || idx >= (int)sh->frames.size()) idx = 0;
+        const SprFrame& f = sh->frames[idx];
+        g3d_sprite_set_cell(o.entity, f.x, f.y, f.w, f.h);
+        g3d_sprite_set_anchor(o.entity, f.w ? f.ax / (float)f.w : 0.5f,
+                                        f.h ? f.ay / (float)f.h : 1.0f);
+    };
+
+    // Lo que el usuario teclea es UTF-8; BennuGD2 escribe bytes latin-1.
+    auto hud_latin1 = [](const std::string& t) {
+        std::vector<char> b(t.size() + 1);
+        h2_utf8_to_latin1(t.c_str(), b.data(), (int)b.size());
+        return std::string(b.data());
+    };
+    // Tamano en pixeles de un elemento tal como saldra en el juego.
+    auto hud_item_size = [&](const HudItem& h, float* w, float* hh) {
+        *w = *hh = 0.0f;
+        if (h.type == 0) {
+            H2Img* im = hud_item_img(h);
+            if (!im) { *w = *hh = 32.0f; return; }          // sin grafico: un hueco visible
+            *w = im->w * h.size * 0.01f; *hh = im->h * h.size * 0.01f;
+        } else {
+            H2Font* f = h.font.empty() ? nullptr : hud_font(h.font);
+            std::string t = hud_latin1(h.var.empty() ? h.text : ("[" + h.var + "]"));
+            if (f) { *w = (float)h2_text_width(f, t.c_str()); *hh = (float)f->maxheight; }
+            else   { *w = t.size() * 8.0f; *hh = 8.0f; }     // fuente 0 del sistema (8x8)
+        }
+    };
+    // Esquina superior izquierda: el grafico va CENTRADO en x,y (como BennuGD2),
+    // y el texto se coloca segun su alineacion, igual que hace gr_text_new2.
+    auto hud_item_origin = [&](const HudItem& h, float w, float hh, float* ox, float* oy) {
+        if (h.type == 0) { *ox = h.x - w * 0.5f; *oy = h.y - hh * 0.5f; return; }
+        *ox = h.x; *oy = h.y;
+        int a = h.align;
+        if (a == 1 || a == 4 || a == 7) *ox -= w * 0.5f;      // centrado
+        if (a == 2 || a == 5 || a == 8) *ox -= w - 1;         // a la derecha
+        if (a == 3 || a == 4 || a == 5) *oy -= hh * 0.5f;
+        if (a == 6 || a == 7 || a == 8) *oy -= hh - 1;
+    };
     // Estado para deshacer/rehacer (los lambdas que lo usan estan mas abajo; se
     // declara aqui para poder vaciarlo al cargar una escena o un proyecto).
     struct EditState { std::vector<SObj> objs; int follow; };
@@ -1979,6 +2593,61 @@ int main(int, char**) {
                         o.att_scale, o.att_yaw, o.attach_bone.c_str());
             fputs("\n", f);
         }
+        // ---- SPRITES 2D del mundo (hojas de sprites) ----
+        for (auto& sp : sprites) {
+            fprintf(f, "SPRITE3D %.4f %.4f %.4f %.3f %d %d %d %d %.3f\n",
+                    sp.x, sp.y, sp.z, sp.height, sp.dirs, sp.billboard,
+                    sp.shadow, sp.smooth, sp.cutout);
+            fprintf(f, "SPRNAME %s\n", sp.name.c_str());
+            if (!sp.sheet.empty()) fprintf(f, "SPRSHEET %s\n", sp.sheet.c_str());
+            if (!sp.anim.empty())  fprintf(f, "SPRANIM %s\n", sp.anim.c_str());
+            fprintf(f, "SPRPHYS %d %.3f %.3f %.3f %.3f %d %.3f %d\n",
+                    sp.phys, sp.mass, sp.bounce, sp.friction, sp.csize,
+                    sp.buoyant, sp.density, sp.zone_layer);
+            if (sp.is_player) {
+                fprintf(f, "SPRPLAYER %.3f %.3f %.3f %.3f %.3f %d\n",
+                        sp.walk_speed, sp.run_speed, sp.jump_force,
+                        sp.char_radius, sp.char_height,
+                        ((int)(&sp - &sprites[0]) == spr_follow) ? 1 : 0);
+                fprintf(f, "SPRKEYS %s %s %s %s %s %s\n",
+                        sp.k_up.c_str(), sp.k_down.c_str(), sp.k_left.c_str(),
+                        sp.k_right.c_str(), sp.k_jump.c_str(), sp.k_run.c_str());
+                fprintf(f, "SPRSTATES %s|%s|%s|%s\n",
+                        sp.an_idle.c_str(), sp.an_walk.c_str(),
+                        sp.an_run.c_str(), sp.an_jump.c_str());
+                fprintf(f, "SPRKEYANIM %s|%s|%s|%s\n",
+                        sp.an_up.c_str(), sp.an_down.c_str(),
+                        sp.an_left.c_str(), sp.an_right.c_str());
+                fprintf(f, "SPRKEYFLIP %d %d %d %d\n",
+                        sp.fx_up, sp.fx_down, sp.fx_left, sp.fx_right);
+                fprintf(f, "SPRFPS %d %d %d\n", sp.fps, sp.iluminado, sp.ajuste_px);
+                fprintf(f, "SPRCOMP %d %.3f %.3f %.3f %.3f\n",
+                        sp.comport, sp.com_vel, sp.com_radio, sp.com_bx, sp.com_bz);
+                fprintf(f, "SPRNPC %d|%.3f|%d|%.3f|%d|%s|%s|%s|%s\n",
+                        sp.solido, sp.sol_radio, sp.inter_on, sp.inter_radio, sp.inter_mirar,
+                        sp.inter_tecla.c_str(), sp.inter_boton.c_str(),
+                        sp.inter_anim.c_str(), sp.inter_llama.c_str());
+                fprintf(f, "SPRPAD %d|%s|%s\n", sp.usar_mando,
+                        sp.b_jump.c_str(), sp.b_run.c_str());
+                for (auto& ac : sp.acciones)
+                    fprintf(f, "SPRACCION %d|%d|%s|%s|%s|%s|%s\n",
+                            ac.una_vez, ac.espejo, ac.nombre.c_str(), ac.tecla.c_str(),
+                            ac.boton.c_str(), ac.anim.c_str(), ac.llama.c_str());
+            }
+        }
+        // ---- HUD 2D ----
+        // Una linea por dato: los nombres de fichero y los textos pueden llevar
+        // espacios, asi que cada cadena ocupa su propia linea entera.
+        for (auto& h : hud) {
+            fprintf(f, "HUD2D %d %.0f %.0f %d %d %.2f %.2f %d %d %d %d %d %d %d %d\n",
+                    h.type, h.x, h.y, h.z, h.alpha, h.size, h.angle, h.flags, h.code,
+                    h.align, h.col[0], h.col[1], h.col[2], h.col[3], h.vartype);
+            fprintf(f, "HUDNAME %s\n", h.name.c_str());
+            if (!h.asset.empty()) fprintf(f, "HUDASSET %s\n", h.asset.c_str());
+            if (!h.font.empty())  fprintf(f, "HUDFONT %s\n", h.font.c_str());
+            if (!h.var.empty())   fprintf(f, "HUDVAR %s\n", h.var.c_str());
+            if (!h.text.empty())  fprintf(f, "HUDTEXT %s\n", h.text.c_str());
+        }
         fclose(f);
         if (terrain) {
             g3d_editor_terrain_save(terrain, (path + ".terrain").c_str());
@@ -1988,6 +2657,7 @@ int main(int, char**) {
             // hechas y ampliarlo las romperia.
             g3d_editor_terrain_save_xz(terrain, (path + ".terrain.xz").c_str());
         }
+        if (!sheet.image.empty() && !sheet.frames.empty()) sheet_save();   // la hoja abierta
         g3d_editor_paint_save((path + ".paint.png").c_str());   // pintado del terreno
         g3d_zone_save((path + ".zones").c_str());               // zonas de barrera
         scene_path = path;
@@ -2004,6 +2674,9 @@ int main(int, char**) {
         undo_reset();
         for (auto& o : objects) if (o.entity >= 0) g3d_entity_impl_destroy(o.entity);
         objects.clear(); obj_sel = -1;
+        hud.clear(); hud_sel = -1;   // el HUD tambien es de la escena
+        for (auto& sp : sprites) if (sp.entity >= 0) g3d_sprite_destroy(sp.entity);
+        sprites.clear(); spr_sel = -1; spr_follow = -1;
         lakes.clear(); rivers.clear(); river_draft.clear(); waterfalls.clear();
         wsources.clear();   // los de la escena anterior no son de esta
         // terreno primero: las cuevas/objetos se apoyan en su altura
@@ -2021,6 +2694,141 @@ int main(int, char**) {
         if (!g3d_zone_load((path + ".zones").c_str())) g3d_zone_init(161, 400.0f);  // zonas (o limpia)
         char line[512], asset[256], name[256];
         while (fgets(line, sizeof(line), f)) {
+            // ---- SPRITES 2D del mundo ----
+            {   SprObj sp; int nl;
+                nl = sscanf(line, "SPRITE3D %f %f %f %f %d %d %d %d %f",
+                            &sp.x, &sp.y, &sp.z, &sp.height, &sp.dirs,
+                            &sp.billboard, &sp.shadow, &sp.smooth, &sp.cutout);
+                if (nl >= 5) { sprites.push_back(sp); continue; }
+            }
+            if (!sprites.empty()) {
+                char val[384];
+                if (sscanf(line, "SPRNAME %383[^\n]", val) == 1)  { sprites.back().name  = val; continue; }
+                if (sscanf(line, "SPRSHEET %383[^\n]", val) == 1) { sprites.back().sheet = val; continue; }
+                if (sscanf(line, "SPRANIM %383[^\n]", val) == 1)  { sprites.back().anim  = val; continue; }
+                {   SprObj& sp = sprites.back();
+                    int ph, bu, zl; float ms, bo, fr, cs, de;
+                    if (sscanf(line, "SPRPHYS %d %f %f %f %f %d %f %d",
+                               &ph,&ms,&bo,&fr,&cs,&bu,&de,&zl) == 8) {
+                        sp.phys=ph; sp.mass=ms; sp.bounce=bo; sp.friction=fr;
+                        sp.csize=cs; sp.buoyant=bu; sp.density=de; sp.zone_layer=zl;
+                        continue;
+                    }
+                    float ws, rs, jf, cr, chh; int sig = 0;
+                    if (sscanf(line, "SPRPLAYER %f %f %f %f %f %d",
+                               &ws,&rs,&jf,&cr,&chh,&sig) >= 5) {
+                        sp.is_player = 1; sp.walk_speed=ws; sp.run_speed=rs; sp.jump_force=jf;
+                        sp.char_radius=cr; sp.char_height=chh;
+                        if (sig) spr_follow = (int)sprites.size() - 1;
+                        continue;
+                    }
+                    char k1[32],k2[32],k3[32],k4[32],k5[32],k6[32];
+                    if (sscanf(line, "SPRKEYS %31s %31s %31s %31s %31s %31s",
+                               k1,k2,k3,k4,k5,k6) == 6) {
+                        sp.k_up=k1; sp.k_down=k2; sp.k_left=k3;
+                        sp.k_right=k4; sp.k_jump=k5; sp.k_run=k6;
+                        continue;
+                    }
+                    // trocea una linea "a|b|c|..." (los campos pueden ir vacios)
+                    auto trocear = [](const char* txt, std::string* out, int n) {
+                        std::string t(txt);
+                        while (!t.empty() && (t.back()=='\n' || t.back()=='\r')) t.pop_back();
+                        int np = 0; size_t ini = 0;
+                        for (size_t k = 0; k <= t.size() && np < n; k++)
+                            if (k == t.size() || t[k] == '|') { out[np++] = t.substr(ini, k - ini); ini = k + 1; }
+                        return np;
+                    };
+                    {   int fp, il = 1, ap = 1;
+                        if (sscanf(line, "SPRFPS %d %d %d", &fp, &il, &ap) >= 1) {
+                            sp.fps = fp; sp.iluminado = il; sp.ajuste_px = ap; continue;
+                        }
+                    }
+                    {   int cp; float cv, cr, bx, bz;
+                        if (sscanf(line, "SPRCOMP %d %f %f %f %f", &cp,&cv,&cr,&bx,&bz) == 5) {
+                            sp.comport = cp; sp.com_vel = cv; sp.com_radio = cr;
+                            sp.com_bx = bx; sp.com_bz = bz;
+                            continue;
+                        }
+                    }
+                    if (!strncmp(line, "SPRNPC ", 7)) {
+                        std::string p9[9];
+                        if (trocear(line + 7, p9, 9) >= 5) {
+                            sp.solido      = atoi(p9[0].c_str());
+                            sp.sol_radio   = (float)atof(p9[1].c_str());
+                            sp.inter_on    = atoi(p9[2].c_str());
+                            sp.inter_radio = (float)atof(p9[3].c_str());
+                            sp.inter_mirar = atoi(p9[4].c_str());
+                            sp.inter_tecla = p9[5]; sp.inter_boton = p9[6];
+                            sp.inter_anim  = p9[7]; sp.inter_llama = p9[8];
+                        }
+                        continue;
+                    }
+                    if (!strncmp(line, "SPRPAD ", 7)) {
+                        std::string p3[3];
+                        if (trocear(line + 7, p3, 3) >= 1) {
+                            sp.usar_mando = atoi(p3[0].c_str());
+                            sp.b_jump = p3[1]; sp.b_run = p3[2];
+                        }
+                        continue;
+                    }
+                    if (!strncmp(line, "SPRACCION ", 10)) {
+                        std::string p7[7];
+                        if (trocear(line + 10, p7, 7) >= 6) {
+                            SprAccion ac;
+                            ac.una_vez = atoi(p7[0].c_str());
+                            ac.espejo  = atoi(p7[1].c_str());
+                            ac.nombre  = p7[2]; ac.tecla = p7[3];
+                            ac.boton   = p7[4]; ac.anim  = p7[5]; ac.llama = p7[6];
+                            sp.acciones.push_back(ac);
+                        }
+                        continue;
+                    }
+                    {   int e1, e2, e3, e4;
+                        if (sscanf(line, "SPRKEYFLIP %d %d %d %d", &e1,&e2,&e3,&e4) == 4) {
+                            sp.fx_up=e1; sp.fx_down=e2; sp.fx_left=e3; sp.fx_right=e4;
+                            continue;
+                        }
+                    }
+                    if (!strncmp(line, "SPRKEYANIM ", 11)) {
+                        std::string t(line + 11);
+                        while (!t.empty() && (t.back()=='\n' || t.back()=='\r')) t.pop_back();
+                        std::string part[4]; int np = 0; size_t ini = 0;
+                        for (size_t k = 0; k <= t.size() && np < 4; k++)
+                            if (k == t.size() || t[k] == '|') { part[np++] = t.substr(ini, k - ini); ini = k + 1; }
+                        sp.an_up = part[0]; sp.an_down = part[1];
+                        sp.an_left = part[2]; sp.an_right = part[3];
+                        continue;
+                    }
+                    if (!strncmp(line, "SPRSTATES ", 10)) {
+                        // cuatro nombres separados por | (pueden ir vacios)
+                        std::string t(line + 10);
+                        while (!t.empty() && (t.back()=='\n' || t.back()=='\r')) t.pop_back();
+                        std::string part[4]; int np = 0; size_t ini = 0;
+                        for (size_t k = 0; k <= t.size() && np < 4; k++)
+                            if (k == t.size() || t[k] == '|') { part[np++] = t.substr(ini, k - ini); ini = k + 1; }
+                        sp.an_idle = part[0]; sp.an_walk = part[1];
+                        sp.an_run  = part[2]; sp.an_jump = part[3];
+                        continue;
+                    }
+                }
+            }
+            // ---- HUD 2D: la cabecera con los numeros y detras una linea por cadena ----
+            {   HudItem h; int nleido;
+                nleido = sscanf(line, "HUD2D %d %f %f %d %d %f %f %d %d %d %d %d %d %d %d",
+                                &h.type, &h.x, &h.y, &h.z, &h.alpha, &h.size, &h.angle,
+                                &h.flags, &h.code, &h.align,
+                                &h.col[0], &h.col[1], &h.col[2], &h.col[3], &h.vartype);
+                if (nleido >= 9) { h.text.clear(); hud.push_back(h); continue; }
+            }
+            if (!hud.empty()) {
+                // Cadena hasta el final de la linea (puede llevar espacios).
+                char val[384];
+                if (sscanf(line, "HUDNAME %383[^\n]", val) == 1)  { hud.back().name  = val; continue; }
+                if (sscanf(line, "HUDASSET %383[^\n]", val) == 1) { hud.back().asset = val; continue; }
+                if (sscanf(line, "HUDFONT %383[^\n]", val) == 1)  { hud.back().font  = val; continue; }
+                if (sscanf(line, "HUDVAR %383[^\n]", val) == 1)   { hud.back().var   = val; continue; }
+                if (sscanf(line, "HUDTEXT %383[^\n]", val) == 1)  { hud.back().text  = val; continue; }
+            }
             {   float sx2, sz2, sr2;
                 if (sscanf(line, "SOURCE %f %f %f", &sx2, &sz2, &sr2) == 3) {
                     wsources.push_back({ sx2, sz2, sr2 });
@@ -2206,6 +3014,16 @@ int main(int, char**) {
         for (auto& fpng : scan_textures(tex_dir)) paints.push_back({ fpng, nullptr });
         paint_sel = paints.empty() ? -1 : 0;
         model_cache.clear(); posed_static.clear();
+        // El HUD tambien es del proyecto: sin esto el panel seguia ofreciendo los
+        // graficos y las fuentes del proyecto ANTERIOR, y el juego generado hacia
+        // map_load de un fichero que no esta en ESTE Assets -> no se veia nada.
+        for (auto& kv : hud_imgs)  h2_free_image(&kv.second);
+        for (auto& kv : hud_fpgs)  h2_free_fpg(&kv.second);
+        for (auto& kv : hud_fonts) h2_free_font(&kv.second);
+        hud_imgs.clear(); hud_fpgs.clear(); hud_fonts.clear();
+        hud_gfx_files = hud_scan_gfx();
+        hud_font_files = hud_scan_fnt();
+        hud.clear(); hud_sel = -1;
         // vacia la escena actual
         for (auto& o : objects) g3d_entity_impl_set_position(o.entity, 0, -99999, 0);
         objects.clear(); obj_sel = -1;
@@ -2590,7 +3408,11 @@ int main(int, char**) {
         // La entidad la crea escena_iniciar y la activa (para que no haya un frame
         // sin camara); aqui se ata a 'entity' y se conduce con x/y/z (posicion) y
         // target_x/y/z (a donde mira). El hook las envia a la camara cada FRAME.
-        bool follow = (cam_mode != 0 && cam_follow >= 0 && cam_follow < (int)objects.size());
+        // La camara sigue a un objeto 3D... o a un sprite: el sprite se lleva un
+        // marcador invisible y es ese el que va en follow_ent.
+        bool follow = (cam_mode != 0 &&
+                       ((cam_follow >= 0 && cam_follow < (int)objects.size()) ||
+                        (spr_follow >= 0 && spr_follow < (int)sprites.size())));
         {
             std::string cp =
                 "PROCESS escena_camara(int cam)\n"
@@ -2664,6 +3486,807 @@ int main(int, char**) {
             }
             cp += "        FRAME;\n    END\nEND\n\n";
             fputs(cp.c_str(), f);
+        }
+
+        // Nombre valido de BennuGD2 a partir de un texto cualquiera.
+        auto gen_ident = [](const std::string& t, const char* pref) {
+            std::string o;
+            for (char c : t) {
+                if (isalnum((unsigned char)c)) o += (char)tolower(c);
+                else if (!o.empty() && o.back() != '_') o += '_';
+            }
+            while (!o.empty() && o.back() == '_') o.pop_back();
+            if (o.empty() || isdigit((unsigned char)o[0])) o = std::string(pref) + o;
+            return o;
+        };
+
+        // ---- SPRITES 2D del mundo (hojas de sprites, estilo HD-2D) ----
+        // Por cada hoja se genera: su carga con map_load y las TABLAS de recortes
+        // (un fotograma por posicion). Por cada personaje, un PROCESS que mueve
+        // sus locales y pide el recorte del fotograma que toca.
+        std::vector<std::string> spr_load, spr_launch;
+        if (!sprites.empty()) {
+            std::map<std::string, std::string> hojas;   // imagen -> prefijo de sus tablas
+            std::string gl;
+            for (auto& sp : sprites) {
+                if (sp.sheet.empty() || hojas.count(sp.sheet)) continue;
+                SheetDef* sh = sheet_of(sp.sheet);
+                if (!sh || sh->frames.empty()) {
+                    console_add("[SPRITE] '" + sp.sheet + "' no tiene fotogramas detectados: "
+                                "abrela en el panel Sprites 3D y dale a Detectar.\n");
+                    continue;
+                }
+                std::string pre = "hoja_" + gen_ident(sp.sheet.substr(0, sp.sheet.rfind('.')), "h");
+                hojas[sp.sheet] = pre;
+                int n = (int)sh->frames.size();
+                gl += "    int " + pre + ";   // Assets/" + sp.sheet + "\n";
+                const char* sufijos[6] = { "_x", "_y", "_w", "_h", "_ax", "_ay" };
+                for (int k = 0; k < 6; k++) {
+                    gl += "    int " + pre + sufijos[k] + "[" + std::to_string(n - 1) + "] =";
+                    for (int i = 0; i < n; i++) {
+                        const SprFrame& f2 = sh->frames[i];
+                        int v = (k == 0) ? f2.x : (k == 1) ? f2.y : (k == 2) ? f2.w
+                              : (k == 3) ? f2.h : (k == 4) ? f2.ax : f2.ay;
+                        gl += (i ? "," : " ") + std::to_string(v);
+                    }
+                    gl += ";\n";
+                }
+                for (auto& an : sh->anims) {
+                    if (an.frames.empty()) continue;
+                    gl += "    int " + pre + "_" + gen_ident(an.name, "a") + "[" +
+                          std::to_string((int)an.frames.size() - 1) + "] =";
+                    for (size_t i = 0; i < an.frames.size(); i++)
+                        gl += (i ? "," : " ") + std::to_string(an.frames[i]);
+                    gl += ";\n";
+                }
+                spr_load.push_back("    " + pre + " = map_load(\"Assets/" + sp.sheet + "\");\n");
+            }
+            if (!gl.empty()) {
+                fputs("// ===== SPRITES 2D del mundo (hojas colocadas en el editor) =====\n"
+                      "// Las tablas son el recorte de cada fotograma dentro de la hoja:\n"
+                      "// x,y,w,h y el ancla ax,ay (el punto que se apoya en el suelo).\n", f);
+                fputs("GLOBAL\n", f);
+                fputs(gl.c_str(), f);
+                fputs("END\n\n", f);
+            }
+            // ---- un PROCESS por personaje ----
+            // Un sprite se maneja como cualquier objeto del editor: puede ser
+            // decorativo, un cuerpo fisico, un muro, o EL JUGADOR (con su capsula
+            // de colision, sus teclas y sus animaciones por estado).
+            std::vector<std::string> pn(sprites.size());
+            for (size_t i = 0; i < sprites.size(); i++) {
+                if (!hojas.count(sprites[i].sheet)) continue;
+                std::string nom = gen_ident(sprites[i].name.empty() ? "sprite" : sprites[i].name, "spr_");
+                for (int k = 2; ; k++) {
+                    bool rep = false;
+                    for (size_t j = 0; j < i; j++) if (pn[j] == nom) { rep = true; break; }
+                    if (!rep) break;
+                    nom = gen_ident(sprites[i].name, "spr_") + "_" + std::to_string(k);
+                }
+                pn[i] = nom;
+            }
+            // Tablas de estados del jugador: los fotogramas de quieto/andar/correr/
+            // saltar, uno detras de otro, con donde empieza y cuantos tiene cada uno.
+            std::string gl2;
+            for (size_t i = 0; i < sprites.size(); i++) {
+                SprObj& sp = sprites[i];
+                if (pn[i].empty() || !sp.is_player) continue;
+                SheetDef* sh = sheet_of(sp.sheet);
+                if (!sh) continue;
+                // 0..3 = lo que hace (quieto, andando, corriendo, saltando);
+                // 4..7 = la animacion propia de cada tecla, si la has puesto.
+                std::vector<const std::string*> est = { &sp.an_idle, &sp.an_walk, &sp.an_run,
+                                                        &sp.an_jump, &sp.an_up, &sp.an_down,
+                                                        &sp.an_left, &sp.an_right };
+                for (auto& ac : sp.acciones) est.push_back(&ac.anim);   // 8, 9, 10... una por accion
+                std::vector<int> todos, ini_, num_;
+                for (int e = 0; e < (int)est.size(); e++) {
+                    const SprAnim* an = nullptr;
+                    for (auto& a : sh->anims) if (a.name == *est[e]) { an = &a; break; }
+                    if (!an && e > 0) for (auto& a : sh->anims) if (a.name == sp.an_idle) { an = &a; break; }
+                    ini_.push_back((int)todos.size());
+                    if (an && !an->frames.empty()) {
+                        for (int fr : an->frames) todos.push_back(fr);
+                        num_.push_back((int)an->frames.size());
+                    } else {                       // sin animacion: el primer fotograma
+                        todos.push_back(0);
+                        num_.push_back(1);
+                    }
+                }
+                auto tab = [&](const char* suf, const std::vector<int>& v) {
+                    gl2 += "    int " + pn[i] + suf + "[" + std::to_string((int)v.size() - 1) + "] =";
+                    for (size_t k = 0; k < v.size(); k++) gl2 += (k ? "," : " ") + std::to_string(v[k]);
+                    gl2 += ";\n";
+                };
+                gl2 += "    // " + pn[i] + ": quieto / andando / corriendo / saltando"
+                       " / adelante / atras / izquierda / derecha\n";
+                tab("_est", todos); tab("_ini", ini_); tab("_num", num_);
+            }
+            {   // Donde esta el jugador, para que los NPC sepan si te has acercado.
+                bool hay_jug = false;
+                for (auto& sp : sprites) if (sp.is_player) hay_jug = true;
+                if (hay_jug)
+                    gl2 += "    float jug_x; float jug_y; float jug_z;   // donde esta el jugador\n";
+            }
+            if (!gl2.empty()) {
+                fputs("GLOBAL\n", f);
+                fputs(gl2.c_str(), f);
+                fputs("END\n\n", f);
+            }
+            // Las acciones pueden llamar a codigo TUYO. Si ese proceso no existe,
+            // el juego no compilaria ("Undefined procedure"), asi que se crea el
+            // esqueleto en Scripts/ y se incluye; luego lo rellenas tu.
+            {
+                std::set<std::string> ya;
+                // Las llamadas pueden venir de una accion del jugador o de la
+                // interaccion de un NPC: se juntan las dos listas.
+                std::vector<std::pair<std::string, std::string>> llamadas;   // nombre, para que
+                for (auto& sp : sprites) {
+                    for (auto& ac : sp.acciones)
+                        if (!ac.llama.empty()) llamadas.push_back({ ac.llama, ac.nombre });
+                    if (sp.inter_on && !sp.inter_llama.empty())
+                        llamadas.push_back({ sp.inter_llama, "hablar con " + sp.name });
+                }
+                for (auto& par : llamadas) {
+                    {
+                        struct { std::string llama, nombre; } ac { par.first, par.second };
+                        std::string fn = gen_ident(ac.llama, "f");
+                        if (!ya.insert(fn).second) continue;
+                        std::string ruta = scripts_dir + "/" + fn + ".prg";
+                        FILE* t = fopen(ruta.c_str(), "r");
+                        if (t) fclose(t);
+                        else {
+                            FILE* n2 = fopen(ruta.c_str(), "w");
+                            if (n2) {
+                                fprintf(n2,
+                                    "// Accion '%s' del personaje: la llama el editor cuando pulsas\n"
+                                    "// la tecla o el boton que le has puesto. Es un PROCESS normal de\n"
+                                    "// BennuGD2, asi que puede durar varios FRAME (un disparo, un\n"
+                                    "// golpe con su tiempo...) o acabar enseguida con RETURN.\n"
+                                    "PROCESS %s()\n"
+                                    "BEGIN\n"
+                                    "    // ---- tu codigo aqui ----\n"
+                                    "    RETURN;\n"
+                                    "END\n",
+                                    ac.nombre.c_str(), fn.c_str());
+                                fclose(n2);
+                                console_add("Creado Scripts/" + fn + ".prg (accion '" + ac.nombre + "')\n");
+                            }
+                        }
+                        fprintf(f, "#include \"Scripts/%s.prg\"\n", fn.c_str());
+                    }
+                }
+                if (!ya.empty()) fputs("\n", f);
+            }
+
+            /* Los controles van RESPECTO A LA CAMARA (igual que en los objetos):
+               con la camara girada, "adelante" es el fondo de la PANTALLA. */
+            float ob = cam_orbit * 0.0174533f;
+            float fxk = -sinf(ob), fzk =  cosf(ob);
+            float rxk = -cosf(ob), rzk = -sinf(ob);
+
+            for (size_t i = 0; i < sprites.size(); i++) {
+                SprObj& sp = sprites[i];
+                if (pn[i].empty()) continue;
+                SheetDef* sh = sheet_of(sp.sheet);
+                std::string pre = hojas[sp.sheet], nom = pn[i];
+                int maxh = 1;
+                for (auto& fr : sh->frames) if (fr.h > maxh) maxh = fr.h;
+                float ppu = (sp.height > 0.01f) ? maxh / sp.height : 32.0f;
+                int dirs = (sp.dirs > 1) ? sp.dirs : 1;
+                // cabecera comun
+                fprintf(f, "// SPRITE 2D '%s'  (Assets/%s)%s\n", nom.c_str(), sp.sheet.c_str(),
+                        sp.is_player ? "  - EL JUGADOR" :
+                        (sp.phys >= 1 && sp.phys <= 4) ? "  - cuerpo fisico" :
+                        (sp.phys == 5) ? "  - muro invisible" : "");
+                fprintf(f, "PROCESS %s()\nPRIVATE\n", nom.c_str());
+                if (sp.is_player) {
+                    fputs("    int ch;        // capsula de colision del personaje\n"
+                          "    int seguidor;  // marcador invisible: es a quien sigue la camara\n"
+                          "    int fot; int paso; int tic; int dir; int est; int npasos; int inw;\n"
+                          "    float wx; float wz; float wl; float spd; float facing; float dt;\n"
+                          "    float adel; float lat; float px; float py; float pz; float wlev;\n"
+                          "    float prevx; float prevz;\n", f);
+                    if (!sp.acciones.empty())
+                        fprintf(f, "    int acc; int acc_t;   // accion en marcha y lo que le queda\n"
+                                   "    int ant[%d];          // si la tecla/boton ya venia pulsado\n",
+                                (int)sp.acciones.size() - 1);
+                    if (sp.usar_mando)
+                        fputs("    float ejex; float ejey;   // stick del mando\n", f);
+                    fputs("END\n", f);
+                }
+                else if (sp.phys >= 1 && sp.phys <= 4)
+                    fputs("    int cuerpo;    // el cuerpo rigido (Jolt)\n"
+                          "    int fot; int paso; int tic;\n"
+                          "    float bx; float by; float bz; float wl2; float dt;\n"
+                          "END\n", f);
+                else {
+                    fputs("    int fot; int paso; int tic; int dir;\n", f);
+                    if (sp.comport > 0)
+                        fputs("    float dx; float dz; float d; int andando;\n"
+                              "    float destx; float destz; int ida;   // patrulla\n", f);
+                    if (sp.solido)   fputs("    int caja;   // su colision, que le sigue\n", f);
+                    if (sp.inter_on) {
+                        fputs("    int cerca; int ant_i; int acc_t;   // interaccion\n", f);
+                        if (sp.comport == 0) fputs("    float dx; float dz;\n", f);
+                    }
+                    fputs("END\n", f);
+                }
+                fputs("BEGIN\n", f);
+                fputs("    ctype = C_3D;  csubtype = C3D_SPRITE;\n", f);
+                fprintf(f, "    x = %.3f; y = %.3f; z = %.3f;\n", sp.x, sp.y, sp.z);
+                fputs("    entity = g3d_sprite_create(scene, x, y, z);\n", f);
+                fprintf(f, "    g3d_sprite_set_pixels_per_unit(entity, %.3f);   // el fotograma mas alto mide %.2f unidades\n",
+                        ppu, sp.height);
+                fprintf(f, "    g3d_sprite_set_billboard(entity, %s);\n",
+                        sp.billboard ? "G3D_SPRITE_FACING" : "G3D_SPRITE_UPRIGHT");
+                fprintf(f, "    g3d_sprite_set_cutout(entity, %.2f);\n", sp.cutout);
+                fprintf(f, "    g3d_sprite_set_shadow(entity, %d);\n", sp.shadow ? 1 : 0);
+                fprintf(f, "    g3d_sprite_set_smooth(entity, %d);\n", sp.smooth ? 1 : 0);
+                fprintf(f, "    g3d_sprite_set_lit(entity, %d);   // se apaga con la luz de la escena\n",
+                        sp.iluminado ? 1 : 0);
+                fprintf(f, "    g3d_sprite_set_snap(entity, %d);   // ajuste a pixel (no tiembla)\n",
+                        sp.ajuste_px ? 1 : 0);
+                fprintf(f, "    file = 0;  graph = %s;   // la hoja entera: el recorte lo pone el fotograma\n",
+                        pre.c_str());
+
+                // Que fotograma dibujar: siempre igual, se saca del recorte.
+                std::string poner_fot =
+                    std::string("        g3d_sprite_set_cell(entity, ") + pre + "_x[fot], " + pre +
+                    "_y[fot], " + pre + "_w[fot], " + pre + "_h[fot]);\n" +
+                    "        g3d_sprite_set_anchor(entity, 1.0 * " + pre + "_ax[fot] / " + pre +
+                    "_w[fot], 1.0 * " + pre + "_ay[fot] / " + pre + "_h[fot]);\n";
+
+                if (sp.is_player) {
+                    // ---------------- EL JUGADOR ----------------
+                    // El ritmo de la animacion sale de los fps de SU animacion de
+                    // andar (o la de quieto), no de un numero inventado.
+                    int fps_jug = 10;
+                    if (sh) for (auto& a : sh->anims)
+                        if (a.name == sp.an_walk || (sp.an_walk.empty() && a.name == sp.an_idle))
+                            { fps_jug = a.fps > 0 ? a.fps : 10; break; }
+                    if (sp.fps > 0) fps_jug = sp.fps;      // los fps del personaje mandan
+                    int tics_jug = 60 / fps_jug;
+                    if (tics_jug < 1) tics_jug = 1;
+                    fputs("    dt = 1.0 / 60.0;\n", f);
+                    fprintf(f, "    ch = g3d_char_create(%.3f, %.3f, %.3f, %.3f, %.3f);   // x,y,z,radio,altura\n",
+                            sp.x, sp.y, sp.z, sp.char_radius, sp.char_height);
+                    fputs("    g3d_char_set_tuning(ch, 0.8, 46.0);\n"
+                          "    g3d_char_set_push(ch, 200.0);   // aparta cajas y barriles\n", f);
+                    fputs("    // La camara sigue a una entidad, y un sprite no lo es: se lleva un\n"
+                          "    // marcador invisible pegado al personaje y la camara mira a ese.\n"
+                          "    seguidor = g3d_entity_spawn(scene, 0, x, y, z);\n", f);
+                    if ((int)i == spr_follow)
+                        fputs("    follow_ent = seguidor;   // la camara le sigue\n", f);
+                    fputs("\n    LOOP\n"
+                          "        prevx = g3d_char_x(ch); prevz = g3d_char_z(ch);\n", f);
+                    fprintf(f,
+                          "        // ---------- CONTROLES (las teclas del editor, respecto a la camara) ----------\n"
+                          "        adel = 0.0; lat = 0.0;\n"
+                          "        IF (key(%s)) adel = adel + 1.0; END\n"
+                          "        IF (key(%s)) adel = adel - 1.0; END\n"
+                          "        IF (key(%s)) lat  = lat  + 1.0; END\n"
+                          "        IF (key(%s)) lat  = lat  - 1.0; END\n",
+                          sp.k_up.c_str(), sp.k_down.c_str(), sp.k_right.c_str(), sp.k_left.c_str());
+                    if (sp.usar_mando)
+                        fputs("        // ---------- MANDO: stick izquierdo y cruceta ----------\n"
+                              "        IF (joy_is_attached())\n"
+                              "            ejex = joy_getaxis(JOY_AXIS_LEFTX) / 32000.0;\n"
+                              "            ejey = joy_getaxis(JOY_AXIS_LEFTY) / 32000.0;\n"
+                              "            IF (ejex > 0.25 OR ejex < -0.25) lat = lat + ejex; END\n"
+                              "            IF (ejey > 0.25 OR ejey < -0.25) adel = adel - ejey; END\n"
+                              "            IF (joy_getbutton(JOY_BUTTON_DPAD_UP))    adel = adel + 1.0; END\n"
+                              "            IF (joy_getbutton(JOY_BUTTON_DPAD_DOWN))  adel = adel - 1.0; END\n"
+                              "            IF (joy_getbutton(JOY_BUTTON_DPAD_RIGHT)) lat  = lat  + 1.0; END\n"
+                              "            IF (joy_getbutton(JOY_BUTTON_DPAD_LEFT))  lat  = lat  - 1.0; END\n"
+                              "        END\n", f);
+                    fprintf(f,
+                          "        wx = adel * %.4f + lat * %.4f;\n"
+                          "        wz = adel * %.4f + lat * %.4f;\n",
+                          fxk, rxk, fzk, rzk);
+                    {
+                        std::string correr = "key(" + sp.k_run + ")";
+                        if (!sp.b_run.empty()) correr += " OR joy_getbutton(" + sp.b_run + ")";
+                        std::string saltar = "key(" + sp.k_jump + ")";
+                        if (!sp.b_jump.empty()) saltar += " OR joy_getbutton(" + sp.b_jump + ")";
+                        fprintf(f,
+                          "        spd = %.3f;\n"
+                          "        IF (%s) spd = %.3f; END   // correr\n"
+                          "        wl = sqrt(wx * wx + wz * wz);\n"
+                          "        IF (wl > 0.001)\n"
+                          "            wx = wx / wl * spd; wz = wz / wl * spd;\n"
+                          "            facing = atan2(wx, wz);   // mira hacia donde anda\n"
+                          "        END\n"
+                          "        g3d_char_move(ch, wx, wz);\n"
+                          "        IF (%s) g3d_char_jump(ch, %.3f); END\n"
+                          "        g3d_char_update(ch, dt);\n"
+                          "        px = g3d_char_x(ch); py = g3d_char_y(ch); pz = g3d_char_z(ch);\n",
+                          sp.walk_speed, correr.c_str(), sp.run_speed,
+                          saltar.c_str(), sp.jump_force);
+                    }
+                    fputs("        // ---------- AGUA: nada si la hay debajo ----------\n"
+                          "        wlev = g3d_water_level_at(px, pz);\n"
+                          "        IF (wlev > -100000.0)\n"
+                          "            inw = 0;\n"
+                          "            IF (py < wlev - 1.2) inw = 1; END\n"
+                          "            g3d_char_set_water(ch, inw, wlev);\n"
+                          "        ELSE\n"
+                          "            g3d_char_set_water(ch, 0, 0.0);\n"
+                          "        END\n", f);
+                    if (sp.zone_layer >= 0)
+                        fprintf(f,
+                          "        // ---------- ZONAS: no puede entrar en la capa %d ----------\n"
+                          "        IF (g3d_zone_blocked(px, pz, %d))\n"
+                          "            g3d_char_set_position(ch, prevx, py, prevz);\n"
+                          "            px = prevx; pz = prevz;\n"
+                          "        END\n", sp.zone_layer, sp.zone_layer);
+                    fputs("        // vars nativas: el motor lo dibuja solo al hacer FRAME\n"
+                          "        x = px; y = py; z = pz;\n"
+                          "        angle = facing;\n"
+                          "        g3d_entity_set_position(seguidor, px, py, pz);\n"
+                          "        jug_x = px; jug_y = py; jug_z = pz;   // los NPC lo leen\n", f);
+                    fputs("        // ---------- ANIMACION segun lo que esta haciendo ----------\n"
+                          "        est = 0;                                  // quieto\n"
+                          "        IF (wl > 0.001) est = 1; END              // andando\n", f);
+                    {
+                        std::string correr = "key(" + sp.k_run + ")";
+                        if (!sp.b_run.empty()) correr += " OR joy_getbutton(" + sp.b_run + ")";
+                        fprintf(f, "        IF (wl > 0.001 AND (%s)) est = 2; END  // corriendo\n",
+                                correr.c_str());
+                    }
+                    {   // Una animacion propia por tecla (y/o espejada): mientras la
+                        // tengas pulsada manda sobre la del estado. 'flags = 1' voltea
+                        // el sprite, que es lo que resuelve la derecha cuando solo
+                        // tienes dibujada la izquierda.
+                        const char* tk[4] = { sp.k_up.c_str(), sp.k_down.c_str(),
+                                              sp.k_left.c_str(), sp.k_right.c_str() };
+                        const std::string* ta[4] = { &sp.an_up, &sp.an_down, &sp.an_left, &sp.an_right };
+                        const int fx[4] = { sp.fx_up, sp.fx_down, sp.fx_left, sp.fx_right };
+                        const char* et[4] = { "adelante", "atras", "izquierda", "derecha" };
+                        bool hay_espejo = (sp.fx_up || sp.fx_down || sp.fx_left || sp.fx_right);
+                        if (hay_espejo)
+                            fputs("        flags = 0;   // sin espejo salvo que la tecla lo pida\n", f);
+                        for (int q = 0; q < 4; q++) {
+                            if (ta[q]->empty() && !fx[q]) continue;
+                            std::string com = et[q];
+                            if (!ta[q]->empty()) com += ": " + *ta[q];
+                            if (fx[q]) com += " (espejada)";
+                            fprintf(f, "        IF (key(%s))", tk[q]);
+                            if (!ta[q]->empty()) fprintf(f, " est = %d;", 4 + q);
+                            if (fx[q])           fputs(" flags = 1;", f);
+                            fprintf(f, " END   // %s\n", com.c_str());
+                        }
+                    }
+                    // ---- ACCIONES: tus teclas y botones ----
+                    if (!sp.acciones.empty()) {
+                        SheetDef* sh2 = sheet_of(sp.sheet);
+                        fputs("        // ---------- ACCIONES (las que pusiste en el editor) ----------\n"
+                              "        IF (acc_t > 0) acc_t = acc_t - 1; END\n"
+                              "        IF (acc_t <= 0)\n"
+                              "            acc = 0;\n", f);
+                        for (int q = 0; q < (int)sp.acciones.size(); q++) {
+                            const SprAccion& ac = sp.acciones[q];
+                            std::string cond;
+                            if (!ac.tecla.empty()) cond = "key(" + ac.tecla + ")";
+                            if (!ac.boton.empty())
+                                cond += (cond.empty() ? "" : " OR ") + std::string("joy_getbutton(") + ac.boton + ")";
+                            if (cond.empty()) continue;
+                            // cuantos frames dura si suena entera (fotogramas x su ritmo)
+                            int dur = 20;
+                            if (sh2) for (auto& a2 : sh2->anims)
+                                if (a2.name == ac.anim) {
+                                    int t2 = 60 / (a2.fps > 0 ? a2.fps : 10);
+                                    if (t2 < 1) t2 = 1;
+                                    dur = (int)a2.frames.size() * t2;
+                                    break;
+                                }
+                            fprintf(f, "            IF ((%s)%s)   // %s\n", cond.c_str(),
+                                    ac.una_vez ? (" AND ant[" + std::to_string(q) + "] == 0").c_str() : "",
+                                    ac.nombre.c_str());
+                            fprintf(f, "                acc = %d;", q + 1);
+                            if (ac.una_vez)
+                                fprintf(f, " acc_t = %d; paso = 0; tic = 0;", dur);
+                            if (!ac.llama.empty())
+                                fprintf(f, " %s();", gen_ident(ac.llama, "f").c_str());
+                            fputs("\n            END\n", f);
+                        }
+                        fputs("        END\n", f);
+                        // memoria de si ya venia pulsado, para que una accion "entera"
+                        // no se repita sola mientras aguantas la tecla
+                        for (int q = 0; q < (int)sp.acciones.size(); q++) {
+                            const SprAccion& ac = sp.acciones[q];
+                            if (!ac.una_vez) continue;
+                            std::string cond;
+                            if (!ac.tecla.empty()) cond = "key(" + ac.tecla + ")";
+                            if (!ac.boton.empty())
+                                cond += (cond.empty() ? "" : " OR ") + std::string("joy_getbutton(") + ac.boton + ")";
+                            if (cond.empty()) continue;
+                            fprintf(f, "        ant[%d] = 0;  IF (%s) ant[%d] = 1; END\n",
+                                    q, cond.c_str(), q);
+                        }
+                    }
+                    fputs("        IF (g3d_char_grounded(ch) == 0) est = 3; END   // en el aire\n", f);
+                    // Una accion en marcha manda sobre andar, correr y saltar. Va
+                    // ANTES de calcular npasos: si no, el numero de pasos seria el
+                    // del estado anterior y la animacion se cortaria a destiempo.
+                    if (!sp.acciones.empty()) {
+                        for (int q = 0; q < (int)sp.acciones.size(); q++) {
+                            const SprAccion& ac = sp.acciones[q];
+                            if (ac.anim.empty() && !ac.espejo) continue;
+                            fprintf(f, "        IF (acc == %d)", q + 1);
+                            if (!ac.anim.empty()) fprintf(f, " est = %d;", 8 + q);
+                            if (ac.espejo)        fputs(" flags = 1;", f);
+                            fprintf(f, " END   // %s\n", ac.nombre.c_str());
+                        }
+                    }
+                    fprintf(f,
+                          "        npasos = %s_num[est] / %d;\n"
+                          "        IF (npasos < 1) npasos = 1; END\n"
+                          "        tic = tic + 1;\n"
+                          "        IF (tic >= %d)  tic = 0;  paso = paso + 1;  END   // %d fotogramas por segundo\n"
+                          "        IF (paso >= npasos) paso = 0; END\n",
+                          nom.c_str(), dirs, tics_jug, 60 / (tics_jug > 0 ? tics_jug : 1));
+                    if (dirs > 1)
+                        fprintf(f,
+                          "        dir = g3d_sprite_dir(entity, angle, %d);   // postura segun la camara\n"
+                          "        fot = %s_est[%s_ini[est] + dir * npasos + paso];\n",
+                          dirs, nom.c_str(), nom.c_str());
+                    else
+                        fprintf(f, "        fot = %s_est[%s_ini[est] + paso];\n", nom.c_str(), nom.c_str());
+                    fputs(poner_fot.c_str(), f);
+                    fputs("        FRAME;\n    END\nEND\n\n", f);
+
+                } else if (sp.phys >= 1 && sp.phys <= 4) {
+                    // ---------------- CUERPO FISICO ----------------
+                    float c = sp.csize * 0.5f;
+                    fputs("    dt = 1.0 / 60.0;\n", f);
+                    if (sp.phys == 1)
+                        fprintf(f, "    cuerpo = g3d_rigidbody_create(x, y, z, %.3f, %.3f, %.3f, %.3f);\n",
+                                c, c, c, sp.mass);
+                    else if (sp.phys == 2)
+                        fprintf(f, "    cuerpo = g3d_rigidbody_create_sphere(x, y, z, %.3f, %.3f);\n",
+                                c, sp.mass);
+                    else if (sp.phys == 3)
+                        fprintf(f, "    cuerpo = g3d_rigidbody_create_capsule(x, y, z, %.3f, %.3f, %.3f);\n",
+                                c, c, sp.mass);
+                    else
+                        fprintf(f, "    cuerpo = g3d_rigidbody_create_cylinder(x, y, z, %.3f, %.3f, %.3f);\n",
+                                c, c, sp.mass);
+                    fprintf(f, "    g3d_rigidbody_set_bounce(cuerpo, %.3f, %.3f);   // rebote, friccion\n",
+                            sp.bounce, sp.friction);
+                    fputs("\n    LOOP\n"
+                          "        // la fisica manda: se leen las coordenadas del cuerpo\n"
+                          "        bx = g3d_rigidbody_x(cuerpo); by = g3d_rigidbody_y(cuerpo);\n"
+                          "        bz = g3d_rigidbody_z(cuerpo);\n", f);
+                    if (sp.buoyant && sp.mass > 0.0f)
+                        fprintf(f,
+                          "        wl2 = g3d_water_level_at(bx, bz);   // flota en el agua que haya\n"
+                          "        IF (wl2 > -100000.0) g3d_rigidbody_set_buoyancy(cuerpo, wl2, %.3f); END\n",
+                          sp.density > 0.05f ? sp.density : 0.05f);
+                    fputs("        x = bx; y = by; z = bz;\n", f);
+                    fputs("        fot = 0;\n", f);
+                    fputs(poner_fot.c_str(), f);
+                    fputs("        FRAME;\n    END\nEND\n\n", f);
+
+                } else {
+                    // ---------------- DECORATIVO / NPC ----------------
+                    if (sp.solido)
+                        fprintf(f,
+                          "    // colision propia, que se mueve con el (los muros son fijos)\n"
+                          "    caja = g3d_collider_add_box(x - %.3f, y, z - %.3f, x + %.3f, y + %.3f, z + %.3f);\n",
+                          sp.sol_radio, sp.sol_radio, sp.sol_radio, sp.height, sp.sol_radio);
+                    if (sp.phys == 5) {
+                        float half = sp.csize * 0.5f;
+                        fprintf(f,
+                          "    // muro invisible a su alrededor: no se mueve, pero corta el paso\n"
+                          "    g3d_collider_add_box(x - %.3f, y, z - %.3f, x + %.3f, y + %.3f, z + %.3f);\n",
+                          half, half, half, sp.height, half);
+                    }
+                    const SprAnim* an = nullptr;
+                    if (sh) for (auto& a : sh->anims) if (a.name == sp.anim) { an = &a; break; }
+                    int npasos = an ? (int)an->frames.size() / dirs : 0;
+                    if (an && npasos < 1) { npasos = (int)an->frames.size(); dirs = 1; }
+                    int fps_o = an ? (an->fps > 0 ? an->fps : 10) : 10;
+                    if (sp.fps > 0) fps_o = sp.fps;        // los fps del objeto mandan
+                    int tics = an ? (60 / fps_o) : 1;
+                    if (tics < 1) tics = 1;
+                    fputs("\n    LOOP\n", f);
+                    if (sp.comport > 0) {
+                        float paso = sp.com_vel / 60.0f;
+                        fputs("        // ---------- COMPORTAMIENTO ----------\n"
+                              "        andando = 0;\n", f);
+                        if (sp.comport == 1) {
+                            fprintf(f,
+                              "        IF (destx == 0.0 AND destz == 0.0 AND ida == 0)\n"
+                              "            destx = %.3f; destz = %.3f;   // el punto B\n"
+                              "        END\n"
+                              "        dx = destx - x;  dz = destz - z;\n"
+                              "        d = sqrt(dx * dx + dz * dz);\n"
+                              "        IF (d < 0.5)\n"
+                              "            IF (ida == 0)  destx = %.3f; destz = %.3f; ida = 1;\n"
+                              "            ELSE           destx = %.3f; destz = %.3f; ida = 0;  END\n"
+                              "        ELSE\n"
+                              "            x = x + dx / d * %.4f;\n"
+                              "            z = z + dz / d * %.4f;\n"
+                              "            angle = atan2(dx, dz);\n"
+                              "            andando = 1;\n"
+                              "        END\n",
+                              sp.com_bx, sp.com_bz, sp.x, sp.z, sp.com_bx, sp.com_bz, paso, paso);
+                        } else {
+                            float signo = (sp.comport == 3) ? -1.0f : 1.0f;
+                            fprintf(f,
+                              "        dx = jug_x - x;  dz = jug_z - z;\n"
+                              "        d = sqrt(dx * dx + dz * dz);\n"
+                              "        IF (d < %.3f AND d > 1.2)\n"
+                              "            x = x + dx / d * %.4f;\n"
+                              "            z = z + dz / d * %.4f;\n"
+                              "            angle = atan2(dx * %.1f, dz * %.1f);\n"
+                              "            andando = 1;\n"
+                              "        END\n",
+                              sp.com_radio, paso * signo, paso * signo, signo, signo);
+                        }
+                        fputs("        y = g3d_scene_terrain_height(x, z);   // se apoya en el suelo\n", f);
+                    }
+                    if (an) {
+                        std::string tab = pre + "_" + gen_ident(an->name, "a");
+                        // Si anda (patrulla, sigue o huye) y tiene animacion propia
+                        // para moverse, esa manda mientras se mueva.
+                        const SprAnim* aw = nullptr;
+                        if (sp.comport > 0 && !sp.an_walk.empty() && sh)
+                            for (auto& a2 : sh->anims) if (a2.name == sp.an_walk) { aw = &a2; break; }
+                        int nw = aw ? (int)aw->frames.size() / dirs : 0;
+                        if (aw && nw < 1) nw = (int)aw->frames.size();
+                        // El contador tiene que dar para la mas larga de las dos: con
+                        // el numero de la de 'quieto' (a menudo 1 fotograma) la de
+                        // andar no avanzaba nunca.
+                        int pasos_max = npasos > nw ? npasos : nw;
+                        if (pasos_max < 1) pasos_max = 1;
+                        int fps_np = (aw ? aw->fps : an->fps) > 0 ? (aw ? aw->fps : an->fps) : 10;
+                        if (sp.fps > 0) fps_np = sp.fps;
+                        int tics_np = 60 / fps_np;
+                        if (tics_np < 1) tics_np = 1;
+                        fprintf(f, "        tic = tic + 1;   // %d fotogramas por segundo\n", fps_np);
+                        fprintf(f, "        IF (tic >= %d)  tic = 0;  paso = (paso + 1) %% %d;  END\n",
+                                tics_np, pasos_max);
+                        if (dirs > 1) {
+                            fprintf(f, "        dir = g3d_sprite_dir(entity, angle, %d);\n", dirs);
+                            if (aw)
+                                fprintf(f, "        IF (andando)  fot = %s_%s[dir * %d + paso %% %d];\n"
+                                           "        ELSE          fot = %s[dir * %d + paso %% %d];  END\n",
+                                        pre.c_str(), gen_ident(aw->name, "a").c_str(), nw, nw,
+                                        tab.c_str(), npasos, npasos);
+                            else
+                                fprintf(f, "        fot = %s[dir * %d + paso %% %d];\n",
+                                        tab.c_str(), npasos, npasos);
+                        } else {
+                            if (aw)
+                                fprintf(f, "        IF (andando)  fot = %s_%s[paso %% %d];\n"
+                                           "        ELSE          fot = %s[paso %% %d];  END\n",
+                                        pre.c_str(), gen_ident(aw->name, "a").c_str(), nw,
+                                        tab.c_str(), npasos);
+                            else
+                                fprintf(f, "        fot = %s[paso %% %d];\n", tab.c_str(), npasos);
+                        }
+                    } else {
+                        fputs("        fot = 0;\n", f);
+                    }
+                    if (sp.solido)
+                        fprintf(f,
+                          "        // la colision le sigue alla donde vaya\n"
+                          "        g3d_collider_set_box(caja, x - %.3f, y, z - %.3f, x + %.3f, y + %.3f, z + %.3f);\n",
+                          sp.sol_radio, sp.sol_radio, sp.sol_radio, sp.height, sp.sol_radio);
+                    if (sp.inter_on) {
+                        std::string cond;
+                        if (!sp.inter_tecla.empty()) cond = "key(" + sp.inter_tecla + ")";
+                        if (!sp.inter_boton.empty())
+                            cond += (cond.empty() ? "" : " OR ") +
+                                    std::string("joy_getbutton(") + sp.inter_boton + ")";
+                        if (cond.empty()) cond = "0";
+                        fprintf(f,
+                          "        // ---------- INTERACCION: acercarse y pulsar ----------\n"
+                          "        dx = jug_x - x;  dz = jug_z - z;\n"
+                          "        cerca = 0;\n"
+                          "        IF (dx * dx + dz * dz < %.3f) cerca = 1; END\n",
+                          sp.inter_radio * sp.inter_radio);
+                        if (sp.inter_mirar)
+                            fputs("        IF (cerca) angle = atan2(-dx, -dz); END   // se gira hacia ti\n", f);
+                        fprintf(f,
+                          "        IF (cerca AND (%s) AND ant_i == 0)\n", cond.c_str());
+                        if (!sp.inter_llama.empty())
+                            fprintf(f, "            %s();\n", gen_ident(sp.inter_llama, "f").c_str());
+                        if (!sp.inter_anim.empty()) {
+                            int durf = 30;
+                            if (sh) for (auto& a2 : sh->anims)
+                                if (a2.name == sp.inter_anim) {
+                                    int t2 = 60 / (a2.fps > 0 ? a2.fps : 10);
+                                    if (t2 < 1) t2 = 1;
+                                    durf = (int)a2.frames.size() * t2;
+                                    break;
+                                }
+                            fprintf(f, "            acc_t = %d; paso = 0; tic = 0;   // %s\n",
+                                    durf, sp.inter_anim.c_str());
+                        }
+                        fputs("        END\n", f);
+                        fprintf(f, "        ant_i = 0;  IF (%s) ant_i = 1; END\n", cond.c_str());
+                        if (!sp.inter_anim.empty()) {
+                            // mientras dura la interaccion se dibuja SU animacion
+                            std::string tabi = pre + "_" + gen_ident(sp.inter_anim, "a");
+                            fprintf(f,
+                              "        IF (acc_t > 0)\n"
+                              "            acc_t = acc_t - 1;\n"
+                              "            fot = %s[paso %% %d];\n"
+                              "        END\n",
+                              tabi.c_str(),
+                              (int)[&]{ int n2 = 1; if (sh) for (auto& a2 : sh->anims)
+                                        if (a2.name == sp.inter_anim) n2 = (int)a2.frames.size();
+                                        return n2 < 1 ? 1 : n2; }());
+                        }
+                    }
+                    fputs(poner_fot.c_str(), f);
+                    fputs("        FRAME;\n    END\nEND\n\n", f);
+                }
+                spr_launch.push_back("    " + nom + "();\n");
+            }
+            if (!spr_launch.empty())
+                console_add("Sprites 2D: " + std::to_string((int)spr_launch.size()) +
+                            " personajes puestos en main.prg\n");
+        }
+
+        // ---- HUD 2D: cada grafico y cada texto, un PROCESS de BennuGD2 ----
+        // Se hace como se hace en BennuGD2: los recursos (map/fpg/fnt) se cargan
+        // UNA vez en escena_iniciar y quedan en GLOBALs, y cada elemento es un
+        // proceso que solo pone SUS LOCALES (file/graph/x/y/z/size/angle/flags/
+        // alpha) o llama a write(). Nada de dibujar desde C: el motor grafico ya
+        // dibuja los procesos, y el 3D queda siempre por detras.
+        std::vector<std::string> hud_res_load;   // cargas para escena_iniciar
+        std::vector<std::string> hud_launch;     // arranque de los procesos
+        if (!hud.empty()) {
+            auto& ident = gen_ident;
+            // Texto para un literal de BennuGD2: a latin-1 (que es lo que escribe
+            // el motor) y con las comillas y las barras escapadas.
+            auto literal = [&](const std::string& t) {
+                std::string o = "\"";
+                for (char c : hud_latin1(t)) {
+                    if (c == '"' || c == '\\') o += '\\';
+                    o += c;
+                }
+                return o + "\"";
+            };
+            std::map<std::string, std::string> res;   // fichero -> GLOBAL que lo guarda
+            std::string hud_globals;
+            auto res_var = [&](const std::string& file, bool es_fuente) {
+                auto it = res.find(file);
+                if (it != res.end()) return it->second;
+                const char* pre = es_fuente ? "hud_fnt_" : (hud_is_fpg(file) ? "hud_fpg_" : "hud_map_");
+                const char* fn  = es_fuente ? "fnt_load" : (hud_is_fpg(file) ? "fpg_load" : "map_load");
+                std::string v = pre + ident(file.substr(0, file.rfind('.')), "g");
+                std::string base = v;                    // dos ficheros distintos pueden dar el mismo nombre
+                for (int n = 2; ; n++) {
+                    bool rep = false;
+                    for (auto& r : res) if (r.second == v) { rep = true; break; }
+                    if (!rep) break;
+                    v = base + "_" + std::to_string(n);
+                }
+                if (!fs::exists(assets_dir + "/" + file))
+                    console_add("[HUD] no encuentro Assets/" + file +
+                                ": el elemento saldra en blanco (vuelve a elegirlo en el panel HUD 2D)\n");
+                res[file] = v;
+                hud_globals += "    int " + v + ";   // Assets/" + file + "\n";
+                hud_res_load.push_back("    " + v + " = " + fn + "(\"Assets/" + file + "\");\n");
+                return v;
+            };
+            // Nombres de proceso unicos (el nombre lo pone el usuario en el panel).
+            std::vector<std::string> pname(hud.size());
+            for (size_t i = 0; i < hud.size(); i++) {
+                std::string n = ident(hud[i].name.empty() ? "hud" : hud[i].name, "hud_");
+                std::string cand = n;
+                for (int k = 2; ; k++) {
+                    bool rep = false;
+                    for (size_t j = 0; j < i; j++) if (pname[j] == cand) { rep = true; break; }
+                    if (!rep) break;
+                    cand = n + "_" + std::to_string(k);
+                }
+                pname[i] = cand;
+            }
+            // Las variables de los textos con write_var tambien son GLOBALs: el
+            // texto se refresca solo cuando tu codigo les cambia el valor.
+            std::string hud_vars;
+            std::set<std::string> vistas;
+            for (auto& h : hud) {
+                if (h.type != 1 || h.var.empty()) continue;
+                std::string v = ident(h.var, "v");
+                if (!vistas.insert(v).second) continue;
+                const char* tipo = (h.vartype == 1) ? "float" : (h.vartype == 2) ? "string" : "int";
+                hud_vars += std::string("    ") + tipo + " " + v + ";\n";
+            }
+            // Los recursos hay que resolverlos antes de escribir el bloque GLOBAL.
+            std::vector<std::string> gvar(hud.size());
+            for (size_t i = 0; i < hud.size(); i++) {
+                if (hud[i].type == 0 && !hud[i].asset.empty()) gvar[i] = res_var(hud[i].asset, false);
+                if (hud[i].type == 1 && !hud[i].font.empty())  gvar[i] = res_var(hud[i].font, true);
+            }
+            fputs("// ===== HUD 2D (colocado en el editor) =====\n", f);
+            // Un GLOBAL vacio no tiene sentido: un HUD de solo textos con la
+            // fuente del sistema no carga ningun recurso ni declara variables.
+            if (!hud_globals.empty() || !hud_vars.empty()) {
+                fputs("GLOBAL\n", f);
+                if (!hud_globals.empty()) {
+                    fputs("    // recursos: se cargan en escena_iniciar\n", f);
+                    fputs(hud_globals.c_str(), f);
+                }
+                if (!hud_vars.empty()) {
+                    fputs("    // variables que muestran los textos: ponles valor desde tu codigo\n", f);
+                    fputs(hud_vars.c_str(), f);
+                }
+                fputs("END\n\n", f);
+            }
+
+            const char* ALIN[9] = { "ALIGN_TOP_LEFT", "ALIGN_TOP", "ALIGN_TOP_RIGHT",
+                                    "ALIGN_CENTER_LEFT", "ALIGN_CENTER", "ALIGN_CENTER_RIGHT",
+                                    "ALIGN_BOTTOM_LEFT", "ALIGN_BOTTOM", "ALIGN_BOTTOM_RIGHT" };
+            for (size_t i = 0; i < hud.size(); i++) {
+                HudItem& h = hud[i];
+                if (h.type == 0) {
+                    if (h.asset.empty()) {                     // sin grafico no hay nada que poner
+                        console_add("[HUD] '" + h.name + "' no tiene grafico asignado: no se genera.\n"
+                                    "      Eligelo en el panel HUD 2D (necesita un .png/.jpg o un .fpg en Assets).\n");
+                        continue;
+                    }
+                    bool es_fpg = hud_is_fpg(h.asset);
+                    fprintf(f, "// HUD: grafico '%s'  (Assets/%s)\n", pname[i].c_str(), h.asset.c_str());
+                    fprintf(f, "PROCESS %s()\nBEGIN\n", pname[i].c_str());
+                    if (es_fpg) {
+                        fprintf(f, "    file  = %s;   // el FPG\n", gvar[i].c_str());
+                        fprintf(f, "    graph = %d;   // grafico dentro del FPG\n", h.code);
+                    } else {
+                        fputs("    file  = 0;   // 0 = grafico suelto (map_load)\n", f);
+                        fprintf(f, "    graph = %s;\n", gvar[i].c_str());
+                    }
+                    fprintf(f, "    x = %.0f; y = %.0f; z = %d;   // x,y = centro del grafico\n",
+                            h.x, h.y, h.z);
+                    fprintf(f, "    size = %.0f; angle = %d;   // angle en milesimas de grado\n",
+                            h.size, (int)(h.angle * 1000.0f));
+                    fprintf(f, "    flags = %d; alpha = %d;\n", h.flags, h.alpha);
+                    fputs("    LOOP\n"
+                          "        // aqui puedes moverlo, cambiarle el graph, el alpha...\n"
+                          "        FRAME;\n"
+                          "    END\n"
+                          "END\n\n", f);
+                } else {
+                    const char* fnt = h.font.empty() ? "0" : gvar[i].c_str();
+                    fprintf(f, "// HUD: texto '%s'  (%s)\n", pname[i].c_str(),
+                            h.font.empty() ? "fuente 0 del sistema" : ("Assets/" + h.font).c_str());
+                    // 'id' es variable reservada de BennuGD2 (el id del proceso):
+                    // llamarla asi da "Variable already declared in another context".
+                    fprintf(f, "PROCESS %s()\nPRIVATE\n"
+                               "    int idtxt;   // write_move(idtxt,x,y) lo mueve; write_delete(idtxt) lo quita\n"
+                               "END\nBEGIN\n", pname[i].c_str());
+                    if (h.var.empty())
+                        fprintf(f, "    idtxt = write(%s, %.0f, %.0f, %d, %s, %s);\n",
+                                fnt, h.x, h.y, h.z, ALIN[h.align < 0 || h.align > 8 ? 0 : h.align],
+                                literal(h.text).c_str());
+                    else
+                        fprintf(f, "    idtxt = write_var(%s, %.0f, %.0f, %d, %s, %s);\n",
+                                fnt, h.x, h.y, h.z, ALIN[h.align < 0 || h.align > 8 ? 0 : h.align],
+                                ident(h.var, "v").c_str());
+                    fprintf(f, "    write_set_rgba(idtxt, %d, %d, %d, %d);\n",
+                            h.col[0], h.col[1], h.col[2], h.col[3]);
+                    fputs("    LOOP\n"
+                          "        FRAME;\n"
+                          "    END\n"
+                          "END\n\n", f);
+                }
+                hud_launch.push_back("    " + pname[i] + "();\n");
+            }
+            // Que se vea en la consola que el HUD ha entrado en el juego: si algo
+            // no sale en pantalla, aqui se ve si siquiera se ha generado.
+            {
+                int ng = 0, nt = 0;
+                for (size_t i = 0; i < hud.size(); i++)
+                    if (hud[i].type == 0) { if (!hud[i].asset.empty()) ng++; } else nt++;
+                console_add("HUD 2D: " + std::to_string(ng) + " graficos y " +
+                            std::to_string(nt) + " textos puestos en main.prg\n");
+            }
         }
 
         fputs("// Monta el escenario: terreno, agua, objetos, sus procesos y la camara.\n"
@@ -2907,6 +4530,18 @@ int main(int, char**) {
         //      puesto (el jugador se spawnea antes), asi que la camara ve al
         //      objetivo desde su primer frame. ----
         fputs("    escena_camara(camera);\n", f);
+        // El HUD va al final del montaje: primero los recursos (map/fpg/fnt) y
+        // luego sus procesos, que ya encuentran cargado lo que van a dibujar.
+        if (!spr_load.empty() || !spr_launch.empty()) {
+            fputs("    // ---- sprites 2D del mundo ----\n", f);
+            for (auto& l : spr_load)   fputs(l.c_str(), f);
+            for (auto& l : spr_launch) fputs(l.c_str(), f);
+        }
+        if (!hud_res_load.empty() || !hud_launch.empty()) {
+            fputs("    // ---- HUD 2D ----\n", f);
+            for (auto& l : hud_res_load) fputs(l.c_str(), f);
+            for (auto& l : hud_launch)   fputs(l.c_str(), f);
+        }
         // Aqui acaba el montaje. El bucle por frame va en su propio proceso para
         // que main.prg pueda ser tuyo: arrancas el escenario, lanzas el motor y
         // encima escribes lo que quieras.
@@ -3389,6 +5024,9 @@ int main(int, char**) {
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Escena")) {
+                ImGui::MenuItem(ICON_FA_PERSON_RUNNING "  Sprites 3D (hojas y personajes)",
+                                nullptr, &show_spr_win);
+                ImGui::Separator();
                 if (ImGui::MenuItem("Vaciar escena")) {
                     for (auto& o : objects) g3d_entity_impl_set_position(o.entity, 0, -99999, 0);
                     objects.clear(); obj_sel = -1;
@@ -3469,11 +5107,12 @@ int main(int, char**) {
             }
             // ---- toolbar de iconos (herramientas del editor) ----
             auto toolBtn = [&](const char* icon, int t, const char* tip) {
-                bool on = (tool == t);
+                bool on = (tool == t), pulsado = false;
                 if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.59f, 0.98f, 1.0f));
-                if (ImGui::Button(icon)) tool = t;
+                if (ImGui::Button(icon)) { tool = t; pulsado = true; }
                 if (on) ImGui::PopStyleColor();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+                return pulsado;   // hay herramientas que ademas abren su ventana
             };
             ImGui::SameLine(0, 24);
             toolBtn(ICON_FA_ARROW_POINTER,       T_SELECT, "Seleccionar");
@@ -3497,6 +5136,22 @@ int main(int, char**) {
             toolBtn(ICON_FA_WATER,               T_RIVER,   "Rio: clic para poner puntos del cauce, doble clic para terminar");
             toolBtn(ICON_FA_ANGLES_DOWN,         T_WATERFALL, "Cascada: clic arriba (el borde) y clic abajo (la base/poza)");
             toolBtn(ICON_FA_FAUCET_DRIP,         T_WATERSOURCE, "Manantial: clic para poner una fuente; el agua fluye sola (rios/cascadas con fisica)");
+            ImGui::SameLine(0, 12); ImGui::TextDisabled("|"); ImGui::SameLine(0, 12);
+            toolBtn(ICON_FA_FONT,                T_HUD,     "HUD 2D: graficos y textos de pantalla (panel 'HUD 2D')");
+            if (toolBtn(ICON_FA_PERSON_RUNNING, T_SPRITE,
+                        "Sprite 2D en el mundo 3D: abre la ventana de hojas y coloca personajes"))
+                show_spr_win = true;
+            // Y un boton propio para enseniarla/esconderla, que quede claro si esta
+            // abierta: la herramienta se queda marcada aunque cierres la ventana.
+            {
+                bool on = show_spr_win;
+                if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.59f, 0.98f, 1.0f));
+                if (ImGui::Button(ICON_FA_TABLE_CELLS "##ventana_spr")) show_spr_win = !show_spr_win;
+                if (on) ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(show_spr_win ? "Cerrar la ventana de Sprites 3D"
+                                                   : "Abrir la ventana de Sprites 3D (hojas y animaciones)");
+            }
 
             // ---- PLAY: compila el juego y lo ejecuta en su propia ventana ----
             // Es un proceso BennuGD2 normal, con todos sus hooks: fidelidad total
@@ -3580,6 +5235,7 @@ int main(int, char**) {
             ImGui::DockBuilderDockWindow("Jerarquia", lbottom);
             ImGui::DockBuilderDockWindow("Entorno",   lbottom);
             ImGui::DockBuilderDockWindow("Inspector", right);
+            ImGui::DockBuilderDockWindow(ICON_FA_FONT "  HUD 2D", right);
             ImGuiID bottom;
             ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.26f, &bottom, &center);
             ImGui::DockBuilderDockWindow("Escena",    center);
@@ -3664,6 +5320,29 @@ int main(int, char**) {
                 o.x = t[0]; o.y = t[1]; o.z = t[2];
                 o.ry = r[1] * 0.0174533f;
                 o.scale = (s[0] + s[1] + s[2]) / 3.0f;
+            }
+        }
+        /* Lo mismo para un SPRITE elegido: arrastrarlo con el gizmo en vez de ir
+           a la ficha a teclear numeros. Solo mover y escalar (el alto), que un
+           billboard no se rota: siempre mira a la camara. */
+        else if (gizmo_tool && spr_sel >= 0 && spr_sel < (int)sprites.size()) {
+            SprObj& o = sprites[spr_sel];
+            float view[16], proj[16], model[16];
+            g3d_editor_get_view(view); g3d_editor_get_proj(proj);
+            float t[3] = { o.x, o.y, o.z };
+            float r[3] = { 0.0f, 0.0f, 0.0f };
+            float s2[3] = { o.height, o.height, o.height };
+            ImGuizmo::RecomposeMatrixFromComponents(t, r, s2, model);
+            ImGuizmo::OPERATION op = (gizmo_op == ImGuizmo::SCALE) ? ImGuizmo::SCALE
+                                                                  : ImGuizmo::TRANSLATE;
+            ImGuizmo::Manipulate(view, proj, op, ImGuizmo::WORLD, model);
+            if (ImGuizmo::IsUsing()) {
+                ImGuizmo::DecomposeMatrixToComponents(model, t, r, s2);
+                o.x = t[0]; o.y = t[1]; o.z = t[2];
+                if (op == ImGuizmo::SCALE) {
+                    float h = (s2[0] + s2[1] + s2[2]) / 3.0f;
+                    if (h > 0.05f) o.height = h;
+                }
             }
         }
 
@@ -4034,6 +5713,120 @@ int main(int, char**) {
                     }
                 }
             }
+        }
+
+        // ---- HUD 2D: previo encima de la escena (lo que se vera en el juego) ----
+        // El juego corre a 1280x720 (set_mode de escena_iniciar) y el viewport no
+        // tiene por que tener esa proporcion, asi que se dibuja el rectangulo de la
+        // pantalla del juego centrado y el HUD se escala a el. Se pinta con las
+        // MISMAS metricas que usara BennuGD2: el grafico centrado en x,y y el texto
+        // glifo a glifo con los offsets de la fuente .fnt.
+        if (hud_show && !playing && (!hud.empty() || tool == T_HUD)) {
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            float gw = avail.x, gh = avail.x * HUD_H / HUD_W;
+            if (gh > avail.y) { gh = avail.y; gw = avail.y * HUD_W / HUD_H; }
+            ImVec2 g0(img_min.x + (avail.x - gw) * 0.5f, img_min.y + (avail.y - gh) * 0.5f);
+            float sc = gw / HUD_W;
+            if (tool == T_HUD) {
+                dl->AddRect(g0, ImVec2(g0.x + gw, g0.y + gh), IM_COL32(120, 180, 255, 90));
+                dl->AddText(ImVec2(g0.x + 4, g0.y + 4), IM_COL32(120, 180, 255, 140), "pantalla del juego 1280x720");
+            }
+            // De mayor a menor z: en BennuGD2 el z mas alto se dibuja antes (al fondo).
+            std::vector<int> orden(hud.size());
+            for (size_t i = 0; i < hud.size(); i++) orden[i] = (int)i;
+            std::stable_sort(orden.begin(), orden.end(),
+                             [&](int a, int b) { return hud[a].z > hud[b].z; });
+            for (int idx : orden) {
+                HudItem& h = hud[idx];
+                float w, hh, ox, oy;
+                hud_item_size(h, &w, &hh);
+                hud_item_origin(h, w, hh, &ox, &oy);
+                ImVec2 p0(g0.x + ox * sc, g0.y + oy * sc);
+                ImVec2 p1(p0.x + w * sc, p0.y + hh * sc);
+                if (h.type == 0) {
+                    H2Img* im = hud_item_img(h);
+                    if (im) {
+                        ImVec2 uv0(0, 0), uv1(1, 1);
+                        if (h.flags & 1) std::swap(uv0.x, uv1.x);   // espejo horizontal
+                        if (h.flags & 2) std::swap(uv0.y, uv1.y);   // espejo vertical
+                        ImU32 tint = IM_COL32(255, 255, 255, h.alpha);
+                        if (h.angle != 0.0f) {
+                            // BennuGD2 gira en sentido antihorario alrededor de x,y
+                            float a = -h.angle * 3.14159265f / 180.0f;
+                            float ca = cosf(a), sa = sinf(a);
+                            ImVec2 c(g0.x + h.x * sc, g0.y + h.y * sc);
+                            auto rot = [&](float dx, float dy) {
+                                return ImVec2(c.x + dx * ca - dy * sa, c.y + dx * sa + dy * ca);
+                            };
+                            float hw = w * sc * 0.5f, hhh = hh * sc * 0.5f;
+                            dl->AddImageQuad((ImTextureID)(intptr_t)im->tex,
+                                             rot(-hw, -hhh), rot(hw, -hhh), rot(hw, hhh), rot(-hw, hhh),
+                                             uv0, ImVec2(uv1.x, uv0.y), uv1, ImVec2(uv0.x, uv1.y), tint);
+                        } else {
+                            dl->AddImage((ImTextureID)(intptr_t)im->tex, p0, p1, uv0, uv1, tint);
+                        }
+                    } else {
+                        // Sin grafico cargado: un hueco, para verlo y poder moverlo.
+                        dl->AddRect(p0, p1, IM_COL32(255, 120, 120, 200));
+                        dl->AddLine(p0, p1, IM_COL32(255, 120, 120, 120));
+                    }
+                } else {
+                    std::string txt = hud_latin1(h.var.empty() ? h.text : ("[" + h.var + "]"));
+                    H2Font* f = h.font.empty() ? nullptr : hud_font(h.font);
+                    ImU32 col = IM_COL32(h.col[0], h.col[1], h.col[2], h.col[3]);
+                    if (f) {
+                        float cx = ox;
+                        for (unsigned char c : txt) {
+                            int gi = h2_glyph_index(f, c);
+                            const auto& gl = f->glyph[gi];
+                            if (gl.w && gl.h) {
+                                ImVec2 q0(g0.x + (cx + gl.xoffset) * sc, g0.y + (oy + gl.yoffset) * sc);
+                                ImVec2 q1(q0.x + gl.w * sc, q0.y + gl.h * sc);
+                                dl->AddImage((ImTextureID)(intptr_t)f->tex, q0, q1,
+                                             ImVec2(gl.u / (float)f->aw, gl.v / (float)f->ah),
+                                             ImVec2((gl.u + gl.w) / (float)f->aw, (gl.v + gl.h) / (float)f->ah),
+                                             col);
+                            }
+                            cx += gl.xadvance;
+                        }
+                    } else {
+                        // Fuente 0 (la del sistema): el previo es aproximado.
+                        dl->AddText(p0, col, txt.c_str());
+                    }
+                }
+                if (idx == hud_sel && tool == T_HUD) {
+                    dl->AddRect(ImVec2(p0.x - 2, p0.y - 2), ImVec2(p1.x + 2, p1.y + 2),
+                                IM_COL32(255, 200, 60, 220));
+                    dl->AddCircleFilled(ImVec2(g0.x + h.x * sc, g0.y + h.y * sc), 3.0f,
+                                        IM_COL32(255, 200, 60, 220));   // el punto x,y
+                }
+            }
+            // ---- coger elementos con el raton (solo con la herramienta HUD) ----
+            if (tool == T_HUD && vp_hovered && !playing) {
+                ImVec2 mp = ImGui::GetIO().MousePos;
+                float mx = (mp.x - g0.x) / sc, my = (mp.y - g0.y) / sc;   // pixeles del juego
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    hud_sel = -1;
+                    for (int k = (int)orden.size() - 1; k >= 0; k--) {   // el de delante primero
+                        HudItem& h = hud[orden[k]];
+                        float w, hh, ox, oy;
+                        hud_item_size(h, &w, &hh);
+                        hud_item_origin(h, w, hh, &ox, &oy);
+                        if (mx >= ox && mx <= ox + w && my >= oy && my <= oy + hh) {
+                            hud_sel = orden[k];
+                            hud_drag = true;
+                            hud_grab_x = mx - h.x; hud_grab_y = my - h.y;
+                            break;
+                        }
+                    }
+                }
+                if (hud_drag && hud_sel >= 0 && hud_sel < (int)hud.size() &&
+                    ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    hud[hud_sel].x = floorf(mx - hud_grab_x + 0.5f);   // pixeles enteros
+                    hud[hud_sel].y = floorf(my - hud_grab_y + 0.5f);
+                }
+            }
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) hud_drag = false;
         }
 
         // ---- interaccion del viewport segun la herramienta ----
@@ -4482,7 +6275,20 @@ int main(int, char**) {
                 // punto: sobre agua->superficie, si no sobre el terreno/fondo
                 int ok = place_point(sx, sy, hit);
                 if (ok) {
-                    if (tool == T_PLACE && asset_sel >= 0) {          // COLOCAR
+                    if (tool == T_SPRITE) {                          // COLOCAR SPRITE 2D
+                        if (sheet.image.empty() || sheet.frames.empty()) {
+                            status = "Abre antes una hoja de sprites en el panel 'Sprites 3D'";
+                        } else {
+                            SprObj o;
+                            o.sheet = sheet.image;
+                            o.name  = "sprite_" + std::to_string((int)sprites.size() + 1);
+                            if (!sheet.anims.empty()) o.anim = sheet.anims[0].name;
+                            o.x = hit[0]; o.y = hit[1]; o.z = hit[2];
+                            sprites.push_back(o);
+                            spr_sel = (int)sprites.size() - 1;
+                            status = "Sprite colocado (" + o.sheet + ")";
+                        }
+                    } else if (tool == T_PLACE && asset_sel >= 0) {   // COLOCAR
                         void* m = load_model(assets[asset_sel]);
                         if (m) {
                             int e = g3d_model_spawn(scene, m, hit[0], hit[1], hit[2], 0.0f, 0.0f);
@@ -4631,6 +6437,1122 @@ int main(int, char**) {
         }
         ImGui::EndChild();
         ImGui::End();
+
+        // --- Panel: HUD 2D (graficos y textos de BennuGD2 sobre la escena) ---
+        ImGui::Begin(ICON_FA_FONT "  HUD 2D");
+        ImGui::TextDisabled("Graficos y textos de pantalla (1280x720).");
+        ImGui::TextDisabled("Se generan como PROCESS con sus locales.");
+        ImGui::Checkbox("Ver el HUD en el viewport", &hud_show);
+        if (tool != T_HUD) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Editar")) tool = T_HUD;
+        } else ImGui::TextColored(ImVec4(0.5f, 0.8f, 1, 1), "Arrastra los elementos en la escena");
+        ImGui::Separator();
+
+        auto hud_nombre_libre = [&](const char* base) {
+            for (int n = 1; ; n++) {
+                std::string cand = std::string(base) + "_" + std::to_string(n);
+                bool usado = false;
+                for (auto& h : hud) if (h.name == cand) { usado = true; break; }
+                if (!usado) return cand;
+            }
+        };
+        if (ImGui::Button(ICON_FA_IMAGE " Grafico")) {
+            HudItem h; h.type = 0; h.name = hud_nombre_libre("hud_grafico");
+            if (!hud_gfx_files.empty()) {
+                h.asset = hud_gfx_files[0];
+                if (hud_is_fpg(h.asset)) { H2Fpg* fp = hud_fpg(h.asset); if (fp) h.code = fp->g[0].code; }
+            }
+            h.x = HUD_W * 0.5f; h.y = HUD_H * 0.5f;
+            hud.push_back(h); hud_sel = (int)hud.size() - 1; tool = T_HUD;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_T " Texto")) {
+            HudItem h; h.type = 1; h.name = hud_nombre_libre("hud_texto");
+            if (!hud_font_files.empty()) h.font = hud_font_files[0];
+            h.z = -200;   // los textos, por delante de los graficos
+            h.x = 20.0f; h.y = 20.0f;
+            hud.push_back(h); hud_sel = (int)hud.size() - 1; tool = T_HUD;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Refrescar")) {
+            hud_gfx_files = hud_scan_gfx(); hud_font_files = hud_scan_fnt();
+        }
+        if (hud_sel >= 0 && hud_sel < (int)hud.size()) {
+            ImGui::SameLine();
+            if (ImGui::Button("Duplicar")) {
+                HudItem h = hud[hud_sel];
+                h.name = hud_nombre_libre(h.type ? "hud_texto" : "hud_grafico");
+                h.x += 20.0f; h.y += 20.0f;
+                hud.push_back(h); hud_sel = (int)hud.size() - 1;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Borrar")) { hud.erase(hud.begin() + hud_sel); hud_sel = -1; }
+        }
+        ImGui::Separator();
+
+        ImGui::BeginChild("lista_hud", ImVec2(0, 120), true);
+        for (int i = 0; i < (int)hud.size(); i++) {
+            std::string et = std::string(hud[i].type ? ICON_FA_T " " : ICON_FA_IMAGE " ") + hud[i].name;
+            if (ImGui::Selectable(et.c_str(), hud_sel == i)) hud_sel = i;
+        }
+        if (hud.empty()) ImGui::TextDisabled("(vacio: anade un grafico o un texto)");
+        ImGui::EndChild();
+
+        if (hud_sel >= 0 && hud_sel < (int)hud.size()) {
+            HudItem& h = hud[hud_sel];
+            ImGui::SeparatorText("Elemento");
+            {   char b[128]; strncpy(b, h.name.c_str(), 127); b[127] = 0;
+                if (ImGui::InputText("Nombre (PROCESS)", b, sizeof(b))) h.name = b; }
+            if (h.type == 0) {
+                // ---- GRAFICO ----
+                const char* actual = h.asset.empty() ? "(ninguno)" : h.asset.c_str();
+                if (ImGui::BeginCombo("Grafico", actual)) {
+                    for (auto& fgx : hud_gfx_files) {
+                        bool sel = (fgx == h.asset);
+                        if (ImGui::Selectable(fgx.c_str(), sel)) {
+                            h.asset = fgx;
+                            h.code = 0;
+                            if (hud_is_fpg(fgx)) { H2Fpg* fp = hud_fpg(fgx); if (fp) h.code = fp->g[0].code; }
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                if (hud_is_fpg(h.asset)) {
+                    H2Fpg* fp = hud_fpg(h.asset);
+                    if (fp) {
+                        // Elegir el grafico VIENDOLO: un FPG puede traer cientos y
+                        // por el numero de codigo no hay quien sepa cual es cual.
+                        H2Img* cur = hud_item_img(h);
+                        if (cur) {
+                            float k = 64.0f / (float)((cur->w > cur->h) ? cur->w : cur->h);
+                            if (k > 4.0f) k = 4.0f;   // un icono de 8x8 tiene que verse
+                            ImGui::Image((ImTextureID)(intptr_t)cur->tex,
+                                         ImVec2(cur->w * k, cur->h * k));
+                            ImGui::SameLine();
+                        }
+                        ImGui::BeginGroup();
+                        ImGui::Text("graph = %d", h.code);
+                        if (cur) ImGui::TextDisabled("%dx%d", cur->w, cur->h);
+                        else ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "ese codigo no esta en el FPG");
+                        if (ImGui::Button("Elegir grafico...")) {
+                            hud_fpg_filter[0] = 0;
+                            ImGui::OpenPopup("Graficos del FPG");
+                        }
+                        ImGui::EndGroup();
+                        // ---- selector visual: rejilla de miniaturas ----
+                        if (ImGui::BeginPopupModal("Graficos del FPG", nullptr,
+                                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+                            ImGui::Text("%s  -  %d graficos", h.asset.c_str(), fp->n);
+                            ImGui::SetNextItemWidth(220);
+                            ImGui::InputText("Filtrar (codigo o nombre)", hud_fpg_filter, sizeof(hud_fpg_filter));
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("(clic en uno para elegirlo)");
+                            ImGui::Separator();
+                            // Compara sin distinguir mayusculas (nombres de FPG en mayusculas).
+                            auto contiene = [](const char* txt, const char* pat) {
+                                if (!pat || !*pat) return true;
+                                for (const char* a = txt; *a; a++) {
+                                    const char *x = a, *y = pat;
+                                    while (*x && *y && tolower((unsigned char)*x) == tolower((unsigned char)*y)) { x++; y++; }
+                                    if (!*y) return true;
+                                }
+                                return false;
+                            };
+                            const float cell = 92.0f, pad = 8.0f;
+                            ImGui::BeginChild("rejilla_fpg", ImVec2(cell * 6 + pad * 7, 430.0f), true);
+                            float ancho = ImGui::GetContentRegionAvail().x;
+                            int cols = (int)(ancho / (cell + pad));
+                            if (cols < 1) cols = 1;
+                            int puestos = 0;
+                            ImDrawList* dl = ImGui::GetWindowDrawList();
+                            for (int i = 0; i < fp->n; i++) {
+                                char cod[32]; snprintf(cod, sizeof(cod), "%d", fp->g[i].code);
+                                if (hud_fpg_filter[0] && !contiene(cod, hud_fpg_filter) &&
+                                    !contiene(fp->g[i].name, hud_fpg_filter)) continue;
+                                if (puestos % cols) ImGui::SameLine(0.0f, pad);
+                                puestos++;
+                                ImGui::PushID(i);
+                                ImVec2 p0 = ImGui::GetCursorScreenPos();
+                                bool clic = ImGui::InvisibleButton("celda", ImVec2(cell, cell + 16.0f));
+                                bool sobre = ImGui::IsItemHovered();
+                                bool elegido = (fp->g[i].code == h.code);
+                                ImVec2 p1(p0.x + cell, p0.y + cell);
+                                dl->AddRectFilled(p0, p1, IM_COL32(28, 32, 40, 255));
+                                // El grafico, encajado en la celda y sin deformar.
+                                H2Img& im = fp->g[i].img;
+                                float k2 = (cell - 8.0f) / (float)((im.w > im.h) ? im.w : im.h);
+                                if (k2 > 4.0f) k2 = 4.0f;               // los muy pequenos, ampliados
+                                float iw = im.w * k2, ih = im.h * k2;
+                                ImVec2 q0(p0.x + (cell - iw) * 0.5f, p0.y + (cell - ih) * 0.5f);
+                                dl->AddImage((ImTextureID)(intptr_t)im.tex, q0, ImVec2(q0.x + iw, q0.y + ih));
+                                dl->AddRect(p0, p1, elegido ? IM_COL32(255, 200, 60, 255)
+                                                    : sobre ? IM_COL32(120, 180, 255, 255)
+                                                            : IM_COL32(70, 78, 92, 255));
+                                dl->AddText(ImVec2(p0.x + 3, p1.y + 1),
+                                            elegido ? IM_COL32(255, 200, 60, 255) : IM_COL32(190, 195, 205, 255), cod);
+                                if (sobre)
+                                    ImGui::SetTooltip("codigo %d  -  %dx%d\n%s",
+                                                      fp->g[i].code, im.w, im.h, fp->g[i].name);
+                                if (clic) { h.code = fp->g[i].code; ImGui::CloseCurrentPopup(); }
+                                ImGui::PopID();
+                            }
+                            if (!puestos) ImGui::TextDisabled("Ningun grafico cuadra con el filtro.");
+                            ImGui::EndChild();
+                            if (ImGui::Button("Cerrar")) ImGui::CloseCurrentPopup();
+                            ImGui::EndPopup();
+                        }
+                        ImGui::TextDisabled("file = el FPG, graph = este codigo.");
+                    } else ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "No pude leer el FPG.");
+                } else if (!h.asset.empty() && !hud_img(h.asset)) {
+                    ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "No pude leer la imagen.");
+                } else if (H2Img* im1 = hud_item_img(h)) {
+                    float k = 64.0f / (float)((im1->w > im1->h) ? im1->w : im1->h);
+                    if (k > 4.0f) k = 4.0f;
+                    ImGui::Image((ImTextureID)(intptr_t)im1->tex, ImVec2(im1->w * k, im1->h * k));
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%dx%d", im1->w, im1->h);
+                }
+                if (!h.asset.empty() && !fs::exists(assets_dir + "/" + h.asset))
+                    ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1),
+                                       "'%s' no esta en Assets de este proyecto:\n"
+                                       "el juego no podra cargarlo (copialo ahi).", h.asset.c_str());
+                if (h.asset.empty()) {
+                    ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1),
+                                       "Sin grafico: este elemento NO se genera.");
+                    if (hud_gfx_files.empty())
+                        ImGui::TextWrapped("No hay ninguna imagen (.png/.jpg) ni ningun .fpg en la "
+                                           "carpeta Assets del proyecto. Copia ahi el grafico y dale "
+                                           "a Refrescar.");
+                }
+                ImGui::DragFloat("size (%)", &h.size, 1.0f, 1.0f, 1000.0f, "%.0f");
+                ImGui::DragFloat("angle (grados)", &h.angle, 1.0f, -360.0f, 360.0f, "%.0f");
+                bool fx = (h.flags & 1) != 0, fy = (h.flags & 2) != 0;
+                if (ImGui::Checkbox("Espejo horizontal", &fx)) h.flags = (h.flags & ~1) | (fx ? 1 : 0);
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Vertical", &fy)) h.flags = (h.flags & ~2) | (fy ? 2 : 0);
+                ImGui::SliderInt("alpha", &h.alpha, 0, 255);
+                ImGui::TextDisabled("x,y = CENTRO del grafico (como en BennuGD2).");
+            } else {
+                // ---- TEXTO ----
+                const char* fnt = h.font.empty() ? "(fuente 0 del sistema)" : h.font.c_str();
+                if (ImGui::BeginCombo("Fuente (.fnt)", fnt)) {
+                    if (ImGui::Selectable("(fuente 0 del sistema)", h.font.empty())) h.font.clear();
+                    for (auto& ff : hud_font_files)
+                        if (ImGui::Selectable(ff.c_str(), ff == h.font)) h.font = ff;
+                    ImGui::EndCombo();
+                }
+                if (!h.font.empty() && !hud_font(h.font))
+                    ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "No pude leer la fuente.");
+                if (!h.font.empty() && !fs::exists(assets_dir + "/" + h.font))
+                    ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1),
+                                       "'%s' no esta en Assets de este proyecto:\n"
+                                       "el juego no podra cargarla (copiala ahi).", h.font.c_str());
+                if (h.font.empty())
+                    ImGui::TextDisabled("Con la fuente del sistema el previo es aproximado.");
+                bool esvar = !h.var.empty();
+                if (ImGui::Checkbox("Mostrar una variable (write_var)", &esvar)) {
+                    if (esvar && h.var.empty()) h.var = "mi_variable";
+                    if (!esvar) h.var.clear();
+                }
+                if (esvar) {
+                    char b[128]; strncpy(b, h.var.c_str(), 127); b[127] = 0;
+                    if (ImGui::InputText("Variable GLOBAL", b, sizeof(b))) h.var = b;
+                    const char* tipos[] = { "int", "float", "string" };
+                    ImGui::Combo("Tipo", &h.vartype, tipos, 3);
+                    ImGui::TextDisabled("El editor la declara GLOBAL; dale valor desde tu codigo.");
+                } else {
+                    char b[256]; strncpy(b, h.text.c_str(), 255); b[255] = 0;
+                    if (ImGui::InputText("Texto", b, sizeof(b))) h.text = b;
+                }
+                const char* alins[] = { "arriba-izquierda", "arriba-centro", "arriba-derecha",
+                                        "medio-izquierda", "centro", "medio-derecha",
+                                        "abajo-izquierda", "abajo-centro", "abajo-derecha" };
+                ImGui::Combo("Alineacion", &h.align, alins, 9);
+                float c[4] = { h.col[0] / 255.0f, h.col[1] / 255.0f, h.col[2] / 255.0f, h.col[3] / 255.0f };
+                if (ImGui::ColorEdit4("Color", c)) {
+                    for (int k = 0; k < 4; k++) h.col[k] = (int)(c[k] * 255.0f + 0.5f);
+                }
+                ImGui::TextDisabled("Se genera con write()/write_var() + write_set_rgba().");
+            }
+            ImGui::SeparatorText("Posicion en pantalla");
+            ImGui::DragFloat("x", &h.x, 1.0f, -HUD_W, HUD_W * 2, "%.0f");
+            ImGui::DragFloat("y", &h.y, 1.0f, -HUD_H, HUD_H * 2, "%.0f");
+            ImGui::DragInt("z", &h.z, 1.0f, -1000, 1000);
+            ImGui::TextDisabled("z menor = mas al frente. El 3D queda siempre detras.");
+            if (ImGui::SmallButton("Centrar")) { h.x = HUD_W * 0.5f; h.y = HUD_H * 0.5f; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Arriba izq.")) { h.x = 20; h.y = 20; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Abajo dcha.")) { h.x = HUD_W - 20; h.y = HUD_H - 20; }
+        }
+        ImGui::End();
+
+        // --- VENTANA de sprites 3D (hojas de sprites, estilo HD-2D) ---
+        // Flotante y a dos columnas a proposito: metida en la columna acoplada de
+        // la derecha, la hoja se veia por una rendija y no habia quien trabajara.
+        // Izquierda: la hoja y su recorte. Derecha: animaciones y los colocados.
+        if (show_spr_win) {
+        // Al abrirla se centra y se le da tamano de trabajo. Con FirstUseEver se
+        // quedaba donde dijera el imgui.ini viejo (medio fuera de la pantalla).
+        {
+            ImGuiViewport* vp2 = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos(ImVec2(vp2->WorkPos.x + vp2->WorkSize.x * 0.5f,
+                                           vp2->WorkPos.y + vp2->WorkSize.y * 0.5f),
+                                    ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            ImVec2 tam(vp2->WorkSize.x * 0.72f, vp2->WorkSize.y * 0.80f);
+            if (tam.x < 680.0f) tam.x = 680.0f;
+            if (tam.y < 440.0f) tam.y = 440.0f;
+            ImGui::SetNextWindowSize(tam, ImGuiCond_Appearing);
+        }
+        ImGui::SetNextWindowSizeConstraints(ImVec2(680, 440), ImVec2(FLT_MAX, FLT_MAX));
+        ImGui::Begin(ICON_FA_PERSON_RUNNING "  Sprites 3D", &show_spr_win,
+                     ImGuiWindowFlags_NoDocking);
+        bool spr_dos_columnas = ImGui::BeginTable("spr_cols", 2,
+                                    ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV);
+        if (spr_dos_columnas) {
+            ImGui::TableSetupColumn("hoja",  ImGuiTableColumnFlags_WidthStretch, 0.60f);
+            ImGui::TableSetupColumn("resto", ImGuiTableColumnFlags_WidthStretch, 0.40f);
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+        }
+        if (sheet_refrescar) {          // hoja nueva sin fondo: que salga en las listas
+            sheet_refrescar = false;
+            hud_gfx_files = hud_scan_gfx();
+            auto itc = hud_imgs.find(sheet.image);
+            if (itc != hud_imgs.end()) { h2_free_image(&itc->second); hud_imgs.erase(itc); }
+        }
+        ImGui::TextDisabled("Hoja de sprites -> personajes 2D en el mundo 3D.");
+        {
+            // Solo imagenes (un FPG ya trae un grafico por fotograma).
+            std::vector<std::string> imgs = hud_gfx_files;   // imagenes Y FPG
+            const char* cur = sheet.image.empty() ? "(elige una hoja)" : sheet.image.c_str();
+            if (ImGui::BeginCombo("Hoja", cur)) {
+                for (auto& im : imgs)
+                    if (ImGui::Selectable(im.c_str(), im == sheet.image)) {
+                        if (!strcmp(sheet_open(im), "guardada"))
+                            sheet_msg = std::to_string((int)sheet.frames.size()) + " fotogramas y " +
+                                        std::to_string((int)sheet.anims.size()) +
+                                        " animaciones (tal como los guardaste)";
+                        sheet_sel.clear(); sheet_anim_sel = -1;
+                    }
+                ImGui::EndCombo();
+            }
+            if (imgs.empty()) ImGui::TextDisabled("No hay imagenes ni FPG en Assets.");
+            else ImGui::TextDisabled("Vale un PNG o un FPG (se junta en una hoja al elegirlo).");
+        }
+        if (!sheet.image.empty()) {
+            H2Img* im = hud_img(sheet.image);
+            if (ImGui::Button(ICON_FA_TABLE_CELLS " Detectar fotogramas")) sheet_detect(sheet.image);
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Limpiar", &sheet_limpiar)) sheet_detect(sheet.image);
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Quitar fondo", &sheet_quitar_fondo)) sheet_detect(sheet.image);
+            ImGui::SameLine();
+            ImGui::Checkbox("Agrupar solo", &sheet_auto_anims);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Al detectar, propone animaciones agrupando por filas\n"
+                                  "(fila1_1, fila1_2...). Apagado: las animaciones son\n"
+                                  "solo las que montes tu.");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Los rips traen el fondo pintado; sin quitarlo el personaje\n"
+                                  "sale en el juego con su recuadro. Se hace una COPIA\n"
+                                  "'<nombre>_sinfondo.png' y el original no se toca.");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Quita el texto de creditos que traen los rips y junta\n"
+                                  "los trozos sueltos (un arma separada del cuerpo).");
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_FA_FLOPPY_DISK " Guardar hoja")) sheet_save();
+            if (!sheet_msg.empty()) ImGui::TextColored(ImVec4(0.6f,0.85f,1,1), "%s", sheet_msg.c_str());
+            ImGui::TextDisabled("Hoja %dx%d", sheet.w, sheet.h);
+
+            // ---- RECORTE A MANO ----
+            // Dos formas: por columnas x filas (lo mas rapido si la hoja es
+            // regular) o por tamano de celda con margen y separacion (lo que
+            // hace falta cuando la hoja trae bordes o huecos fijos). La rejilla
+            // se ve encima de la hoja antes de aplicarla.
+            if (ImGui::CollapsingHeader("Recorte a mano", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::SetNextItemWidth(70); ImGui::InputInt("cols", &sheet_grid_cols, 0);
+                ImGui::SameLine(); ImGui::SetNextItemWidth(70); ImGui::InputInt("filas", &sheet_grid_rows, 0);
+                ImGui::SameLine();
+                if (ImGui::Button("Partir en rejilla")) {
+                    sheet_make_grid(sheet_grid_cols, sheet_grid_rows);
+                    if (sheet_grid_cols > 0 && sheet_grid_rows > 0) {
+                        sheet_cell_w = sheet.w / sheet_grid_cols;
+                        sheet_cell_h = sheet.h / sheet_grid_rows;
+                        sheet_off_x = sheet_off_y = sheet_gap_x = sheet_gap_y = 0;
+                    }
+                }
+                ImGui::Separator();
+                ImGui::SetNextItemWidth(70); ImGui::InputInt("ancho celda", &sheet_cell_w, 0);
+                ImGui::SameLine(); ImGui::SetNextItemWidth(70); ImGui::InputInt("alto celda", &sheet_cell_h, 0);
+                ImGui::SetNextItemWidth(70); ImGui::InputInt("margen x", &sheet_off_x, 0);
+                ImGui::SameLine(); ImGui::SetNextItemWidth(70); ImGui::InputInt("margen y", &sheet_off_y, 0);
+                ImGui::SetNextItemWidth(70); ImGui::InputInt("separacion x", &sheet_gap_x, 0);
+                ImGui::SameLine(); ImGui::SetNextItemWidth(70); ImGui::InputInt("separacion y", &sheet_gap_y, 0);
+                ImGui::Checkbox("Ver la rejilla encima", &sheet_ver_rejilla);
+                ImGui::SameLine();
+                if (ImGui::Button("Aplicar el recorte")) {
+                    if (sheet_cell_w > 0 && sheet_cell_h > 0) {
+                        sheet.frames.clear(); sheet.anims.clear(); sheet_sel.clear();
+                        int fila = 0;
+                        for (int yy = sheet_off_y; yy + sheet_cell_h <= sheet.h;
+                             yy += sheet_cell_h + sheet_gap_y, fila++) {
+                            for (int xx = sheet_off_x; xx + sheet_cell_w <= sheet.w;
+                                 xx += sheet_cell_w + sheet_gap_x) {
+                                SprFrame f2;
+                                f2.x = xx; f2.y = yy; f2.w = sheet_cell_w; f2.h = sheet_cell_h;
+                                f2.ax = sheet_cell_w / 2; f2.ay = sheet_cell_h - 1;
+                                f2.band = fila;
+                                sheet.frames.push_back(f2);
+                            }
+                        }
+                        int nf = 0;
+                        for (auto& f2 : sheet.frames) if (f2.band + 1 > nf) nf = f2.band + 1;
+                        if (sheet_auto_anims) {     // solo si las pides automaticas
+                            for (int b = 0; b < nf; b++) {
+                                SprAnim an; an.name = "fila" + std::to_string(b + 1); an.fps = 10;
+                                for (int i = 0; i < (int)sheet.frames.size(); i++)
+                                    if (sheet.frames[i].band == b) an.frames.push_back(i);
+                                if (!an.frames.empty()) sheet.anims.push_back(an);
+                            }
+                            if (nf > 1) {
+                                SprAnim an; an.name = "todas_las_direcciones"; an.fps = 10;
+                                for (int i = 0; i < (int)sheet.frames.size(); i++) an.frames.push_back(i);
+                                sheet.anims.push_back(an);
+                            }
+                        }
+                        sheet.cols = sheet.frames.empty() ? 0 : (int)sheet.frames.size() / (nf ? nf : 1);
+                        sheet.rows = nf;
+                        sheet_msg = std::to_string((int)sheet.frames.size()) +
+                                    " fotogramas recortados a mano (" +
+                                    std::to_string(sheet_cell_w) + "x" + std::to_string(sheet_cell_h) +
+                                    ") y " + std::to_string((int)sheet.anims.size()) + " animaciones";
+                    }
+                }
+                ImGui::Checkbox("Dibujar fotogramas con el raton", &sheet_dibujar);
+                if (sheet_dibujar)
+                    ImGui::TextDisabled("Arrastra sobre la hoja para anadir un fotograma.");
+            }
+
+            ImGui::SetNextItemWidth(160);
+            ImGui::SliderFloat("zoom", &sheet_zoom, 1.0f, 6.0f, "%.1fx");
+
+            // ---- la hoja, con los fotogramas marcados ----
+            // La hoja se lleva el alto que quede en su columna: es lo que se mira
+            // el 90% del tiempo.
+            float alto_hoja = ImGui::GetContentRegionAvail().y - 150.0f;
+            if (alto_hoja < 220.0f) alto_hoja = 220.0f;
+            ImGui::BeginChild("hoja_previo", ImVec2(0, alto_hoja), true,
+                              ImGuiWindowFlags_HorizontalScrollbar);
+            if (im) {
+                ImVec2 p0 = ImGui::GetCursorScreenPos();
+                ImGui::Image((ImTextureID)(intptr_t)im->tex,
+                             ImVec2(sheet.w * sheet_zoom, sheet.h * sheet_zoom));
+                bool sobre_img = ImGui::IsItemHovered();
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                ImVec2 mp = ImGui::GetIO().MousePos;
+                int pinchado = -1;
+                for (size_t i = 0; i < sheet.frames.size(); i++) {
+                    const SprFrame& f2 = sheet.frames[i];
+                    ImVec2 a(p0.x + f2.x * sheet_zoom, p0.y + f2.y * sheet_zoom);
+                    ImVec2 b(a.x + f2.w * sheet_zoom, a.y + f2.h * sheet_zoom);
+                    bool sel = std::find(sheet_sel.begin(), sheet_sel.end(), (int)i) != sheet_sel.end();
+                    bool hov = sobre_img && mp.x >= a.x && mp.x <= b.x && mp.y >= a.y && mp.y <= b.y;
+                    if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) pinchado = (int)i;
+                    dl->AddRect(a, b, sel ? IM_COL32(255, 200, 60, 255)
+                                     : hov ? IM_COL32(120, 200, 255, 220)
+                                           : IM_COL32(90, 150, 220, 110));
+                    if (sel || hov) {
+                        char num[16]; snprintf(num, sizeof(num), "%d", (int)i);
+                        dl->AddText(ImVec2(a.x + 2, a.y + 1), IM_COL32(255, 230, 120, 255), num);
+                        // el ancla, que es lo que se planta en el suelo
+                        dl->AddCircleFilled(ImVec2(a.x + f2.ax * sheet_zoom,
+                                                   a.y + f2.ay * sheet_zoom),
+                                            2.5f, IM_COL32(255, 90, 90, 255));
+                    }
+                }
+                // ---- la rejilla del recorte a mano, encima de la hoja ----
+                if (sheet_ver_rejilla && sheet_cell_w > 0 && sheet_cell_h > 0) {
+                    for (int yy = sheet_off_y; yy + sheet_cell_h <= sheet.h;
+                         yy += sheet_cell_h + sheet_gap_y)
+                        for (int xx = sheet_off_x; xx + sheet_cell_w <= sheet.w;
+                             xx += sheet_cell_w + sheet_gap_x)
+                            dl->AddRect(ImVec2(p0.x + xx * sheet_zoom, p0.y + yy * sheet_zoom),
+                                        ImVec2(p0.x + (xx + sheet_cell_w) * sheet_zoom,
+                                               p0.y + (yy + sheet_cell_h) * sheet_zoom),
+                                        IM_COL32(120, 255, 160, 150));
+                }
+                // ---- dibujar un fotograma arrastrando el raton ----
+                if (sheet_dibujar && sobre_img) {
+                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                        sheet_drag_ini = mp; sheet_drag_on = true;
+                    }
+                    if (sheet_drag_on) {
+                        ImVec2 a(sheet_drag_ini.x < mp.x ? sheet_drag_ini.x : mp.x,
+                                 sheet_drag_ini.y < mp.y ? sheet_drag_ini.y : mp.y);
+                        ImVec2 b(sheet_drag_ini.x > mp.x ? sheet_drag_ini.x : mp.x,
+                                 sheet_drag_ini.y > mp.y ? sheet_drag_ini.y : mp.y);
+                        dl->AddRect(a, b, IM_COL32(255, 255, 120, 255));
+                        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                            sheet_drag_on = false;
+                            SprFrame f2;
+                            f2.x = (int)((a.x - p0.x) / sheet_zoom);
+                            f2.y = (int)((a.y - p0.y) / sheet_zoom);
+                            f2.w = (int)((b.x - a.x) / sheet_zoom);
+                            f2.h = (int)((b.y - a.y) / sheet_zoom);
+                            if (f2.w > 1 && f2.h > 1) {
+                                f2.ax = f2.w / 2; f2.ay = f2.h - 1; f2.band = 0;
+                                sheet.frames.push_back(f2);
+                                sheet_sel.clear();
+                                sheet_sel.push_back((int)sheet.frames.size() - 1);
+                                sheet_msg = "Fotograma anadido a mano (" +
+                                            std::to_string(f2.w) + "x" + std::to_string(f2.h) + ")";
+                            }
+                        }
+                    }
+                    pinchado = -1;   // mientras se dibuja no se selecciona
+                }
+                if (pinchado >= 0) {
+                    bool ctrl = ImGui::GetIO().KeyCtrl, shift = ImGui::GetIO().KeyShift;
+                    auto it = std::find(sheet_sel.begin(), sheet_sel.end(), pinchado);
+                    if (shift && !sheet_sel.empty()) {          // rango desde el ultimo
+                        int a2 = sheet_sel.back(), b2 = pinchado;
+                        if (a2 > b2) std::swap(a2, b2);
+                        for (int k = a2; k <= b2; k++)
+                            if (std::find(sheet_sel.begin(), sheet_sel.end(), k) == sheet_sel.end())
+                                sheet_sel.push_back(k);
+                    } else if (ctrl) {
+                        if (it != sheet_sel.end()) sheet_sel.erase(it);
+                        else sheet_sel.push_back(pinchado);
+                    } else {
+                        sheet_sel.clear(); sheet_sel.push_back(pinchado);
+                    }
+                }
+            } else ImGui::TextColored(ImVec4(1,0.5f,0.4f,1), "No pude leer la imagen.");
+            ImGui::EndChild();
+            // ---- ajustar a mano el fotograma elegido (se ve al momento) ----
+            if (sheet_sel.size() == 1 && sheet_sel[0] < (int)sheet.frames.size()) {
+                SprFrame& f2 = sheet.frames[sheet_sel[0]];
+                ImGui::SeparatorText("Fotograma elegido");
+                ImGui::SetNextItemWidth(180);
+                ImGui::DragInt2("recorte x,y", &f2.x, 1.0f, 0, 8192);
+                ImGui::SetNextItemWidth(180);
+                ImGui::DragInt2("ancho,alto", &f2.w, 1.0f, 1, 8192);
+                ImGui::SetNextItemWidth(180);
+                ImGui::DragInt2("ancla x,y", &f2.ax, 1.0f, -4096, 8192);
+                ImGui::TextDisabled("El ancla (punto rojo) es lo que se apoya en el suelo.");
+                if (ImGui::SmallButton("Ancla a los pies")) { f2.ax = f2.w / 2; f2.ay = f2.h - 1; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Borrar fotograma")) {
+                    int pos = sheet_sel[0], viejos = (int)sheet.frames.size();
+                    sheet.frames.erase(sheet.frames.begin() + pos);
+                    {   std::vector<int> mapa(viejos);
+                        for (int q = 0; q < viejos; q++)
+                            mapa[q] = (q < pos) ? q : (q == pos ? -1 : q - 1);
+                        sheet_remap(mapa);
+                    }
+                    sheet_sel.clear();
+                    sheet_msg = "Fotograma borrado (las animaciones se han renumerado solas)";
+                }
+            }
+            // Arreglo a mano de lo que la deteccion no puede saber: dos personajes
+            // que se tocan salen en un fotograma, y un fotograma partido en dos.
+            if (!sheet_sel.empty()) {
+                if (sheet_sel.size() == 1) {
+                    ImGui::SetNextItemWidth(70);
+                    ImGui::InputInt("en##fr", &sheet_frame_split, 0);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Partir el fotograma") &&
+                        sheet_frame_split >= 2 && sheet_sel[0] < (int)sheet.frames.size()) {
+                        SprFrame f0 = sheet.frames[sheet_sel[0]];
+                        int k = sheet_frame_split, anchoi = f0.w / k;
+                        std::vector<SprFrame> nuevos;
+                        for (int q = 0; q < k; q++) {
+                            SprFrame f2 = f0;
+                            f2.x = f0.x + q * anchoi;
+                            f2.w = (q == k - 1) ? (f0.x + f0.w - f2.x) : anchoi;
+                            f2.ax = f2.w / 2;
+                            nuevos.push_back(f2);
+                        }
+                        int pos = sheet_sel[0], viejos = (int)sheet.frames.size();
+                        sheet.frames.erase(sheet.frames.begin() + pos);
+                        sheet.frames.insert(sheet.frames.begin() + pos,
+                                            nuevos.begin(), nuevos.end());
+                        {   // renumerar: quien usaba el partido se queda con el primer trozo
+                            std::vector<int> mapa(viejos);
+                            for (int q = 0; q < viejos; q++)
+                                mapa[q] = (q < pos) ? q : (q == pos ? pos : q + k - 1);
+                            sheet_remap(mapa);
+                        }
+                        sheet_sel.clear();
+                        sheet_msg = "Fotograma partido en " + std::to_string(k) +
+                                    " (las animaciones se han renumerado solas).";
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(si salieron dos juntos)");
+                } else if (ImGui::SmallButton("Unir los fotogramas elegidos")) {
+                    std::vector<int> sel = sheet_sel;
+                    std::sort(sel.begin(), sel.end());
+                    SprFrame u = sheet.frames[sel[0]];
+                    int x2 = u.x + u.w, y2 = u.y + u.h, basey = u.y + u.ay;
+                    for (size_t q = 1; q < sel.size(); q++) {
+                        const SprFrame& f2 = sheet.frames[sel[q]];
+                        if (f2.x < u.x) u.x = f2.x;
+                        if (f2.y < u.y) u.y = f2.y;
+                        if (f2.x + f2.w > x2) x2 = f2.x + f2.w;
+                        if (f2.y + f2.h > y2) y2 = f2.y + f2.h;
+                        if (f2.y + f2.ay > basey) basey = f2.y + f2.ay;
+                    }
+                    u.w = x2 - u.x; u.h = y2 - u.y;
+                    u.ax = u.w / 2; u.ay = basey - u.y;
+                    int viejos = (int)sheet.frames.size();
+                    for (int q = (int)sel.size() - 1; q >= 0; q--)
+                        sheet.frames.erase(sheet.frames.begin() + sel[q]);
+                    sheet.frames.insert(sheet.frames.begin() + sel[0], u);
+                    {   // los unidos pasan a ser uno; los de detras se corren
+                        std::vector<int> mapa(viejos);
+                        for (int q = 0; q < viejos; q++) {
+                            bool era = std::find(sel.begin(), sel.end(), q) != sel.end();
+                            int antes = 0;
+                            for (int e : sel) if (e < q) antes++;
+                            mapa[q] = era ? sel[0] : q - antes + (q > sel[0] ? 1 : 0);
+                        }
+                        sheet_remap(mapa);
+                    }
+                    sheet_sel.clear();
+                    sheet_msg = "Fotogramas unidos (las animaciones se han renumerado solas).";
+                }
+            }
+            ImGui::TextDisabled("Las animaciones salen solas al detectar; abajo se retocan.");
+            ImGui::TextDisabled("clic = elegir | Ctrl+clic = anadir | May+clic = rango  (%d elegidos)",
+                                (int)sheet_sel.size());
+
+        }
+        if (spr_dos_columnas) ImGui::TableSetColumnIndex(1);
+        if (!sheet.image.empty()) {
+            H2Img* im = hud_img(sheet.image);
+            // ---- animaciones ----
+            ImGui::SeparatorText("Animaciones");
+            ImGui::SetNextItemWidth(140);
+            ImGui::InputText("nombre", sheet_anim_name, sizeof(sheet_anim_name));
+            ImGui::SameLine();
+            ImGui::BeginDisabled(sheet_sel.empty());
+            if (ImGui::Button("Crear con los elegidos")) {
+                SprAnim an; an.name = sheet_anim_name; an.fps = 10;
+                // EN EL ORDEN EN QUE LOS HAS IDO ELIGIENDO: ordenarlos por numero
+                // impedia montar un vaiven (1-2-3-2) o cualquier orden a mano.
+                an.frames = sheet_sel;
+                sheet.anims.push_back(an);
+                sheet_anim_sel = (int)sheet.anims.size() - 1;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::TextDisabled("(en el orden que los elijas)");
+            for (int i = 0; i < (int)sheet.anims.size(); i++) {
+                ImGui::PushID(1000 + i);
+                SprAnim& an = sheet.anims[i];
+                char et[160];
+                snprintf(et, sizeof(et), "%s  (%d fotogramas, %d fps)",
+                         an.name.c_str(), (int)an.frames.size(), an.fps);
+                if (ImGui::Selectable(et, sheet_anim_sel == i)) { sheet_anim_sel = i; sheet_anim_t = 0.0f; }
+                if (sheet_anim_sel == i) {
+                    {   char nb[128]; strncpy(nb, an.name.c_str(), 127); nb[127] = 0;
+                        ImGui::SetNextItemWidth(160);
+                        if (ImGui::InputText("nombre##an", nb, sizeof(nb))) an.name = nb; }
+                    // ---- SUS fotogramas, para montarla a mano ----
+                    // Se ven en miniatura y en su orden; se anaden los elegidos en
+                    // la hoja, se quitan y se mueven de sitio.
+                    ImGui::BeginDisabled(sheet_sel.empty());
+                    if (ImGui::SmallButton("Anadir los elegidos"))
+                        for (int fr2 : sheet_sel) an.frames.push_back(fr2);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Quitar los elegidos")) {
+                        std::vector<int> q;
+                        for (int fr2 : an.frames)
+                            if (std::find(sheet_sel.begin(), sheet_sel.end(), fr2) == sheet_sel.end())
+                                q.push_back(fr2);
+                        an.frames.swap(q);
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Vaciar")) an.frames.clear();
+                    if (im && !an.frames.empty()) {
+                        ImGui::BeginChild("fot_de_la_anim", ImVec2(0, 88), true,
+                                          ImGuiWindowFlags_HorizontalScrollbar);
+                        ImDrawList* dl2 = ImGui::GetWindowDrawList();
+                        int quitar = -1, mover = 0, movido = -1;
+                        for (int q = 0; q < (int)an.frames.size(); q++) {
+                            int fi = an.frames[q];
+                            if (fi < 0 || fi >= (int)sheet.frames.size()) continue;
+                            const SprFrame& f3 = sheet.frames[fi];
+                            ImGui::PushID(5000 + q);
+                            if (q) ImGui::SameLine(0.0f, 6.0f);
+                            ImGui::BeginGroup();
+                            ImVec2 c0 = ImGui::GetCursorScreenPos();
+                            const float lado = 46.0f;
+                            bool clic = ImGui::InvisibleButton("m", ImVec2(lado, lado));
+                            bool sobre2 = ImGui::IsItemHovered();
+                            dl2->AddRectFilled(c0, ImVec2(c0.x + lado, c0.y + lado),
+                                               IM_COL32(28, 32, 40, 255));
+                            float k2 = (lado - 6.0f) / (float)((f3.w > f3.h) ? f3.w : f3.h);
+                            if (k2 > 4.0f) k2 = 4.0f;
+                            float iw = f3.w * k2, ih = f3.h * k2;
+                            ImVec2 q0(c0.x + (lado - iw) * 0.5f, c0.y + (lado - ih) * 0.5f);
+                            dl2->AddImage((ImTextureID)(intptr_t)im->tex, q0,
+                                          ImVec2(q0.x + iw, q0.y + ih),
+                                          ImVec2(f3.x / (float)sheet.w, f3.y / (float)sheet.h),
+                                          ImVec2((f3.x + f3.w) / (float)sheet.w,
+                                                 (f3.y + f3.h) / (float)sheet.h));
+                            dl2->AddRect(c0, ImVec2(c0.x + lado, c0.y + lado),
+                                         sobre2 ? IM_COL32(120, 200, 255, 255) : IM_COL32(70, 78, 92, 255));
+                            char num[16]; snprintf(num, sizeof(num), "%d", fi);
+                            dl2->AddText(ImVec2(c0.x + 3, c0.y + lado - 14),
+                                         IM_COL32(200, 205, 215, 255), num);
+                            if (clic) { sheet_sel.clear(); sheet_sel.push_back(fi); }
+                            if (ImGui::SmallButton("<")) { mover = -1; movido = q; }
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("x")) quitar = q;
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton(">")) { mover = 1; movido = q; }
+                            ImGui::EndGroup();
+                            ImGui::PopID();
+                        }
+                        if (quitar >= 0) an.frames.erase(an.frames.begin() + quitar);
+                        else if (mover && movido >= 0) {
+                            int j2 = movido + mover;
+                            if (j2 >= 0 && j2 < (int)an.frames.size())
+                                std::swap(an.frames[movido], an.frames[j2]);
+                        }
+                        ImGui::EndChild();
+                    } else if (an.frames.empty()) {
+                        ImGui::TextDisabled("(vacia: elige fotogramas en la hoja y dale a Anadir)");
+                    }
+                    // Retoques rapidos: la deteccion deja el trabajo hecho, pero
+                    // alguna banda junta dos animaciones o parte una de mas.
+                    ImGui::SetNextItemWidth(80);
+                    ImGui::InputInt("cada", &sheet_split_n, 0);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Partir") && sheet_split_n > 0 &&
+                        (int)an.frames.size() > sheet_split_n) {
+                        std::vector<SprAnim> nuevas;
+                        for (size_t k = 0; k < an.frames.size(); k += sheet_split_n) {
+                            SprAnim n2; n2.fps = an.fps;
+                            n2.name = an.name + "_" + std::to_string((int)(k / sheet_split_n) + 1);
+                            for (size_t q = k; q < an.frames.size() &&
+                                 q < k + (size_t)sheet_split_n; q++)
+                                n2.frames.push_back(an.frames[q]);
+                            nuevas.push_back(n2);
+                        }
+                        sheet.anims.erase(sheet.anims.begin() + i);
+                        sheet.anims.insert(sheet.anims.begin() + i, nuevas.begin(), nuevas.end());
+                        sheet_anim_sel = i; ImGui::PopID(); break;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Unir con la siguiente") && i + 1 < (int)sheet.anims.size()) {
+                        for (int fr2 : sheet.anims[i + 1].frames) an.frames.push_back(fr2);
+                        sheet.anims.erase(sheet.anims.begin() + i + 1);
+                        ImGui::PopID(); break;
+                    }
+                    ImGui::SetNextItemWidth(120);
+                    ImGui::SliderInt("fps", &an.fps, 1, 30);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Rehacer con los elegidos") && !sheet_sel.empty()) {
+                        an.frames = sheet_sel;
+                        std::sort(an.frames.begin(), an.frames.end());
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Borrar")) {
+                        sheet.anims.erase(sheet.anims.begin() + i);
+                        sheet_anim_sel = -1; ImGui::PopID(); break;
+                    }
+                    // previo en marcha: se ve la animacion tal cual quedara
+                    if (im && !an.frames.empty()) {
+                        sheet_anim_t += ImGui::GetIO().DeltaTime * an.fps;
+                        int k = an.frames[((int)sheet_anim_t) % (int)an.frames.size()];
+                        if (k >= 0 && k < (int)sheet.frames.size()) {
+                            const SprFrame& f2 = sheet.frames[k];
+                            float z = 3.0f;
+                            ImGui::Image((ImTextureID)(intptr_t)im->tex,
+                                         ImVec2(f2.w * z, f2.h * z),
+                                         ImVec2(f2.x / (float)sheet.w, f2.y / (float)sheet.h),
+                                         ImVec2((f2.x + f2.w) / (float)sheet.w,
+                                                (f2.y + f2.h) / (float)sheet.h));
+                        }
+                    }
+                }
+                ImGui::PopID();
+            }
+            if (sheet.anims.empty())
+                ImGui::TextDisabled("(elige fotogramas arriba y crea una animacion)");
+        }
+
+        // ---- los sprites ya puestos en la escena ----
+        ImGui::SeparatorText("Colocados en la escena");
+        if (tool != T_SPRITE) {
+            if (ImGui::Button(ICON_FA_PERSON_RUNNING " Colocar en la escena")) tool = T_SPRITE;
+            ImGui::SameLine(); ImGui::TextDisabled("(usa la hoja abierta)");
+        } else ImGui::TextColored(ImVec4(0.5f,0.8f,1,1), "Clic en la escena para colocar");
+        ImGui::BeginChild("lista_spr", ImVec2(0, 90), true);
+        for (int i = 0; i < (int)sprites.size(); i++) {
+            std::string et = sprites[i].name + "   (" + sprites[i].sheet + ")";
+            if (ImGui::Selectable(et.c_str(), spr_sel == i)) spr_sel = i;
+        }
+        if (sprites.empty()) ImGui::TextDisabled("(ninguno)");
+        ImGui::EndChild();
+
+        if (spr_sel >= 0 && spr_sel < (int)sprites.size()) {
+            SprObj& o = sprites[spr_sel];
+            SheetDef* sh = sheet_of(o.sheet);
+            {   char b[128]; strncpy(b, o.name.c_str(), 127); b[127] = 0;
+                if (ImGui::InputText("Nombre (PROCESS)", b, sizeof(b))) o.name = b; }
+            // hoja
+            {
+                std::vector<std::string> imgs;
+                for (auto& fgx : hud_gfx_files) if (!hud_is_fpg(fgx)) imgs.push_back(fgx);
+                if (ImGui::BeginCombo("Hoja", o.sheet.c_str())) {
+                    for (auto& im2 : imgs)
+                        if (ImGui::Selectable(im2.c_str(), im2 == o.sheet)) { o.sheet = im2; o.anim.clear(); }
+                    ImGui::EndCombo();
+                }
+            }
+            // animacion de esa hoja
+            if (sh) {
+                const char* cur = o.anim.empty() ? "(primer fotograma)" : o.anim.c_str();
+                if (ImGui::BeginCombo("Animacion", cur)) {
+                    if (ImGui::Selectable("(primer fotograma)", o.anim.empty())) o.anim.clear();
+                    for (auto& an : sh->anims)
+                        if (ImGui::Selectable(an.name.c_str(), an.name == o.anim)) o.anim = an.name;
+                    ImGui::EndCombo();
+                }
+                if (o.dirs > 1) {
+                    for (auto& an : sh->anims) if (an.name == o.anim) {
+                        int pasos = (int)an.frames.size() / o.dirs;
+                        if (pasos * o.dirs != (int)an.frames.size())
+                            ImGui::TextColored(ImVec4(1,0.6f,0.4f,1),
+                                "La animacion tiene %d fotogramas: no es multiplo de %d direcciones.",
+                                (int)an.frames.size(), o.dirs);
+                        else
+                            ImGui::TextDisabled("%d pasos por direccion (la animacion va por filas: "
+                                                "primero todos los de una direccion)", pasos);
+                    }
+                }
+            } else ImGui::TextColored(ImVec4(1,0.5f,0.4f,1), "No pude leer esa hoja.");
+            {   // fps de la animacion, aqui mismo: no hay que ir a la hoja para
+                // ajustar como de rapido se mueve ESTE personaje.
+                bool propio = (o.fps > 0);
+                if (ImGui::Checkbox("fps propios", &propio)) o.fps = propio ? 10 : 0;
+                if (o.fps > 0) {
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(140);
+                    ImGui::SliderInt("fotogramas/seg", &o.fps, 1, 30);
+                } else {
+                    ImGui::SameLine();
+                    int f0 = 10;
+                    if (sh) for (auto& an : sh->anims)
+                        if (an.name == (o.is_player ? (o.an_walk.empty() ? o.an_idle : o.an_walk) : o.anim))
+                            { f0 = an.fps; break; }
+                    ImGui::TextDisabled("(los de la animacion: %d)", f0);
+                }
+            }
+            ImGui::DragFloat("Alto (unidades)", &o.height, 0.05f, 0.1f, 60.0f, "%.2f");
+            const char* dirs_txt[] = { "1 (siempre el mismo)", "4 direcciones", "8 direcciones", "16 direcciones" };
+            int di = (o.dirs == 16) ? 3 : (o.dirs == 8) ? 2 : (o.dirs == 4) ? 1 : 0;
+            if (ImGui::Combo("Posturas", &di, dirs_txt, 4))
+                o.dirs = (di == 3) ? 16 : (di == 2) ? 8 : (di == 1) ? 4 : 1;
+            const char* bb[] = { "De pie (personajes)", "De cara del todo (items, efectos)" };
+            ImGui::Combo("Encarado", &o.billboard, bb, 2);
+            bool sh_on = o.shadow != 0, sm = o.smooth != 0, il = o.iluminado != 0;
+            if (ImGui::Checkbox("Hace sombra", &sh_on)) o.shadow = sh_on;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Suavizado", &sm)) o.smooth = sm;
+            if (ImGui::Checkbox("Se ilumina con la escena", &il)) o.iluminado = il;
+            ImGui::SameLine();
+            {   bool ap = o.ajuste_px != 0;
+                if (ImGui::Checkbox("Ajuste a pixel", &ap)) o.ajuste_px = ap;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Redondea su posicion a pixeles enteros de pantalla:\n"
+                                      "el pixel art deja de temblar al moverse.");
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Se apaga de noche y con el ciclo de dia, como el resto\n"
+                                  "del mundo. Sin marcar, va siempre a pleno color.");
+            ImGui::DragFloat("Recorte alfa", &o.cutout, 0.01f, 0.0f, 0.99f, "%.2f");
+            ImGui::DragFloat3("Posicion", &o.x, 0.1f);
+
+            // ---- lo mismo que un objeto 3D: fisica, jugador y zonas ----
+            auto combo_tecla = [&](const char* et, std::string& tecla) {
+                if (ImGui::BeginCombo(et, tecla.c_str())) {
+                    // Con 70 teclas en la lista, un filtro ahorra el scroll.
+                    static char filtro[16] = "";
+                    ImGui::SetNextItemWidth(90);
+                    ImGui::InputTextWithHint("##ft", "filtrar", filtro, sizeof(filtro));
+                    for (int k = 0; k < NTECLAS; k++) {
+                        if (filtro[0]) {
+                            bool cuadra = false;
+                            for (const char* a = TECLAS[k]; *a && !cuadra; a++) {
+                                const char *x = a, *y = filtro;
+                                while (*x && *y && toupper((unsigned char)*x) == toupper((unsigned char)*y)) { x++; y++; }
+                                if (!*y) cuadra = true;
+                            }
+                            if (!cuadra) continue;
+                        }
+                        if (ImGui::Selectable(TECLAS[k], tecla == TECLAS[k])) tecla = TECLAS[k];
+                    }
+                    ImGui::EndCombo();
+                }
+            };
+            // Animacion de la hoja y boton del mando: los usan tanto el jugador como
+            // los NPC, asi que se definen antes de partir en dos la ficha.
+            auto combo_anim_de = [&](const char* et, std::string& dest) {
+                const char* cur = dest.empty() ? "(ninguna)" : dest.c_str();
+                ImGui::SetNextItemWidth(150);
+                if (ImGui::BeginCombo(et, cur)) {
+                    if (ImGui::Selectable("(ninguna)", dest.empty())) dest.clear();
+                    if (sh) for (auto& an : sh->anims)
+                        if (ImGui::Selectable(an.name.c_str(), an.name == dest)) dest = an.name;
+                    ImGui::EndCombo();
+                }
+            };
+            auto combo_boton = [&](const char* et, std::string& b) {
+                const char* cur = b.empty() ? "(ninguno)" : b.c_str();
+                ImGui::SetNextItemWidth(180);
+                if (ImGui::BeginCombo(et, cur)) {
+                    if (ImGui::Selectable("(ninguno)", b.empty())) b.clear();
+                    for (int k = 0; k < NBOTONES; k++)
+                        if (ImGui::Selectable(BOTONES[k], b == BOTONES[k])) b = BOTONES[k];
+                    ImGui::EndCombo();
+                }
+            };
+            ImGui::SeparatorText("Que es y como se comporta");
+            bool jug = o.is_player != 0;
+            if (ImGui::Checkbox("Es el personaje que se controla", &jug)) {
+                o.is_player = jug;
+                if (jug) { o.phys = 0; spr_follow = spr_sel; }   // el jugador lleva char controller
+                else if (spr_follow == spr_sel) spr_follow = -1;
+            }
+            if (o.is_player) {
+                bool sigue = (spr_follow == spr_sel);
+                if (ImGui::Checkbox("La camara le sigue", &sigue))
+                    spr_follow = sigue ? spr_sel : -1;
+                ImGui::DragFloat("Velocidad andando", &o.walk_speed, 0.1f, 0.5f, 80.0f, "%.1f");
+                ImGui::DragFloat("Velocidad corriendo", &o.run_speed, 0.1f, 0.5f, 120.0f, "%.1f");
+                ImGui::DragFloat("Fuerza del salto", &o.jump_force, 0.1f, 0.0f, 60.0f, "%.1f");
+                ImGui::DragFloat("Radio de colision", &o.char_radius, 0.05f, 0.1f, 10.0f, "%.2f");
+                ImGui::DragFloat("Altura de colision", &o.char_height, 0.05f, 0.2f, 20.0f, "%.2f");
+                if (ImGui::TreeNode("Teclas y su animacion")) {
+                    // Cada tecla con SU animacion al lado: mientras la tengas
+                    // pulsada se reproduce esa. Es como se hace un juego 2D de
+                    // siempre (una animacion por direccion).
+                    auto fila_tecla = [&](const char* et, std::string& tecla,
+                                          std::string* anim, int* espejo) {
+                        ImGui::PushID(et);
+                        ImGui::SetNextItemWidth(120);
+                        combo_tecla("##k", tecla);
+                        ImGui::SameLine();
+                        if (anim) combo_anim_de("##a", *anim);
+                        else { ImGui::SetNextItemWidth(150); ImGui::TextDisabled("(sin animacion propia)"); }
+                        if (espejo) {
+                            ImGui::SameLine();
+                            bool e2 = (*espejo != 0);
+                            if (ImGui::Checkbox("espejo", &e2)) *espejo = e2 ? 1 : 0;
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("Dibuja la animacion volteada.\n"
+                                                  "Con una sola de 'andar a la izquierda' ya tienes la derecha.");
+                        }
+                        ImGui::SameLine();
+                        ImGui::TextUnformatted(et);
+                        ImGui::PopID();
+                    };
+                    fila_tecla("Adelante", o.k_up, &o.an_up, &o.fx_up);
+                    fila_tecla("Atras", o.k_down, &o.an_down, &o.fx_down);
+                    fila_tecla("Izquierda", o.k_left, &o.an_left, &o.fx_left);
+                    fila_tecla("Derecha", o.k_right, &o.an_right, &o.fx_right);
+                    fila_tecla("Saltar", o.k_jump, &o.an_jump, nullptr);
+                    fila_tecla("Correr", o.k_run, nullptr, nullptr);
+                    ImGui::TextDisabled("Teclas: constantes de BennuGD2 (key(_W)...).\n"
+                                        "Animacion vacia = se usa la de 'lo que hace' (abajo);\n"
+                                        "'espejo' vale igual con animacion propia o sin ella.");
+                    ImGui::SeparatorText("Mando");
+                    bool um = o.usar_mando != 0;
+                    if (ImGui::Checkbox("Moverse con el stick y la cruceta", &um)) o.usar_mando = um;
+                    combo_boton("Boton de saltar", o.b_jump);
+                    combo_boton("Boton de correr", o.b_run);
+                    ImGui::TreePop();
+                }
+                if (ImGui::TreeNode("Acciones (las que tu quieras)")) {
+                    ImGui::TextDisabled("Cada accion se dispara con una tecla, con un boton del\n"
+                                        "mando o con los dos, y hace sonar una animacion y/o\n"
+                                        "llamar a un PROCESS o FUNCTION tuyo.");
+                    if (ImGui::Button(ICON_FA_PLUS " Anadir accion")) {
+                        SprAccion ac;
+                        ac.nombre = "accion" + std::to_string((int)o.acciones.size() + 1);
+                        o.acciones.push_back(ac);
+                    }
+                    int borrar_acc = -1;
+                    for (int q = 0; q < (int)o.acciones.size(); q++) {
+                        SprAccion& ac = o.acciones[q];
+                        ImGui::PushID(9000 + q);
+                        ImGui::Separator();
+                        {   char nb[64]; strncpy(nb, ac.nombre.c_str(), 63); nb[63] = 0;
+                            ImGui::SetNextItemWidth(120);
+                            if (ImGui::InputText("##nom", nb, sizeof(nb))) ac.nombre = nb; }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("quitar")) borrar_acc = q;
+                        {   bool con_tecla = !ac.tecla.empty();
+                            if (ImGui::Checkbox("tecla", &con_tecla))
+                                ac.tecla = con_tecla ? "_K" : "";
+                            if (con_tecla) {
+                                ImGui::SameLine();
+                                ImGui::SetNextItemWidth(110);
+                                combo_tecla("##t", ac.tecla);
+                            }
+                        }
+                        combo_boton("boton del mando", ac.boton);
+                        combo_anim_de("animacion", ac.anim);
+                        bool e2 = ac.espejo != 0;
+                        if (ImGui::Checkbox("espejo", &e2)) ac.espejo = e2 ? 1 : 0;
+                        ImGui::SameLine();
+                        bool uv = ac.una_vez != 0;
+                        if (ImGui::Checkbox("suena entera al pulsar", &uv)) ac.una_vez = uv ? 1 : 0;
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Marcado: se reproduce del tiron y no se corta (ataques).\n"
+                                              "Sin marcar: suena mientras aguantes la tecla o el boton.");
+                        {   char lb[128]; strncpy(lb, ac.llama.c_str(), 127); lb[127] = 0;
+                            ImGui::SetNextItemWidth(180);
+                            if (ImGui::InputTextWithHint("llama a", "mi_funcion", lb, sizeof(lb)))
+                                ac.llama = lb; }
+                        ImGui::PopID();
+                    }
+                    if (borrar_acc >= 0) o.acciones.erase(o.acciones.begin() + borrar_acc);
+                    ImGui::TreePop();
+                }
+                if (ImGui::TreeNode("Animaciones segun lo que hace")) {
+                    auto combo_anim = [&](const char* et, std::string& dest) {
+                        const char* cur = dest.empty() ? "(ninguna)" : dest.c_str();
+                        if (ImGui::BeginCombo(et, cur)) {
+                            if (ImGui::Selectable("(ninguna)", dest.empty())) dest.clear();
+                            if (sh) for (auto& an : sh->anims)
+                                if (ImGui::Selectable(an.name.c_str(), an.name == dest)) dest = an.name;
+                            ImGui::EndCombo();
+                        }
+                    };
+                    combo_anim("Quieto", o.an_idle);
+                    combo_anim("Andando", o.an_walk);
+                    combo_anim("Corriendo", o.an_run);
+                    combo_anim("Saltando", o.an_jump);
+                    ImGui::TextDisabled("Sin animacion para un estado se usa la de 'Quieto'.");
+                    ImGui::TreePop();
+                }
+            } else {
+                const char* fis[] = { "Ninguna (decorativo)", "Caja", "Esfera", "Capsula",
+                                      "Cilindro", "Muro invisible (no se mueve)" };
+                ImGui::Combo("Colision", &o.phys, fis, 6);
+                if (o.phys >= 1 && o.phys <= 4) {
+                    ImGui::DragFloat("Masa (0 = fijo)", &o.mass, 0.1f, 0.0f, 500.0f, "%.2f");
+                    ImGui::DragFloat("Rebote", &o.bounce, 0.01f, 0.0f, 1.0f, "%.2f");
+                    ImGui::DragFloat("Friccion", &o.friction, 0.01f, 0.0f, 2.0f, "%.2f");
+                    bool fl = o.buoyant != 0;
+                    if (ImGui::Checkbox("Flota en el agua", &fl)) o.buoyant = fl;
+                    if (o.buoyant)
+                        ImGui::DragFloat("Densidad (0.5 = medio hundido)", &o.density, 0.01f, 0.05f, 1.0f, "%.2f");
+                }
+                if (o.phys >= 1)
+                    ImGui::DragFloat("Tamano de la colision", &o.csize, 0.05f, 0.1f, 40.0f, "%.2f");
+
+                // ---- NPC: que estorbe y que se pueda hablar con el ----
+                ImGui::SeparatorText("Como NPC");
+                bool sol = o.solido != 0;
+                if (ImGui::Checkbox("Bloquea el paso (le sigue la colision)", &sol)) o.solido = sol;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Una caja de colision pegada al sprite, que se mueve con el.\n"
+                                      "Los muros invisibles son fijos; esto vale para NPC que andan.");
+                if (o.solido)
+                    ImGui::DragFloat("Radio que ocupa", &o.sol_radio, 0.05f, 0.1f, 20.0f, "%.2f");
+
+                {   const char* comps[] = { "Quieto", "Patrulla entre A y B",
+                                            "Sigue al jugador", "Huye del jugador" };
+                    ImGui::Combo("Comportamiento", &o.comport, comps, 4);
+                    if (o.comport > 0) {
+                        ImGui::DragFloat("Velocidad", &o.com_vel, 0.1f, 0.1f, 40.0f, "%.1f");
+                        combo_anim_de("Animacion al moverse", o.an_walk);
+                        if (o.comport == 1) {
+                            ImGui::DragFloat2("Punto B (x,z)", &o.com_bx, 0.1f);
+                            if (ImGui::SmallButton("Poner B donde mira la camara")) {
+                                o.com_bx = vcam_target[0]; o.com_bz = vcam_target[2];
+                            }
+                            ImGui::TextDisabled("A es donde esta puesto ahora mismo.");
+                        } else {
+                            ImGui::DragFloat("Se entera a", &o.com_radio, 0.5f, 1.0f, 200.0f, "%.0f");
+                        }
+                    }
+                }
+                bool inter = o.inter_on != 0;
+                if (ImGui::Checkbox("Se puede interactuar (acercarse y pulsar)", &inter)) o.inter_on = inter;
+                if (o.inter_on) {
+                    ImGui::DragFloat("Distancia para poder", &o.inter_radio, 0.1f, 0.5f, 40.0f, "%.1f");
+                    ImGui::SetNextItemWidth(120);
+                    combo_tecla("Tecla", o.inter_tecla);
+                    combo_boton("Boton del mando", o.inter_boton);
+                    combo_anim_de("Animacion al hacerlo", o.inter_anim);
+                    {   char lb[128]; strncpy(lb, o.inter_llama.c_str(), 127); lb[127] = 0;
+                        ImGui::SetNextItemWidth(180);
+                        if (ImGui::InputTextWithHint("Llama a", "mi_dialogo", lb, sizeof(lb)))
+                            o.inter_llama = lb; }
+                    bool mir = o.inter_mirar != 0;
+                    if (ImGui::Checkbox("Se gira hacia el jugador al acercarse", &mir)) o.inter_mirar = mir;
+                    ImGui::TextDisabled("Si el PROCESS no existe, el editor te crea el esqueleto.");
+                }
+            }
+            {   // zonas de barrera pintadas (igual que en los objetos)
+                int zl = o.zone_layer + 1;
+                const char* zz[] = { "(ninguna)", "Capa 0", "Capa 1", "Capa 2", "Capa 3" };
+                if (ImGui::Combo("No puede entrar en", &zl, zz, 5)) o.zone_layer = zl - 1;
+            }
+
+            if (ImGui::Button("Ir a el")) {
+                vcam_target[0] = o.x; vcam_target[1] = o.y + o.height * 0.5f; vcam_target[2] = o.z;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Duplicar")) {
+                // Con diez NPC iguales, configurar cada uno a mano es un castigo.
+                SprObj c = o;
+                c.entity = -1;                    // el suyo, no el del original
+                c.is_player = 0;                  // solo puede haber un jugador
+                c.name = o.name + "_2";
+                for (int k = 2; ; k++) {
+                    bool rep = false;
+                    for (auto& q : sprites) if (q.name == c.name) { rep = true; break; }
+                    if (!rep) break;
+                    c.name = o.name + "_" + std::to_string(k + 1);
+                }
+                c.x += 1.5f;
+                sprites.push_back(c);
+                spr_sel = (int)sprites.size() - 1;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Borrar")) {
+                if (o.entity >= 0) g3d_sprite_destroy(o.entity);
+                sprites.erase(sprites.begin() + spr_sel);
+                spr_sel = -1;
+            }
+        }
+        if (spr_dos_columnas) ImGui::EndTable();
+        // ---- guardado automatico ----
+        // En cuanto sueltas el raton y la hoja ha cambiado, se escribe su .sheet.
+        // Antes habia que acordarse de "Guardar hoja", y si cerrabas sin darle
+        // perdias las animaciones que habias montado.
+        if (!sheet.image.empty() && !sheet.frames.empty() &&
+            !ImGui::IsAnyItemActive() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            size_t fa = sheet_firma();
+            if (fa != sheet_firma_guardada) {
+                sheet_save();
+                sheet_firma_guardada = fa;
+                sheet_cache[sheet.image] = sheet;   // y los sprites colocados, al dia
+            }
+        }
+        ImGui::End();
+        }
 
         // --- Panel: Entorno (agua / mar / lago) ---
         ImGui::Begin("Entorno");
@@ -5748,6 +8670,10 @@ int main(int, char**) {
             g3d_camera_set_position(cam, rx, ry, rz);
             g3d_camera_look_at(cam, vcam_target[0], vcam_target[1], vcam_target[2], 0.0f, 1.0f, 0.0f);
         }
+
+        // ---- sprites 2D del mundo: se refrescan y se animan tambien en el editor,
+        //      con el mismo dibujante del juego (lo que ves es lo que corre) ----
+        for (auto& so : sprites) spr_sync(so, ImGui::GetIO().DeltaTime);
 
         // ---- render del MOTOR a la textura del viewport ----
         g3d_editor_set_aspect(vp.h > 0 ? (float)vp.w / (float)vp.h : 1.777f);

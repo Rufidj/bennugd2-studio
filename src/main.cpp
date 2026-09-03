@@ -5147,6 +5147,12 @@ int main(int, char**) {
                 g3d_char_set_tuning(sim_pch,0.8f,46.0f); continue; }
             if (o.phys>=1 && o.phys<=4){
                 float c=o.csize>0.05f?o.csize:0.5f; float by0=o.y+c; int bid;
+                /* Un cuerpo FIJO (masa 0) corta el paso en el juego porque el
+                   personaje consulta a Jolt, y el editor no lleva Jolt dentro: aqui
+                   se le pone ademas una caja, para que la vista previa se porte
+                   igual y no parezca que el personaje lo atraviesa. */
+                if (o.mass <= 0.0f)
+                    g3d_collider_add_box(o.x - c, o.y, o.z - c, o.x + c, o.y + 2.0f*c, o.z + c);
                 if(o.phys==1) bid=g3d_rigidbody_create(o.x,by0,o.z,c,c,c,o.mass);
                 else if(o.phys==2) bid=g3d_rigidbody_create_sphere(o.x,by0,o.z,c,o.mass);
                 else if(o.phys==3) bid=g3d_rigidbody_create_capsule(o.x,by0,o.z,c,c,o.mass);
@@ -8738,7 +8744,16 @@ int main(int, char**) {
                                          "Cilindro", "Muro invisible (colision)" };
                 ImGui::Combo("Cuerpo", &o.phys, ptypes, IM_ARRAYSIZE(ptypes));
                 if (o.phys >= 1 && o.phys <= 4) {         // cuerpo dinamico
-                    ImGui::DragFloat("Masa / peso", &o.mass, 0.1f, 0.0f, 1000.0f, "%.2f kg");
+                    /* Que se mueva o no es la pregunta de verdad, y estaba escondida
+                       en un 0 de la masa: una roca con la masa que viene puesta (1 kg)
+                       el personaje la aparta de un empujon y parece que no choca. */
+                    bool fijo = (o.mass <= 0.0f);
+                    ImGui::TextUnformatted("Se mueve:");
+                    // Una por linea: en el Inspector las dos juntas se cortan.
+                    if (ImGui::RadioButton("No, es fijo (corta el paso)", fijo)) o.mass = 0.0f;
+                    if (ImGui::RadioButton("Si, se puede empujar", !fijo) && fijo) o.mass = 1.0f;
+                    if (!fijo)
+                        ImGui::DragFloat("Masa / peso", &o.mass, 0.1f, 0.01f, 1000.0f, "%.2f kg");
                     ImGui::DragFloat("Tamano colision", &o.csize, 0.05f, 0.1f, 50.0f, "%.2f");
                     if (o.mass <= 0.0f) {
                         // Decorado solido: barcos, rocas, cajones que no se empujan.

@@ -6746,7 +6746,7 @@ int main(int, char**) {
                             if (!sheet.anims.empty()) o.anim = sheet.anims[0].name;
                             o.x = hit[0]; o.y = hit[1]; o.z = hit[2];
                             sprites.push_back(o);
-                            spr_sel = (int)sprites.size() - 1;
+                            spr_sel = (int)sprites.size() - 1; obj_sel = -1;
                             status = "Sprite colocado (" + o.sheet + ")";
                         }
                     } else if (tool == T_PLACE && asset_sel >= 0) {   // COLOCAR
@@ -6757,16 +6757,28 @@ int main(int, char**) {
                             o.name = assets[asset_sel].substr(0, assets[asset_sel].find('.')) +
                                      "_" + std::to_string((int)objects.size());
                             o.entity = e; o.x = hit[0]; o.y = hit[1]; o.z = hit[2]; o.ry = 0; o.scale = 1;
-                            objects.push_back(o); obj_sel = (int)objects.size() - 1;
+                            objects.push_back(o); obj_sel = (int)objects.size() - 1; spr_sel = -1;
                         }
                     } else {                                         // SELECCIONAR
-                        float best = 1e12f; int bi = -1;
+                        /* Se busca entre los modelos 3D Y los personajes 2D, y gana
+                           el que caiga mas cerca del clic: un sprite es un objeto
+                           mas de la escena. La seleccion es una sola, o objeto o
+                           sprite, para que el Inspector y el gizmo no dude. */
+                        float best = 1e12f; int bi = -1, bs = -1;
                         for (int i = 0; i < (int)objects.size(); i++) {
                             float dx = objects[i].x - hit[0], dz = objects[i].z - hit[2];
                             float d = dx*dx + dz*dz;
-                            if (d < best) { best = d; bi = i; }
+                            if (d < best) { best = d; bi = i; bs = -1; }
                         }
-                        if (bi >= 0 && best < 36.0f) obj_sel = bi;
+                        for (int i = 0; i < (int)sprites.size(); i++) {
+                            float dx = sprites[i].x - hit[0], dz = sprites[i].z - hit[2];
+                            float d = dx*dx + dz*dz;
+                            if (d < best) { best = d; bs = i; bi = -1; }
+                        }
+                        if (best < 36.0f) {
+                            if (bs >= 0) { spr_sel = bs; obj_sel = -1; }
+                            else if (bi >= 0) { obj_sel = bi; spr_sel = -1; }
+                        }
                     }
                 }
             }
@@ -7657,7 +7669,9 @@ int main(int, char**) {
         ImGui::BeginChild("lista_spr", ImVec2(0, 90), true);
         for (int i = 0; i < (int)sprites.size(); i++) {
             std::string et = sprites[i].name + "   (" + sprites[i].sheet + ")";
-            if (ImGui::Selectable(et.c_str(), spr_sel == i)) spr_sel = i;
+            // La seleccion es UNA: al coger un personaje se suelta el objeto, o el
+            // Inspector y el gizmo seguirian atendiendo al otro.
+            if (ImGui::Selectable(et.c_str(), spr_sel == i && obj_sel < 0)) { spr_sel = i; obj_sel = -1; }
         }
         if (sprites.empty()) ImGui::TextDisabled("(ninguno)");
         ImGui::EndChild();
@@ -8125,11 +8139,14 @@ int main(int, char**) {
         ImGui::Begin("Jerarquia");
         ImGui::TextDisabled("Objetos: %d", (int)objects.size());
         ImGui::Separator();
-        ImGui::BeginChild("lista_obj");
+        // Con personajes en la escena, la lista de objetos se queda con la mitad:
+        // antes se comia todo el alto y la de personajes caia fuera de la ventana.
+        ImGui::BeginChild("lista_obj", ImVec2(0, sprites.empty() ? 0.0f
+                                                 : ImGui::GetContentRegionAvail().y * 0.5f));
         int pedir_borrar = -1;                 // no se borra dentro del bucle: invalidaria el recorrido
         for (int i = 0; i < (int)objects.size(); i++) {
             ImGui::PushID(i);
-            if (ImGui::Selectable(objects[i].name.c_str(), obj_sel == i)) obj_sel = i;
+            if (ImGui::Selectable(objects[i].name.c_str(), obj_sel == i)) { obj_sel = i; spr_sel = -1; }
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                 open_anim_preview(objects[i].asset);
             // Menu contextual: el clic derecho tambien selecciona, para que las
@@ -8158,6 +8175,62 @@ int main(int, char**) {
         }
         ImGui::EndChild();
         if (pedir_borrar >= 0) delete_obj(pedir_borrar);
+
+        /* ---- Los personajes 2D son objetos de la escena como los demas ----
+           Estaban solo en su ventana flotante, asi que para tocar uno habia que
+           abrirla y buscarlo en su lista. Aqui se eligen igual que un modelo 3D:
+           la seleccion es una sola, o un objeto o un sprite, para que el
+           Inspector y el gizmo sepan siempre a quien hacen caso. */
+        if (!sprites.empty()) {
+            ImGui::Separator();
+            ImGui::TextDisabled("Personajes 2D: %d", (int)sprites.size());
+            ImGui::BeginChild("lista_spr_jer");
+            int borrar_spr = -1;
+            for (int i = 0; i < (int)sprites.size(); i++) {
+                ImGui::PushID(1000 + i);
+                std::string et = std::string(ICON_FA_PERSON_RUNNING "  ") + sprites[i].name;
+                if (ImGui::Selectable(et.c_str(), spr_sel == i && obj_sel < 0)) {
+                    spr_sel = i; obj_sel = -1;
+                }
+                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    spr_sel = i; obj_sel = -1;
+                    show_spr_win = true;            // doble clic: su ficha entera
+                }
+                if (ImGui::IsItemHovered() && !sprites[i].sheet.empty())
+                    ImGui::SetTooltip("%s", sprites[i].sheet.c_str());
+                if (ImGui::BeginPopupContextItem("ctx_spr")) {
+                    spr_sel = i; obj_sel = -1;
+                    ImGui::TextDisabled("%s", sprites[i].name.c_str());
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Abrir su ficha (hojas y animaciones)")) show_spr_win = true;
+                    if (ImGui::MenuItem("Duplicar")) {
+                        SprObj c = sprites[i];
+                        c.entity = -1;
+                        c.name = sprites[i].name + "_2";
+                        for (int k = 2; ; k++) {
+                            bool rep = false;
+                            for (auto& q : sprites) if (q.name == c.name) { rep = true; break; }
+                            if (!rep) break;
+                            c.name = sprites[i].name + "_" + std::to_string(k + 1);
+                        }
+                        c.x += 1.5f;
+                        sprites.push_back(c);
+                        spr_sel = (int)sprites.size() - 1;
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Borrar")) borrar_spr = i;
+                    ImGui::EndPopup();
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
+            if (borrar_spr >= 0) {
+                if (sprites[borrar_spr].entity >= 0) g3d_sprite_destroy(sprites[borrar_spr].entity);
+                sprites.erase(sprites.begin() + borrar_spr);
+                if (spr_sel >= (int)sprites.size()) spr_sel = (int)sprites.size() - 1;
+                if (spr_follow >= (int)sprites.size()) spr_follow = -1;
+            }
+        }
         ImGui::End();
 
         // --- Panel: Inspector (del objeto seleccionado / pincel de terreno) ---
@@ -8775,10 +8848,85 @@ int main(int, char**) {
             ImGui::Spacing();
             if (ImGui::Button("Duplicar", ImVec2(-1, 0))) duplicate_obj(obj_sel);
             if (ImGui::Button("Borrar objeto", ImVec2(-1, 0))) borrar_sel = true;
+        } else if (spr_sel >= 0 && spr_sel < (int)sprites.size()) {
+            /* ---- Ficha de un PERSONAJE 2D en el Inspector ----
+               Lo de todos los dias (donde esta, como de alto, que animacion hace,
+               si es el que se controla) para no tener que abrir la ventana grande.
+               Las hojas, los fotogramas y las acciones siguen en su ficha, que es
+               donde se ve el dibujo: aqui esta el boton para ir. */
+            SprObj& o = sprites[spr_sel];
+            ImGui::Text(ICON_FA_PERSON_RUNNING "  %s", o.name.c_str());
+            ImGui::TextDisabled("%s", o.sheet.empty() ? "(sin hoja)" : o.sheet.c_str());
+            ImGui::Spacing();
+            if (ImGui::Button("Abrir su ficha (hojas, animaciones y acciones)", ImVec2(-1, 0)))
+                show_spr_win = true;
+            ImGui::Spacing();
+            if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::DragFloat3("Posicion", &o.x, 0.1f);
+                if (ImGui::DragFloat("Altura (unidades)", &o.height, 0.05f, 0.1f, 60.0f, "%.2f"))
+                    if (o.height < 0.1f) o.height = 0.1f;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Lo que mide en el mundo. De aqui salen los pixeles\npor unidad: es lo que le da su tamanio frente a los\nmodelos 3D.");
+                if (ImGui::Button("Apoyar en el suelo", ImVec2(-1, 0)) && terrain)
+                    o.y = g3d_editor_terrain_height(terrain, o.x, o.z);
+            }
+            if (ImGui::CollapsingHeader("Que hace", ImGuiTreeNodeFlags_DefaultOpen)) {
+                SheetDef* sh = sheet_of(o.sheet);
+                const char* cur = o.anim.empty() ? "(el primer fotograma)" : o.anim.c_str();
+                if (ImGui::BeginCombo("Animacion", cur)) {
+                    if (ImGui::Selectable("(el primer fotograma)", o.anim.empty())) o.anim.clear();
+                    if (sh) for (auto& an : sh->anims)
+                        if (ImGui::Selectable(an.name.c_str(), an.name == o.anim)) o.anim = an.name;
+                    ImGui::EndCombo();
+                }
+                if (!sh) ImGui::TextDisabled("(su hoja no esta abierta: abre su ficha)");
+                /* fps = 0 no es "parado": es "los que tenga su animacion". Aqui se
+                   dice con palabras, que un 0 a secas parecia un valor roto. */
+                bool propio = (o.fps > 0);
+                if (ImGui::Checkbox("Fotogramas por segundo propios", &propio))
+                    o.fps = propio ? 10 : 0;
+                if (o.fps > 0) ImGui::SliderInt("fotogramas/seg", &o.fps, 1, 30);
+                else           ImGui::TextDisabled("   (los de su animacion)");
+                bool jug = o.is_player != 0;
+                if (ImGui::Checkbox("Es el personaje que se controla", &jug)) {
+                    o.is_player = jug;
+                    if (jug) spr_follow = spr_sel;
+                    else if (spr_follow == spr_sel) spr_follow = -1;
+                }
+                int nd = o.dirs;
+                if (ImGui::SliderInt("Vistas (direcciones)", &nd, 1, 16)) o.dirs = nd;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Cuantas vistas tiene dibujadas: 1 = siempre la misma,\n4 = las cuatro de toda la vida, 8 o 16 = mas fino.");
+                if (!o.acciones.empty())
+                    ImGui::TextDisabled("%d accion(es) puestas; se editan en su ficha.",
+                                        (int)o.acciones.size());
+            }
+            ImGui::Spacing();
+            if (ImGui::Button("Duplicar##spr", ImVec2(-1, 0))) {
+                SprObj c = o;
+                c.entity = -1;
+                c.name = o.name + "_2";
+                for (int k = 2; ; k++) {
+                    bool rep = false;
+                    for (auto& q : sprites) if (q.name == c.name) { rep = true; break; }
+                    if (!rep) break;
+                    c.name = o.name + "_" + std::to_string(k + 1);
+                }
+                c.x += 1.5f;
+                sprites.push_back(c);
+                spr_sel = (int)sprites.size() - 1;
+            }
+            if (ImGui::Button("Borrar personaje", ImVec2(-1, 0))) {
+                if (o.entity >= 0) g3d_sprite_destroy(o.entity);
+                sprites.erase(sprites.begin() + spr_sel);
+                spr_sel = -1;
+                if (spr_follow >= (int)sprites.size()) spr_follow = -1;
+            }
         } else {
             ImGui::TextDisabled("Nada seleccionado.");
             ImGui::TextWrapped("Elige un asset y haz clic en la escena para colocar. "
-                               "Sin asset armado, clic selecciona el objeto mas cercano.");
+                               "Sin asset armado, clic selecciona el objeto o el personaje "
+                               "mas cercano.");
         }
         ImGui::SeparatorText("Camara");
         ImGui::SliderFloat("Distancia", &cam_dist, 5.0f, 60.0f);

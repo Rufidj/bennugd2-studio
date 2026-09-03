@@ -23,6 +23,8 @@ renderiza contra el mismo contexto OpenGL: lo que ves en el editor es lo que cor
 - **Editor de código** completo: varios ficheros en pestañas, árbol de `Scripts/`,
   esquema de `PROCESS`/`FUNCTION`, buscar y reemplazar, ir a la línea,
   autocompletado y compilar marcando la línea del error.
+- **Personajes 2D en la Jerarquía y el Inspector**: se eligen y se mueven como un
+  objeto más (clic en la escena, lista, gizmo).
 - **Código tuyo enganchado a cualquier objeto**: eliges el `.prg` y de él sale la
   lista de procesos; se llaman al empezar, cada frame o al acercarte y pulsar.
 - **Sistema de proyectos** `.bgd2` (carpeta con Assets/Scenes/Scripts) y **generación del juego**

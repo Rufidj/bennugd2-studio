@@ -30,10 +30,48 @@ renderiza contra el mismo contexto OpenGL: lo que ves en el editor es lo que cor
   autocompletado y compilar marcando la línea del error.
 - **Personajes 2D en la Jerarquía y el Inspector**: se eligen y se mueven como un
   objeto más (clic en la escena, lista, gizmo).
-- **Código tuyo enganchado a cualquier objeto**: eliges el `.prg` y de él sale la
-  lista de procesos; se llaman al empezar, cada frame o al acercarte y pulsar.
+- **Reglas** en cualquier objeto o personaje: *si pasa esto, haz esto* — tocar, entrar
+  en una zona, una variable, cada N segundos… y suma puntos, quita vida, llama a tu
+  `.prg`, enseña un texto o quita la cosa de la escena.
+- **Variables del juego** (puntos, vida, llaves) como `GLOBAL`: las cambian las reglas,
+  las pinta el HUD 2D y las ve tu código.
 - **Sistema de proyectos** `.bgd2` (carpeta con Assets/Scenes/Scripts) y **generación del juego**
   (`main.prg`) que compila y ejecuta con BennuGD2.
+
+## Reglas: si pasa esto, haz esto
+
+*Juego → Variables del juego* declara lo que el juego cuenta (`puntos`, `vida`,
+llaves…): salen como `GLOBAL` de BennuGD2 con su valor inicial, así que las ve tu
+código y el HUD 2D las pinta con `write_var` sin declarar nada.
+
+Cualquier objeto 3D y cualquier personaje 2D tiene una lista de **reglas** en su
+Inspector. Cada regla es un **disparador** y las **cosas que pasan**:
+
+| Cuándo | Qué pasa |
+|---|---|
+| al empezar (una vez) | llamar a tu `PROCESS` (fichero + proceso, de dos listas) |
+| cada frame | cambiar una variable (poner / sumar / restar) |
+| al acercarse y pulsar tecla o botón | quitar esto de la escena |
+| cuando el jugador lo toca | enseñar un texto N segundos |
+| cuando el jugador entra en una zona pintada | |
+| cuando una variable cumple (`>=`, `<`, …) | |
+| cada N segundos | |
+
+Dos casillas cambian el carácter de la regla: **solo la primera vez** (un cofre, un
+checkpoint) y **mientras se cumpla** — sin marcar salta *al* cumplirse (tocar una
+moneda suma una vez), marcado pasa todo el rato (perder vida dentro de la lava).
+
+Se genera como código BennuGD2 normal dentro del `PROCESS` del objeto:
+
+```
+        // ---- regla: cada 1.00 s ----
+        regla_t[0] = regla_t[0] + escena_dt;
+        IF (regla_t[0] >= 1.000)
+            regla_t[0] = 0.0;
+            puntos = puntos + 10;
+            aviso_txt = "+10 puntos!"; aviso_t = 1.50;
+        END
+```
 
 ## Editor de código y código propio en los objetos
 

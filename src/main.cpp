@@ -51,6 +51,18 @@ static std::string ident_bgd(const std::string& t, const char* pref) {
     return o;
 }
 
+// Parte una linea de escena por '|'. Los campos que falten (una escena guardada
+// por una version anterior) se quedan vacios, que es justo lo que hace falta para
+// poder anadir campos al final sin romper lo ya guardado.
+static int trozos(const char* txt, std::string* out, int n) {
+    std::string t(txt);
+    while (!t.empty() && (t.back() == '\n' || t.back() == '\r')) t.pop_back();
+    int np = 0; size_t ini = 0;
+    for (size_t k = 0; k <= t.size() && np < n; k++)
+        if (k == t.size() || t[k] == '|') { out[np++] = t.substr(ini, k - ini); ini = k + 1; }
+    return np;
+}
+
 static std::vector<std::string> scan_textures(const std::string& dir) {
     return scan_dir(dir, { ".png", ".jpg", ".jpeg", ".tga", ".bmp" });
 }
@@ -1016,6 +1028,7 @@ int main(int, char**) {
         return (doc_sel >= 0 && doc_sel < (int)docs.size()) ? docs[doc_sel].get() : nullptr;
     };
 
+    bool show_gvars = false;               // ventana de variables del juego
     bool show_script = false;              // el editor de script se abre a pantalla completa
     bool ask_regen = false;                // pedir confirmacion para regenerar un script
     std::string regen_obj;                 // objeto cuyo script se va a regenerar
@@ -1115,18 +1128,43 @@ int main(int, char**) {
     // ---- objetos colocados en la escena (nivel) ----
     // phys: 0=ninguna(decorativo) 1=caja 2=esfera 3=capsula 4=cilindro
     // (todos dinamicos; masa 0 se trata como estatico/inamovible)
-    /* Codigo tuyo enganchado a un objeto 3D. Igual que las acciones de un
-       personaje, pero aqui lo que dispara la llamada es el propio objeto: nacer,
-       cada frame, o que te acerques y pulses (un cofre, una puerta, una palanca). */
-    struct ObjAccion {
-        int evento = 0;                 // 0 al empezar, 1 cada frame, 2 al acercarse y pulsar
-        std::string archivo, proc;      // el .prg y el PROCESS/FUNCTION de dentro
-        std::string tecla = "_E", boton;
-        float radio = 3.0f;             // distancia a la que se puede (evento 2)
+    /* ================== REGLAS: cuando pasa algo, que pasa ==================
+       "Si el jugador toca la moneda, suma 10 puntos". "Mientras este en la lava,
+       pierde vida". "Cuando la vida llegue a 0, llama a mi PROCESS".
+       Una regla es un DISPARADOR y una lista de cosas que hacer. Las cosas pueden
+       ser codigo tuyo (un .prg) o de las que trae el editor, que es lo que evita
+       tener que escribir un PROCESS para sumar diez puntos.
+       Objetos 3D y personajes 2D llevan la misma lista: el disparador y las
+       acciones son los mismos, y asi hay UN generador y UNA ficha, no dos. */
+    struct Accion {
+        int tipo = 0;      // 0 tu PROCESS, 1 variable, 2 destruir esto, 3 mostrar un texto
+        std::string archivo, proc;                        // 0
+        std::string var; int op = 1; float valor = 1.0f;  // 1  (op: 0 poner, 1 sumar, 2 restar)
+        std::string texto; float seg = 2.0f;              // 3
     };
+    struct Regla {
+        int evento = 0;    // 0 al empezar, 1 cada frame, 2 acercarse y pulsar,
+                           // 3 el jugador lo toca, 4 el jugador entra en la zona,
+                           // 5 una variable cumple, 6 cada N segundos
+        std::string tecla = "_E", boton;   // evento 2
+        float radio = 3.0f;                // eventos 2 y 3
+        int   zona = 0;                    // evento 4 (capa pintada)
+        std::string var;                   // evento 5
+        int   cmp = 4;                     // 0 ==, 1 !=, 2 <, 3 <=, 4 >, 5 >=
+        float valor = 1.0f;                // evento 5
+        float cada = 1.0f;                 // evento 6 (segundos)
+        int   una_vez = 0;                 // solo la primera vez (un cofre, un checkpoint)
+        int   mientras = 0;                // 0 = al cumplirse; 1 = todo el rato que se cumpla
+        std::vector<Accion> acciones;
+    };
+    /* Las variables del juego: puntos, vida, llaves... Salen como GLOBAL de
+       BennuGD2, asi que el HUD 2D las puede pintar con write_var y tu codigo las
+       ve sin hacer nada. Enteras a proposito: es lo que se cuenta. */
+    struct GameVar { std::string nombre; int valor = 0; };
+    std::vector<GameVar> gvars;
     struct SObj {
         std::string name, asset; int entity; float x, y, z, ry, scale;
-        std::vector<ObjAccion> acciones;
+        std::vector<Regla> reglas;
         int   phys = 0;
         float mass = 1.0f;
         float bounce = 0.2f;      // restitucion 0..1
@@ -1636,6 +1674,7 @@ int main(int, char**) {
         float inter_radio = 3.0f;
         std::string inter_tecla = "_E", inter_boton = "JOY_BUTTON_A";
         std::string inter_anim, inter_llama, inter_arch;
+        std::vector<Regla> reglas;      // "si pasa esto, haz esto" (lo mismo que un objeto)
         int   inter_mirar = 1;      // se gira hacia el jugador al acercarse
         // ---- comportamiento: que hace cuando nadie le toca ----
         // 0 = quieto, 1 = patrulla entre A y B, 2 = sigue al jugador, 3 = huye
@@ -2149,6 +2188,111 @@ int main(int, char**) {
         }
         ImGui::PopID();
     };
+
+    /* ================== la ficha de las REGLAS ==================
+       La misma para un objeto 3D y para un personaje 2D. Arriba el disparador,
+       debajo la lista de cosas que pasan. Cabe en el Inspector, que es estrecho:
+       cada cosa en su linea. */
+    auto combo_var = [&](const char* et, std::string& dest) {
+        const char* cur = dest.empty() ? "(elige una)" : dest.c_str();
+        ImGui::SetNextItemWidth(150);
+        if (ImGui::BeginCombo(et, cur)) {
+            for (auto& v : gvars)
+                if (ImGui::Selectable(v.nombre.c_str(), v.nombre == dest)) dest = v.nombre;
+            if (gvars.empty()) ImGui::TextDisabled("(ninguna: Juego > Variables del juego)");
+            ImGui::EndCombo();
+        }
+    };
+    auto ui_reglas = [&](std::vector<Regla>& rs, const std::string& quien) {
+        int borrar = -1;
+        for (int k = 0; k < (int)rs.size(); k++) {
+            Regla& r = rs[k];
+            ImGui::PushID(k);
+            const char* ev[] = { "Al empezar (una vez)", "Cada frame", "Al acercarse y pulsar",
+                                 "Cuando el jugador lo toca", "Cuando el jugador entra en la zona",
+                                 "Cuando una variable cumple", "Cada N segundos" };
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.52f);
+            ImGui::Combo("cuando", &r.evento, ev, 7);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Quitar")) borrar = k;
+
+            if (r.evento == 2) {
+                ImGui::SetNextItemWidth(110); combo_tecla_ui("tecla", r.tecla);
+                combo_boton_ui("boton", r.boton);
+                ImGui::SetNextItemWidth(150);
+                ImGui::DragFloat("distancia", &r.radio, 0.1f, 0.5f, 40.0f, "%.1f");
+            } else if (r.evento == 3) {
+                ImGui::SetNextItemWidth(150);
+                ImGui::DragFloat("a que distancia cuenta", &r.radio, 0.1f, 0.3f, 40.0f, "%.1f");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Se mide del centro del jugador al centro de esto.\nPara una moneda, 1 o 2 va bien.");
+            } else if (r.evento == 4) {
+                const char* zz[] = { "Capa 0", "Capa 1", "Capa 2", "Capa 3" };
+                ImGui::SetNextItemWidth(150);
+                ImGui::Combo("zona pintada", &r.zona, zz, 4);
+            } else if (r.evento == 5) {
+                combo_var("variable", r.var);
+                const char* cc[] = { "es igual a", "no es", "es menor que", "es menor o igual",
+                                     "es mayor que", "es mayor o igual" };
+                ImGui::SetNextItemWidth(150); ImGui::Combo("condicion", &r.cmp, cc, 6);
+                ImGui::SetNextItemWidth(100); ImGui::DragFloat("valor", &r.valor, 1.0f, -100000.0f, 100000.0f, "%.0f");
+            } else if (r.evento == 6) {
+                ImGui::SetNextItemWidth(120);
+                ImGui::DragFloat("cada (segundos)", &r.cada, 0.1f, 0.05f, 600.0f, "%.2f");
+            }
+            if (r.evento >= 2) {
+                bool uv = r.una_vez != 0;
+                if (ImGui::Checkbox("solo la primera vez", &uv)) r.una_vez = uv ? 1 : 0;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Para un cofre, una llave, un checkpoint:\nse cumple una vez y no vuelve.");
+                if (r.evento != 6) {
+                    bool mi = r.mientras != 0;
+                    if (ImGui::Checkbox("mientras se cumpla (cada frame)", &mi)) r.mientras = mi ? 1 : 0;
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Sin marcar: salta AL cumplirse (tocar una moneda).\nMarcado: pasa todo el rato (perder vida en la lava).");
+                }
+            }
+
+            ImGui::TextDisabled("...entonces:");
+            int quitar = -1;
+            for (int q = 0; q < (int)r.acciones.size(); q++) {
+                Accion& a = r.acciones[q];
+                ImGui::PushID(1000 + q);
+                const char* tt[] = { "Llamar a codigo mio", "Cambiar una variable",
+                                     "Quitar esto de la escena", "Ensenar un texto" };
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+                ImGui::Combo("que", &a.tipo, tt, 4);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x")) quitar = q;
+                if (a.tipo == 0) {
+                    selector_codigo("codregla", a.archivo, a.proc,
+                                    quien + "_" + std::to_string(k + 1));
+                } else if (a.tipo == 1) {
+                    combo_var("variable", a.var);
+                    const char* oo[] = { "ponerla en", "sumarle", "restarle" };
+                    ImGui::SetNextItemWidth(120); ImGui::Combo("operacion", &a.op, oo, 3);
+                    ImGui::SetNextItemWidth(100); ImGui::DragFloat("cuanto", &a.valor, 1.0f, -100000.0f, 100000.0f, "%.0f");
+                } else if (a.tipo == 2) {
+                    ImGui::TextDisabled("  desaparece y su proceso termina");
+                } else {
+                    char tb[192]; snprintf(tb, sizeof(tb), "%s", a.texto.c_str());
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
+                    if (ImGui::InputTextWithHint("texto", "+10 puntos!", tb, sizeof(tb))) a.texto = tb;
+                    ImGui::SetNextItemWidth(90);
+                    ImGui::DragFloat("segundos", &a.seg, 0.1f, 0.2f, 20.0f, "%.1f");
+                }
+                ImGui::PopID();
+            }
+            if (quitar >= 0) r.acciones.erase(r.acciones.begin() + quitar);
+            if (ImGui::SmallButton("+ que pase algo mas")) r.acciones.push_back(Accion());
+            if (r.acciones.empty())
+                ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "  (sin nada que hacer: la regla no se genera)");
+            ImGui::Separator();
+            ImGui::PopID();
+        }
+        if (borrar >= 0) rs.erase(rs.begin() + borrar);
+        if (ImGui::Button(ICON_FA_PLUS "  Anadir regla", ImVec2(-1, 0))) rs.push_back(Regla());
+    };
     bool playing = false;         // Play en marcha: no se puede editar la escena
 
     // ================== copiar / pegar / duplicar / borrar ==================
@@ -2420,54 +2564,165 @@ int main(int, char**) {
     // controles si es el jugador, cuerpo rigido si tiene fisica. El editor solo la
     // escribe la primera vez; a partir de ahi el fichero es tuyo y no se toca.
     // ---------------------------------------------------------------------------
-    /* El hueco de obj_acc[] que le toca a cada accion de "acercarse y pulsar":
-       se cuentan en el mismo orden en el que se generan, asi que el numero sale
-       igual aqui y en main.prg (que es quien declara el array). */
-    auto idx_inter = [&](const SObj& obj, int k) -> int {
+    /* ---- Los huecos de estado que gasta cada regla ----
+       Una regla necesita recordar cosas entre frames: si ya se disparo (una vez
+       para siempre), si su condicion se cumplia el frame anterior (para saltar al
+       cumplirse y no sesenta veces por segundo) y su reloj. Van en arrays GLOBAL
+       de main.prg, un hueco por regla, numerados SIEMPRE igual: primero los
+       objetos en su orden y luego los personajes. Asi el numero sale el mismo
+       generando el juego y editando el script de uno solo. */
+    auto total_reglas_obj = [&]() {
+        int n = 0; for (auto& q : objects) n += (int)q.reglas.size(); return n;
+    };
+    auto base_reglas_obj = [&](const SObj& o) {
         int n = 0;
-        for (auto& o : objects) {
-            if (&o == &obj) break;
-            for (auto& a : o.acciones) if (a.evento == 2) n++;
-        }
-        for (int i = 0; i < k && i < (int)obj.acciones.size(); i++)
-            if (obj.acciones[i].evento == 2) n++;
+        for (auto& q : objects) { if (&q == &o) break; n += (int)q.reglas.size(); }
         return n;
     };
-    // Las llamadas a codigo tuyo de un objeto, listas para meter en su PROCESS.
-    // `dentro` es lo que va en el LOOP; `arranque` lo que va antes de el.
-    auto obj_acciones_codigo = [&](const SObj& o, std::string& arranque, std::string& dentro) {
+    auto base_reglas_spr = [&](const SprObj& sp) {
+        int n = total_reglas_obj();
+        for (auto& q : sprites) { if (&q == &sp) break; n += (int)q.reglas.size(); }
+        return n;
+    };
+    auto total_reglas = [&]() {
+        int n = total_reglas_obj();
+        for (auto& q : sprites) n += (int)q.reglas.size();
+        return n;
+    };
+
+    /* ---- Las reglas, en codigo BennuGD2 ----
+       `arranque` es lo que va antes del LOOP del proceso y `dentro` lo que va en
+       el. `cuerpo` dice si el proceso tiene un cuerpo rigido (para deshacerlo al
+       destruir) y `es_sprite` si lo que se destruye es un sprite y no una entidad. */
+    auto reglas_codigo = [&](const std::vector<Regla>& rs, int base, int cuerpo, int es_sprite,
+                             std::string& arranque, std::string& dentro) {
         arranque.clear(); dentro.clear();
-        for (int k = 0; k < (int)o.acciones.size(); k++) {
-            const ObjAccion& a = o.acciones[k];
-            if (a.proc.empty()) continue;
-            char b2[900];
-            if (a.evento == 0) {
-                snprintf(b2, sizeof(b2), "    %s();   // tuyo: al empezar\n", a.proc.c_str());
-                arranque += b2;
-            } else if (a.evento == 1) {
-                snprintf(b2, sizeof(b2), "        %s();   // tuyo: cada frame\n", a.proc.c_str());
-                dentro += b2;
-            } else {
-                std::string puls = a.tecla.empty() ? std::string() : ("key(" + a.tecla + ")");
-                if (!a.boton.empty()) {
-                    if (!puls.empty()) puls += " OR ";
-                    puls += "joy_getbutton(" + a.boton + ")";
+        for (int k = 0; k < (int)rs.size(); k++) {
+            const Regla& r = rs[k];
+            if (r.acciones.empty()) continue;
+            int S = base + k;
+            char b[900];
+
+            // ---- lo que hay que hacer, con la sangria que le toque ----
+            auto cuerpo_acciones = [&](const char* tab) {
+                std::string out;
+                for (auto& a : r.acciones) {
+                    char l[700];
+                    if (a.tipo == 0) {
+                        if (a.proc.empty()) continue;
+                        snprintf(l, sizeof(l), "%s%s();   // tu codigo\n", tab, a.proc.c_str());
+                    } else if (a.tipo == 1) {
+                        if (a.var.empty()) continue;
+                        int v = (int)(a.valor >= 0.0f ? a.valor + 0.5f : a.valor - 0.5f);
+                        if (a.op == 0)      snprintf(l, sizeof(l), "%s%s = %d;\n", tab, a.var.c_str(), v);
+                        else if (a.op == 1) snprintf(l, sizeof(l), "%s%s = %s + %d;\n", tab, a.var.c_str(), a.var.c_str(), v);
+                        else                snprintf(l, sizeof(l), "%s%s = %s - %d;\n", tab, a.var.c_str(), a.var.c_str(), v);
+                    } else if (a.tipo == 2) {
+                        std::string q = tab;
+                        if (es_sprite) q += "g3d_sprite_destroy(entity);\n";
+                        else           q += "g3d_entity_destroy(entity);\n";
+                        if (cuerpo) { q += tab; q += "g3d_rigidbody_destroy(cuerpo);\n"; }
+                        q += tab; q += "RETURN;   // este proceso se acaba aqui\n";
+                        out += q; continue;
+                    } else {
+                        // El texto vive en una GLOBAL que pinta escena_aviso con
+                        // write_var: no hace falta crear y borrar el write.
+                        std::string t = a.texto;
+                        for (size_t i2 = 0; i2 < t.size(); i2++) if (t[i2] == '"') t[i2] = '\'';
+                        snprintf(l, sizeof(l), "%saviso_txt = \"%s\"; aviso_t = %.2f;\n",
+                                 tab, t.c_str(), a.seg > 0.05f ? a.seg : 2.0f);
+                    }
+                    out += l;
                 }
+                return out;
+            };
+
+            if (r.evento == 0) {                 // al empezar
+                arranque += "    // ---- regla: al empezar ----\n";
+                arranque += cuerpo_acciones("    ");
+                continue;
+            }
+            if (r.evento == 1) {                 // cada frame
+                dentro += "        // ---- regla: cada frame ----\n";
+                dentro += cuerpo_acciones("        ");
+                continue;
+            }
+            if (r.evento == 6) {                 // cada N segundos
+                snprintf(b, sizeof(b),
+                    "        // ---- regla: cada %.2f s ----\n"
+                    "        regla_t[%d] = regla_t[%d] + escena_dt;\n"
+                    "        IF (regla_t[%d] >= %.3f)\n"
+                    "            regla_t[%d] = 0.0;\n",
+                    r.cada, S, S, S, r.cada > 0.02f ? r.cada : 1.0f, S);
+                dentro += b;
+                if (r.una_vez) {
+                    snprintf(b, sizeof(b), "            IF (regla_hecha[%d] == 0)\n", S);
+                    dentro += b;
+                    dentro += cuerpo_acciones("                ");
+                    snprintf(b, sizeof(b), "                regla_hecha[%d] = 1;\n            END\n", S);
+                    dentro += b;
+                } else {
+                    dentro += cuerpo_acciones("            ");
+                }
+                dentro += "        END\n";
+                continue;
+            }
+
+            // ---- los que tienen condicion ----
+            std::string cond;
+            char c2[500];
+            if (r.evento == 2) {                 // acercarse y pulsar
+                std::string puls;
+                if (!r.tecla.empty()) puls = "key(" + r.tecla + ")";
+                if (!r.boton.empty()) { if (!puls.empty()) puls += " OR "; puls += "joy_getbutton(" + r.boton + ")"; }
                 if (puls.empty()) continue;
-                int i = idx_inter(o, k);
-                float r2 = a.radio * a.radio;
-                snprintf(b2, sizeof(b2),
-                    "        // ---------- tuyo: acercarse y pulsar ----------\n"
-                    "        // obj_acc[] recuerda si ya estaba pulsado, para que valga una vez\n"
-                    "        // por pulsacion y no una por frame mientras la aguantas.\n"
-                    "        IF ((%s) AND obj_acc[%d] == 0)\n"
-                    "            IF ((jug_x - x) * (jug_x - x) + (jug_z - z) * (jug_z - z) < %.3f)\n"
-                    "                %s();\n"
-                    "            END\n"
-                    "        END\n"
-                    "        obj_acc[%d] = (%s);\n",
-                    puls.c_str(), i, r2, a.proc.c_str(), i, puls.c_str());
-                dentro += b2;
+                snprintf(c2, sizeof(c2),
+                    "(%s) AND (jug_x - x) * (jug_x - x) + (jug_z - z) * (jug_z - z) < %.3f",
+                    puls.c_str(), r.radio * r.radio);
+                cond = c2;
+            } else if (r.evento == 3) {          // el jugador lo toca
+                snprintf(c2, sizeof(c2),
+                    "(jug_x - x) * (jug_x - x) + (jug_z - z) * (jug_z - z) < %.3f", r.radio * r.radio);
+                cond = c2;
+            } else if (r.evento == 4) {          // el jugador entra en la zona
+                snprintf(c2, sizeof(c2), "g3d_zone_blocked(jug_x, jug_z, %d)", r.zona);
+                cond = c2;
+            } else if (r.evento == 5) {          // una variable cumple
+                if (r.var.empty()) continue;
+                const char* ops[] = { "==", "<>", "<", "<=", ">", ">=" };
+                int v = (int)(r.valor >= 0.0f ? r.valor + 0.5f : r.valor - 0.5f);
+                snprintf(c2, sizeof(c2), "%s %s %d", r.var.c_str(),
+                         ops[(r.cmp >= 0 && r.cmp <= 5) ? r.cmp : 0], v);
+                cond = c2;
+            } else continue;
+
+            const char* nombres[] = { "al empezar", "cada frame", "acercarse y pulsar",
+                                      "el jugador lo toca", "el jugador entra en la zona",
+                                      "una variable cumple", "cada N segundos" };
+            snprintf(b, sizeof(b), "        // ---- regla: %s ----\n", nombres[r.evento]);
+            dentro += b;
+            std::string guarda;   // lo que abre el IF
+            if (r.mientras) {
+                snprintf(b, sizeof(b), "        IF (%s)\n", cond.c_str());
+            } else {
+                // al CUMPLIRSE: regla_ant recuerda si ya se cumplia el frame anterior,
+                // que si no una moneda sumaria diez puntos sesenta veces por segundo.
+                snprintf(b, sizeof(b), "        IF ((%s) AND regla_ant[%d] == 0)\n", cond.c_str(), S);
+            }
+            dentro += b;
+            if (r.una_vez) {
+                snprintf(b, sizeof(b), "            IF (regla_hecha[%d] == 0)\n", S);
+                dentro += b;
+                dentro += cuerpo_acciones("                ");
+                snprintf(b, sizeof(b), "                regla_hecha[%d] = 1;\n            END\n", S);
+                dentro += b;
+            } else {
+                dentro += cuerpo_acciones("            ");
+            }
+            dentro += "        END\n";
+            if (!r.mientras) {
+                snprintf(b, sizeof(b), "        regla_ant[%d] = (%s);\n", S, cond.c_str());
+                dentro += b;
             }
         }
     };
@@ -2496,7 +2751,8 @@ int main(int, char**) {
     auto object_script_template = [&](const SObj& o) -> std::string {
         char b[4096];
         std::string acc_ini, acc_loop;
-        obj_acciones_codigo(o, acc_ini, acc_loop);
+        reglas_codigo(o.reglas, base_reglas_obj(o),
+                      (o.phys >= 1 && o.phys <= 4) ? 1 : 0, 0, acc_ini, acc_loop);
 
         // ---------------- OBJETO ENGANCHADO A UN HUESO (arma en la mano) ----------------
         // Sigue un hueso del personaje. Es un proceso nativo: cada frame lee donde
@@ -2966,6 +3222,8 @@ int main(int, char**) {
         FILE* f = fopen(path.c_str(), "w");
         if (!f) { status = "ERROR guardando escena"; return; }
         fputs("# escena del editor BennuGD2\n", f);
+        for (auto& v : gvars)
+            fprintf(f, "GAMEVAR %s|%d\n", v.nombre.c_str(), v.valor);
         fprintf(f, "WATER %d %.4f %.4f %.4f %.4f %.4f %.3f %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f %.4f %.4f %.2f %.4f %.4f %.4f\n",
                 water_on ? 1 : 0, water_level, w_amp, w_len, w_speed, w_swell,
                 w_deep[0], w_deep[1], w_deep[2], w_shallow[0], w_shallow[1], w_shallow[2],
@@ -3024,12 +3282,17 @@ int main(int, char**) {
                         o.attach_to, o.att_off[0], o.att_off[1], o.att_off[2],
                         o.att_scale, o.att_yaw, o.attach_bone.c_str());
             fputs("\n", f);
-            // Codigo tuyo enganchado al objeto: una linea por accion, detras de la
-            // suya (los nombres pueden llevar de todo, asi que van separados por |).
-            for (auto& a : o.acciones)
-                fprintf(f, "OBJACC %d|%.3f|%s|%s|%s|%s\n",
-                        a.evento, a.radio, a.tecla.c_str(), a.boton.c_str(),
-                        a.archivo.c_str(), a.proc.c_str());
+            // Sus reglas, detras de su linea: una REGLA y las ACCIONES que cuelgan
+            // de ella. Van por | porque los nombres y los textos llevan de todo.
+            for (auto& r : o.reglas) {
+                fprintf(f, "OBJREGLA %d|%.3f|%s|%s|%d|%s|%d|%.3f|%.3f|%d|%d\n",
+                        r.evento, r.radio, r.tecla.c_str(), r.boton.c_str(), r.zona,
+                        r.var.c_str(), r.cmp, r.valor, r.cada, r.una_vez, r.mientras);
+                for (auto& a : r.acciones)
+                    fprintf(f, "OBJRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s\n",
+                            a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
+                            a.op, a.valor, a.seg, a.texto.c_str());
+            }
         }
         // ---- SPRITES 2D del mundo (hojas de sprites) ----
         for (auto& sp : sprites) {
@@ -3067,6 +3330,15 @@ int main(int, char**) {
                         sp.inter_anim.c_str(), sp.inter_llama.c_str(), sp.inter_arch.c_str());
                 fprintf(f, "SPRPAD %d|%s|%s\n", sp.usar_mando,
                         sp.b_jump.c_str(), sp.b_run.c_str());
+                for (auto& r : sp.reglas) {
+                    fprintf(f, "SPRREGLA %d|%.3f|%s|%s|%d|%s|%d|%.3f|%.3f|%d|%d\n",
+                            r.evento, r.radio, r.tecla.c_str(), r.boton.c_str(), r.zona,
+                            r.var.c_str(), r.cmp, r.valor, r.cada, r.una_vez, r.mientras);
+                    for (auto& a : r.acciones)
+                        fprintf(f, "SPRRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s\n",
+                                a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
+                                a.op, a.valor, a.seg, a.texto.c_str());
+                }
                 for (auto& ac : sp.acciones)
                     fprintf(f, "SPRACCION %d|%d|%s|%s|%s|%s|%s|%s\n",
                             ac.una_vez, ac.espejo, ac.nombre.c_str(), ac.tecla.c_str(),
@@ -3115,6 +3387,7 @@ int main(int, char**) {
         hud.clear(); hud_sel = -1;   // el HUD tambien es de la escena
         for (auto& sp : sprites) if (sp.entity >= 0) g3d_sprite_destroy(sp.entity);
         sprites.clear(); spr_sel = -1; spr_follow = -1;
+        gvars.clear();
         lakes.clear(); rivers.clear(); river_draft.clear(); waterfalls.clear();
         wsources.clear();   // los de la escena anterior no son de esta
         // terreno primero: las cuevas/objetos se apoyan en su altura
@@ -3208,6 +3481,34 @@ int main(int, char**) {
                             sp.usar_mando = atoi(p3[0].c_str());
                             sp.b_jump = p3[1]; sp.b_run = p3[2];
                         }
+                        continue;
+                    }
+                    if (!strncmp(line, "SPRREGLA ", 9)) {
+                        std::string p[11]; trozos(line + 9, p, 11);
+                        Regla r;
+                        r.evento   = atoi(p[0].c_str());
+                        r.radio    = (float)atof(p[1].c_str());
+                        r.tecla    = p[2]; r.boton = p[3];
+                        r.zona     = atoi(p[4].c_str());
+                        r.var      = p[5];
+                        r.cmp      = atoi(p[6].c_str());
+                        r.valor    = (float)atof(p[7].c_str());
+                        r.cada     = (float)atof(p[8].c_str());
+                        r.una_vez  = atoi(p[9].c_str());
+                        r.mientras = atoi(p[10].c_str());
+                        sp.reglas.push_back(r);
+                        continue;
+                    }
+                    if (!strncmp(line, "SPRRACC ", 8) && !sp.reglas.empty()) {
+                        std::string p[8]; trozos(line + 8, p, 8);
+                        Accion a;
+                        a.tipo    = atoi(p[0].c_str());
+                        a.archivo = p[1]; a.proc = p[2]; a.var = p[3];
+                        a.op      = atoi(p[4].c_str());
+                        a.valor   = (float)atof(p[5].c_str());
+                        a.seg     = (float)atof(p[6].c_str());
+                        a.texto   = p[7];
+                        sp.reglas.back().acciones.push_back(a);
                         continue;
                     }
                     if (!strncmp(line, "SPRACCION ", 10)) {
@@ -3425,21 +3726,52 @@ int main(int, char**) {
                 objects.push_back(o);
                 continue;
             }
-            // Acciones del objeto de arriba (van justo detras de su linea OBJECT).
+            /* Las reglas del objeto de arriba. Y las OBJACC de antes, que solo
+               sabian llamar a un PROCESS: se leen como una regla con una accion,
+               para que las escenas de estos dias sigan abriendo igual. */
             if (!strncmp(line, "OBJACC ", 7) && !objects.empty()) {
-                std::string p6[6];
-                {   std::string t(line + 7);
-                    while (!t.empty() && (t.back()=='\n' || t.back()=='\r')) t.pop_back();
-                    int np = 0; size_t ini = 0;
-                    for (size_t k = 0; k <= t.size() && np < 6; k++)
-                        if (k == t.size() || t[k] == '|') { p6[np++] = t.substr(ini, k - ini); ini = k + 1; }
-                }
-                ObjAccion a;
-                a.evento  = atoi(p6[0].c_str());
-                a.radio   = (float)atof(p6[1].c_str());
-                a.tecla   = p6[2]; a.boton = p6[3];
-                a.archivo = p6[4]; a.proc  = p6[5];
-                objects.back().acciones.push_back(a);
+                std::string p6[6]; trozos(line + 7, p6, 6);
+                Regla r; Accion a;
+                r.evento = atoi(p6[0].c_str());
+                r.radio  = (float)atof(p6[1].c_str());
+                r.tecla  = p6[2]; r.boton = p6[3];
+                a.tipo = 0; a.archivo = p6[4]; a.proc = p6[5];
+                r.acciones.push_back(a);
+                objects.back().reglas.push_back(r);
+                continue;
+            }
+            if (!strncmp(line, "OBJREGLA ", 9) && !objects.empty()) {
+                std::string p[11]; trozos(line + 9, p, 11);
+                Regla r;
+                r.evento   = atoi(p[0].c_str());
+                r.radio    = (float)atof(p[1].c_str());
+                r.tecla    = p[2]; r.boton = p[3];
+                r.zona     = atoi(p[4].c_str());
+                r.var      = p[5];
+                r.cmp      = atoi(p[6].c_str());
+                r.valor    = (float)atof(p[7].c_str());
+                r.cada     = (float)atof(p[8].c_str());
+                r.una_vez  = atoi(p[9].c_str());
+                r.mientras = atoi(p[10].c_str());
+                objects.back().reglas.push_back(r);
+                continue;
+            }
+            if (!strncmp(line, "OBJRACC ", 8) && !objects.empty() && !objects.back().reglas.empty()) {
+                std::string p[8]; trozos(line + 8, p, 8);
+                Accion a;
+                a.tipo    = atoi(p[0].c_str());
+                a.archivo = p[1]; a.proc = p[2]; a.var = p[3];
+                a.op      = atoi(p[4].c_str());
+                a.valor   = (float)atof(p[5].c_str());
+                a.seg     = (float)atof(p[6].c_str());
+                a.texto   = p[7];
+                objects.back().reglas.back().acciones.push_back(a);
+                continue;
+            }
+            // Las variables del juego (puntos, vida...): van con la escena.
+            if (!strncmp(line, "GAMEVAR ", 8)) {
+                std::string p[2]; trozos(line + 8, p, 2);
+                if (!p[0].empty()) { GameVar v; v.nombre = p[0]; v.valor = atoi(p[1].c_str()); gvars.push_back(v); }
                 continue;
             }
         }
@@ -3659,7 +3991,7 @@ int main(int, char**) {
         // En cuanto lo editas a mano, la marca deja de cuadrar y ya no se toca.
         for (auto& o : objects) {
             bool necesita = o.is_player || (o.phys >= 0 && o.phys <= 4)   // 5 = muro (sin script)
-                            || !o.acciones.empty();
+                            || !o.reglas.empty();
             if (!necesita) continue;
             std::string psp = scripts_dir + "/" + o.name + ".prg";
             FILE* t = fopen(psp.c_str(), "r");
@@ -3677,24 +4009,57 @@ int main(int, char**) {
            encima del codigo que lo usa, y de aqui para abajo lo usan los NPC (para
            saber si te has acercado) y los objetos con acciones. Y va fuera del
            "si hay sprites": un objeto 3D con una accion tambien lo necesita. */
+        int nreglas = total_reglas();
+        bool hay_aviso = false;   // alguna regla ensenia un texto en pantalla
+        for (auto& o : objects) for (auto& r : o.reglas) for (auto& a : r.acciones) if (a.tipo == 3) hay_aviso = true;
+        for (auto& sp : sprites) for (auto& r : sp.reglas) for (auto& a : r.acciones) if (a.tipo == 3) hay_aviso = true;
         {
-            bool hay_jug = false, hay_inter = false;
-            int n_inter = 0;
+            bool hay_jug = false;
             for (auto& sp : sprites) if (sp.is_player) hay_jug = true;
-            for (auto& o : objects) {
-                if (o.is_player) hay_jug = true;
-                for (auto& a : o.acciones) if (a.evento == 2) { hay_inter = true; n_inter++; }
-            }
-            std::string g;
-            if (hay_jug || hay_inter)
+            for (auto& o : objects)  if (o.is_player)  hay_jug = true;
+            // Las reglas que miran donde esta el jugador tambien lo necesitan.
+            for (auto& o : objects) for (auto& r : o.reglas)
+                if (r.evento == 2 || r.evento == 3 || r.evento == 4) hay_jug = true;
+            for (auto& sp : sprites) for (auto& r : sp.reglas)
+                if (r.evento == 2 || r.evento == 3 || r.evento == 4) hay_jug = true;
+            /* escena_dt se declara AQUI y no mas abajo con los demas: las reglas y
+               el cartelito la usan, y en BennuGD2 un GLOBAL tiene que estar por
+               encima del codigo que lo lee -- incluidos los #include. */
+            std::string g = "    float escena_dt;         // lo que dura un frame\n";
+            if (hay_jug)
                 g += "    float jug_x; float jug_y; float jug_z;   // donde esta el jugador\n";
-            if (n_inter > 0)
-                // Un hueco por accion de "acercarse y pulsar": recuerda si la tecla
-                // ya estaba pulsada el frame anterior, para que valga una vez por
-                // pulsacion y no una por frame.
-                g += "    int obj_acc[" + std::to_string(n_inter) + "];   // teclas de las acciones de objetos\n";
+            // ---- las variables del juego ----
+            for (auto& v : gvars)
+                g += "    int " + v.nombre + " = " + std::to_string(v.valor) + ";\n";
+            if (nreglas > 0) {
+                /* El estado de las reglas. Un hueco por regla:
+                   - regla_hecha: la de "solo la primera vez" ya se cumplio
+                   - regla_ant:   su condicion se cumplia el frame anterior (para
+                                  disparar AL cumplirse y no sesenta veces por segundo)
+                   - regla_t:     su reloj, para las de "cada N segundos" */
+                std::string n = std::to_string(nreglas);
+                g += "    int regla_hecha[" + n + "]; int regla_ant[" + n + "];\n";
+                g += "    float regla_t[" + n + "];\n";
+            }
+            if (hay_aviso)
+                g += "    string aviso_txt; float aviso_t;   // el texto que ensenian las reglas\n";
             if (!g.empty()) { fputs("GLOBAL\n", f); fputs(g.c_str(), f); fputs("END\n\n", f); }
         }
+        /* El cartelito de las reglas: un solo write_var pintando una GLOBAL, que
+           se vacia cuando se acaba su tiempo. Sin crear y borrar writes. */
+        if (hay_aviso)
+            fputs("// Ensenia el texto de las reglas mientras dure su tiempo.\n"
+                  "PROCESS escena_aviso()\n"
+                  "BEGIN\n"
+                  "    write_var(0, 640, 40, 4, aviso_txt);   // fuente del sistema, centrado arriba\n"
+                  "    LOOP\n"
+                  "        IF (aviso_t > 0.0)\n"
+                  "            aviso_t = aviso_t - escena_dt;\n"
+                  "            IF (aviso_t <= 0.0) aviso_txt = \"\"; END\n"
+                  "        END\n"
+                  "        FRAME;\n"
+                  "    END\n"
+                  "END\n\n", f);
 
         // Las acciones pueden llamar a codigo TUYO. Si ese proceso no existe,
         // el juego no compilaria ("Undefined procedure"), asi que se crea el
@@ -3712,10 +4077,17 @@ int main(int, char**) {
                 if (sp.inter_on && !sp.inter_llama.empty())
                     llamadas.push_back({ sp.inter_llama, "hablar con " + sp.name, sp.inter_arch });
             }
-            // y las de los objetos 3D
+            // y las de las reglas, de objetos y de personajes
             for (auto& o : objects)
-                for (auto& a : o.acciones)
-                    if (!a.proc.empty()) llamadas.push_back({ a.proc, o.name, a.archivo });
+                for (auto& r : o.reglas)
+                    for (auto& a : r.acciones)
+                        if (a.tipo == 0 && !a.proc.empty())
+                            llamadas.push_back({ a.proc, o.name, a.archivo });
+            for (auto& sp : sprites)
+                for (auto& r : sp.reglas)
+                    for (auto& a : r.acciones)
+                        if (a.tipo == 0 && !a.proc.empty())
+                            llamadas.push_back({ a.proc, sp.name, a.archivo });
             for (auto& ac : llamadas) {
                 /* Con fichero elegido solo hay que incluirlo: el codigo es
                    tuyo y puede tener dentro los procesos que quiera. Sin el,
@@ -3778,7 +4150,6 @@ int main(int, char**) {
               "    int follow_ent;          // entidad a la que sigue la camara\n"
               "    int pplayer; int pmodel; // entidad y modelo del jugador\n"
               "    int atc[32]; int atn[32];// enganches a huesos: entidad y nodo\n"
-              "    float escena_dt;\n"
               "END\n\n", f);
         // ---- la luz del sol como proceso BennuGD2 (variables nativas) ----
         // Igual que cualquier objeto 3D: fija ctype/csubtype y sus datos en las
@@ -4155,6 +4526,11 @@ int main(int, char**) {
                 if (pn[i].empty()) continue;
                 SheetDef* sh = sheet_of(sp.sheet);
                 std::string pre = hojas[sp.sheet], nom = pn[i];
+                // sus reglas, en codigo: una parte antes del LOOP y otra dentro
+                std::string spr_regla_ini, spr_regla_loop;
+                reglas_codigo(sp.reglas, base_reglas_spr(sp),
+                              (sp.phys >= 1 && sp.phys <= 4) ? 1 : 0, 1,
+                              spr_regla_ini, spr_regla_loop);
                 int maxh = 1;
                 for (auto& fr : sh->frames) if (fr.h > maxh) maxh = fr.h;
                 float ppu = (sp.height > 0.01f) ? maxh / sp.height : 32.0f;
@@ -4243,6 +4619,8 @@ int main(int, char**) {
                           "    seguidor = g3d_entity_spawn(scene, 0, x, y, z);\n", f);
                     if ((int)i == spr_follow)
                         fputs("    follow_ent = seguidor;   // la camara le sigue\n", f);
+                    // las reglas de este personaje ("si pasa esto, haz esto")
+                    fputs(spr_regla_ini.c_str(), f);
                     fputs("\n    LOOP\n"
                           "        prevx = g3d_char_x(ch); prevz = g3d_char_z(ch);\n", f);
                     fprintf(f,
@@ -4419,6 +4797,7 @@ int main(int, char**) {
                     else
                         fprintf(f, "        fot = %s_est[%s_ini[est] + paso];\n", nom.c_str(), nom.c_str());
                     fputs(poner_fot.c_str(), f);
+                    fputs(spr_regla_loop.c_str(), f);
                     fputs("        FRAME;\n    END\nEND\n\n", f);
 
                 } else if (sp.phys >= 1 && sp.phys <= 4) {
@@ -4439,6 +4818,8 @@ int main(int, char**) {
                                 c, c, sp.mass);
                     fprintf(f, "    g3d_rigidbody_set_bounce(cuerpo, %.3f, %.3f);   // rebote, friccion\n",
                             sp.bounce, sp.friction);
+                    // las reglas de este personaje ("si pasa esto, haz esto")
+                    fputs(spr_regla_ini.c_str(), f);
                     fputs("\n    LOOP\n"
                           "        // la fisica manda: se leen las coordenadas del cuerpo\n"
                           "        bx = g3d_rigidbody_x(cuerpo); by = g3d_rigidbody_y(cuerpo);\n"
@@ -4451,6 +4832,7 @@ int main(int, char**) {
                     fputs("        x = bx; y = by; z = bz;\n", f);
                     fputs("        fot = 0;\n", f);
                     fputs(poner_fot.c_str(), f);
+                    fputs(spr_regla_loop.c_str(), f);
                     fputs("        FRAME;\n    END\nEND\n\n", f);
 
                 } else {
@@ -4475,6 +4857,8 @@ int main(int, char**) {
                     if (sp.fps > 0) fps_o = sp.fps;        // los fps del objeto mandan
                     int tics = an ? (60 / fps_o) : 1;
                     if (tics < 1) tics = 1;
+                    // las reglas de este personaje ("si pasa esto, haz esto")
+                    fputs(spr_regla_ini.c_str(), f);
                     fputs("\n    LOOP\n", f);
                     if (sp.comport > 0) {
                         float paso = sp.com_vel / 60.0f;
@@ -4608,6 +4992,7 @@ int main(int, char**) {
                         }
                     }
                     fputs(poner_fot.c_str(), f);
+                    fputs(spr_regla_loop.c_str(), f);
                     fputs("        FRAME;\n    END\nEND\n\n", f);
                 }
                 spr_launch.push_back("    " + nom + "();\n");
@@ -5015,6 +5400,8 @@ int main(int, char**) {
         //      puesto (el jugador se spawnea antes), asi que la camara ve al
         //      objetivo desde su primer frame. ----
         fputs("    escena_camara(camera);\n", f);
+        if (hay_aviso)
+            fputs("    escena_aviso();   // el cartelito de las reglas\n", f);
         // El HUD va al final del montaje: primero los recursos (map/fpg/fnt) y
         // luego sus procesos, que ya encuentran cargado lo que van a dibujar.
         if (!spr_load.empty() || !spr_launch.empty()) {
@@ -5589,6 +5976,10 @@ int main(int, char**) {
             if (ImGui::BeginMenu("Juego")) {
                 if (ImGui::MenuItem("Generar y compilar")) generate_game(false);
                 if (ImGui::MenuItem(ICON_FA_PLAY " Generar y ejecutar")) generate_game(true);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Variables del juego...")) show_gvars = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Puntos, vida, llaves... Salen como GLOBAL del juego:\nlas reglas las cambian y el HUD 2D las pinta.");
                 ImGui::Separator();
                 if (ImGui::MenuItem("Editar main.prg")) open_main_script();
                 if (ImGui::MenuItem("Rehacer main.prg...")) ask_regen_main = true;
@@ -8762,42 +9153,11 @@ int main(int, char**) {
                 /* Codigo TUYO enganchado al objeto: eliges el .prg y de el sale la
                    lista de PROCESS/FUNCTION. Lo mismo que ya se podia hacer con un
                    personaje, pero para cualquier objeto de la escena. */
-                ImGui::SeparatorText("Acciones");
-                int borrar_acc = -1;
-                for (int k = 0; k < (int)o.acciones.size(); k++) {
-                    ObjAccion& a = o.acciones[k];
-                    ImGui::PushID(k);
-                    const char* ev[] = { "Al empezar (una vez)", "Cada frame",
-                                         "Al acercarse y pulsar" };
-                    // El Inspector es estrecho: el desplegable se queda con poco
-                    // mas de la mitad para que quepa el boton de quitar al lado.
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.52f);
-                    ImGui::Combo("cuando", &a.evento, ev, 3);
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Quitar")) borrar_acc = k;
-                    if (a.evento == 2) {
-                        ImGui::SetNextItemWidth(110);
-                        combo_tecla_ui("tecla", a.tecla);
-                        ImGui::SameLine();
-                        combo_boton_ui("boton", a.boton);
-                        ImGui::SetNextItemWidth(150);
-                        ImGui::DragFloat("distancia", &a.radio, 0.1f, 0.5f, 40.0f, "%.1f");
-                        bool hay_jug = false;
-                        for (auto& oo : objects) if (oo.is_player) hay_jug = true;
-                        for (auto& ss : sprites)  if (ss.is_player) hay_jug = true;
-                        if (!hay_jug)
-                            ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1),
-                                "  Falta un jugador en la escena: sin el no hay a quien medir la distancia.");
-                    }
-                    selector_codigo("codobj", a.archivo, a.proc, o.name + "_" + std::to_string(k + 1));
-                    ImGui::Separator();
-                    ImGui::PopID();
-                }
-                if (borrar_acc >= 0) o.acciones.erase(o.acciones.begin() + borrar_acc);
-                if (ImGui::Button(ICON_FA_PLUS "  Anadir accion", ImVec2(-1, 0)))
-                    o.acciones.push_back(ObjAccion());
-                if (!o.acciones.empty())
-                    ImGui::TextDisabled("Se llaman desde el script del objeto; si lo has editado a mano,\nregeneralo abajo para que entren.");
+                ImGui::SeparatorText("Reglas");
+                ImGui::TextDisabled("Si pasa esto, haz esto.");
+                ui_reglas(o.reglas, o.name);
+                if (!o.reglas.empty())
+                    ImGui::TextDisabled("Salen en el script del objeto; si lo has editado a mano,\nregeneralo abajo para que entren.");
 
                 ImGui::SeparatorText("Script del objeto");
                 ImGui::TextDisabled("Scripts/%s.prg", o.name.c_str());
@@ -9004,8 +9364,11 @@ int main(int, char**) {
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Cuantas vistas tiene dibujadas: 1 = siempre la misma,\n4 = las cuatro de toda la vida, 8 o 16 = mas fino.");
                 if (!o.acciones.empty())
-                    ImGui::TextDisabled("%d accion(es) puestas; se editan en su ficha.",
+                    ImGui::TextDisabled("%d accion(es) de tecla puestas; se editan en su ficha.",
                                         (int)o.acciones.size());
+            }
+            if (ImGui::CollapsingHeader(ICON_FA_CODE "  Reglas (si pasa esto, haz esto)")) {
+                ui_reglas(o.reglas, o.name);
             }
             ImGui::Spacing();
             if (ImGui::Button("Duplicar##spr", ImVec2(-1, 0))) {
@@ -9143,6 +9506,47 @@ int main(int, char**) {
             ImGui::SameLine();
             if (ImGui::Button("Cancelar", ImVec2(140, 0))) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
+        }
+
+        /* ---- Las VARIABLES DEL JUEGO: puntos, vida, llaves... ----
+           Son GLOBAL de BennuGD2, asi que valen para las reglas, para el HUD 2D
+           (write_var) y para tu propio codigo, sin declararlas a mano. */
+        if (show_gvars) {
+            ImGui::SetNextWindowSize(ImVec2(430, 320), ImGuiCond_FirstUseEver);
+            ImGui::Begin("Variables del juego", &show_gvars);
+            ImGui::TextWrapped("Lo que cuenta el juego. Se generan como GLOBAL con su valor "
+                               "inicial; las reglas las cambian, el HUD 2D las pinta y tu codigo "
+                               "las ve sin declarar nada.");
+            ImGui::Separator();
+            int quitar = -1;
+            for (int i = 0; i < (int)gvars.size(); i++) {
+                ImGui::PushID(i);
+                char nb[64]; snprintf(nb, sizeof(nb), "%s", gvars[i].nombre.c_str());
+                ImGui::SetNextItemWidth(180);
+                if (ImGui::InputText("##n", nb, sizeof(nb))) gvars[i].nombre = ident_bgd(nb, "var");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(110);
+                ImGui::InputInt("empieza en", &gvars[i].valor);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Quitar")) quitar = i;
+                ImGui::PopID();
+            }
+            if (quitar >= 0) gvars.erase(gvars.begin() + quitar);
+            if (gvars.empty()) ImGui::TextDisabled("(ninguna todavia)");
+            ImGui::Spacing();
+            if (ImGui::Button(ICON_FA_PLUS "  Anadir variable")) {
+                GameVar v; v.nombre = "var" + std::to_string((int)gvars.size() + 1); v.valor = 0;
+                gvars.push_back(v);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Puntos y vida")) {   // las dos de siempre, de un clic
+                bool hay_p = false, hay_v = false;
+                for (auto& v : gvars) { if (v.nombre == "puntos") hay_p = true; if (v.nombre == "vida") hay_v = true; }
+                if (!hay_p) { GameVar v; v.nombre = "puntos"; v.valor = 0;   gvars.push_back(v); }
+                if (!hay_v) { GameVar v; v.nombre = "vida";   v.valor = 100; gvars.push_back(v); }
+            }
+            ImGui::TextDisabled("Se guardan con la escena.");
+            ImGui::End();
         }
 
         /* ================= EDITOR DE CODIGO (pantalla completa) =================

@@ -7,6 +7,7 @@
 #include <SDL.h>
 #include <SDL_syswm.h>
 #include <cstdio>
+#include <cstring>
 #include <cmath>
 
 
@@ -54,6 +55,42 @@ static std::string ident_bgd(const std::string& t, const char* pref) {
 // Parte una linea de escena por '|'. Los campos que falten (una escena guardada
 // por una version anterior) se quedan vacios, que es justo lo que hace falta para
 // poder anadir campos al final sin romper lo ya guardado.
+/* ---- Nombres de fichero que el JUEGO puede abrir ----
+   Medido con bgdc: una ruta con cualquier byte fuera del ASCII (un emoji, pero
+   tambien una simple enie o una tilde) no se abre en el juego -- el compilador
+   recodifica las cadenas y el nombre deja de cuadrar con el del disco. Espacios,
+   guiones y corchetes si valen. Asi que la regla es esa: solo ASCII. */
+static bool nombre_ascii(const std::string& f) {
+    for (unsigned char c : f) if (c < 32 || c > 126) return false;
+    return true;
+}
+/* La version ASCII de un nombre: las vocales acentuadas y la enie se pasan a su
+   letra (que es lo que uno espera) y lo que no tiene equivalente se cae. */
+static std::string nombre_saneado(const std::string& f) {
+    static const struct { const char* de; char a; } mapa[] = {
+        {"á",'a'},{"à",'a'},{"ä",'a'},{"â",'a'},{"é",'e'},{"è",'e'},{"ë",'e'},{"ê",'e'},
+        {"í",'i'},{"ì",'i'},{"ï",'i'},{"î",'i'},{"ó",'o'},{"ò",'o'},{"ö",'o'},{"ô",'o'},
+        {"ú",'u'},{"ù",'u'},{"ü",'u'},{"û",'u'},{"ñ",'n'},{"ç",'c'},
+        {"Á",'A'},{"É",'E'},{"Í",'I'},{"Ó",'O'},{"Ú",'U'},{"Ñ",'N'},
+    };
+    std::string out;
+    for (size_t i = 0; i < f.size(); ) {
+        unsigned char c = (unsigned char)f[i];
+        if (c >= 32 && c <= 126) { out += (char)c; i++; continue; }
+        bool hecho = false;
+        for (auto& m : mapa) {
+            size_t n = strlen(m.de);
+            if (f.compare(i, n, m.de) == 0) { out += m.a; i += n; hecho = true; break; }
+        }
+        if (!hecho) i++;      // lo que no se sabe traducir se cae
+    }
+    // sin espacios repetidos ni bordes sucios, y que quede algo
+    while (!out.empty() && (out.front() == ' ' || out.front() == '.')) out.erase(out.begin());
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    if (out.empty() || out[0] == '.') out = "audio" + out;
+    return out;
+}
+
 static int trozos(const char* txt, std::string* out, int n) {
     std::string t(txt);
     while (!t.empty() && (t.back() == '\n' || t.back() == '\r')) t.pop_back();
@@ -2253,6 +2290,58 @@ int main(int, char**) {
             ImGui::EndCombo();
         }
     };
+    /* Renombra un fichero de audio a un nombre que el juego pueda abrir, y cambia
+       de paso TODAS las referencias de la escena: la musica, los ambientes de
+       zona, el sonido propio de los objetos y el de las reglas. Renombrar el
+       fichero y dejar la escena apuntando al nombre viejo seria peor que no
+       renombrar. */
+    auto renombrar_audio = [&](const std::string& viejo, const std::string& nuevo) -> bool {
+        std::error_code ec;
+        if (fs::exists(assets_dir + "/" + nuevo, ec)) return false;
+        fs::rename(assets_dir + "/" + viejo, assets_dir + "/" + nuevo, ec);
+        if (ec) return false;
+        auto cambia = [&](std::string& d) { if (d == viejo) d = nuevo; };
+        cambia(esc_musica);
+        for (auto& z : zsonidos) cambia(z.sonido);
+        for (auto& o : objects) {
+            cambia(o.amb_sonido);
+            for (auto& r : o.reglas) for (auto& a : r.acciones) cambia(a.sonido);
+        }
+        for (auto& sp : sprites)
+            for (auto& r : sp.reglas) for (auto& a : r.acciones) cambia(a.sonido);
+        scan_sonoros(assets_dir, "Music",  { ".ogg", ".mp3", ".mod", ".xm", ".it", ".s3m",
+                                             ".mid", ".midi", ".flac", ".wav" }, musicas);
+        scan_sonoros(assets_dir, "Sounds", { ".wav", ".ogg", ".flac" }, sonidos);
+        console_add("Renombrado: " + viejo + "  ->  " + nuevo + "\n");
+        return true;
+    };
+    /* Lo que hay que decir de un fichero elegido: que el juego no va a poder
+       abrirlo por el nombre, o que ya no esta donde estaba. */
+    auto aviso_audio = [&](const std::string& f) {
+        if (f.empty()) return;
+        std::error_code ec;
+        if (!nombre_ascii(f)) {
+            std::string dir = fs::path(f).parent_path().string();
+            std::string base = nombre_saneado(fs::path(f).filename().string());
+            std::string nuevo = dir.empty() ? base : (dir + "/" + base);
+            for (int k = 2; k < 50 && fs::exists(assets_dir + "/" + nuevo, ec); k++) {
+                std::string tallo = fs::path(base).stem().string();
+                std::string ext = fs::path(base).extension().string();
+                nuevo = (dir.empty() ? "" : dir + "/") + tallo + "_" + std::to_string(k) + ext;
+            }
+            // envuelto: en el panel de Entorno, que es estrecho, se salia por la derecha
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.5f, 0.45f, 1));
+            ImGui::TextWrapped("Ese nombre lleva letras que el juego no puede abrir "
+                               "(emojis, tildes, enies): suena en el editor pero no al jugar.");
+            ImGui::PopStyleColor();
+            if (ImGui::SmallButton(("Renombrar a  " + fs::path(nuevo).filename().string()).c_str()))
+                renombrar_audio(f, nuevo);
+        } else if (!fs::exists(assets_dir + "/" + f, ec)) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.75f, 0.3f, 1));
+            ImGui::TextWrapped("Ese fichero ya no esta en Assets.");
+            ImGui::PopStyleColor();
+        }
+    };
     auto combo_sonido = [&](const char* et, std::string& dest) {
         const char* cur = dest.empty() ? "(ninguno)" : dest.c_str();
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
@@ -2263,6 +2352,7 @@ int main(int, char**) {
             if (sonidos.empty()) ImGui::TextDisabled("(pon ficheros en Assets/Sounds)");
             ImGui::EndCombo();
         }
+        aviso_audio(dest);
     };
     auto ui_reglas = [&](std::vector<Regla>& rs, const std::string& quien) {
         int borrar = -1;
@@ -4193,6 +4283,18 @@ int main(int, char**) {
                 if (a.tipo == 4 && !a.sonido.empty()) sonidos_usados.insert(a.sonido);
         for (auto& z : zsonidos) if (!z.sonido.empty()) sonidos_usados.insert(z.sonido);
         int n_amb = total_amb();
+        /* El juego no puede abrir rutas con letras fuera del ASCII (medido: una
+           tilde o un emoji en el nombre y music_load/sound_load devuelven 0). Aqui
+           ya no hay UI donde ponerlo en rojo, asi que se avisa por la consola. */
+        {
+            std::vector<std::string> malos;
+            if (!esc_musica.empty() && !nombre_ascii(esc_musica)) malos.push_back(esc_musica);
+            for (auto& sn : sonidos_usados) if (!nombre_ascii(sn)) malos.push_back(sn);
+            for (auto& m : malos)
+                console_add("AVISO: '" + m + "' no se podra abrir en el juego: el nombre lleva\n"
+                            "letras fuera del ASCII (emojis, tildes, enies). Renombralo desde\n"
+                            "el panel de Sonido (boton 'Renombrar a...').\n");
+        }
 
         int nreglas = total_reglas();
         bool hay_aviso = false;   // alguna regla ensenia un texto en pantalla
@@ -8739,6 +8841,7 @@ int main(int, char**) {
             };
             ImGui::SeparatorText("Musica de esta escena");
             combo_fichero("musica", esc_musica, musicas);
+            aviso_audio(esc_musica);
             if (musicas.empty())
                 ImGui::TextDisabled("Pon los ficheros en Assets/Music (ogg, mp3, mod, xm...)");
             if (!esc_musica.empty()) {

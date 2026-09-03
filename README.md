@@ -58,6 +58,12 @@ Sonidos: `wav`, `ogg`, `flac`.
 Cada fichero se carga una sola vez en su `GLOBAL` (`snd_coin`, `musica`), aunque lo
 usen diez reglas, y `main.prg` gana `import "libmod_sound"` si le faltaba.
 
+> **El nombre del fichero tiene que ser ASCII.** Medido con `bgdc`: una ruta con un
+> emoji, una tilde o una eñe no se abre en el juego (`music_load` devuelve 0), aunque
+> en el editor se oiga. Espacios, guiones y corchetes sí valen. El editor lo marca en
+> rojo y ofrece **renombrar** el fichero, arreglando de paso todas las referencias de
+> la escena.
+
 ## Reglas: si pasa esto, haz esto
 
 *Juego → Variables del juego* declara lo que el juego cuenta (`puntos`, `vida`,

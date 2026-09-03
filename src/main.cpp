@@ -14,6 +14,7 @@
 #include <vector>
 #include <map>
 #include <set>
+#include <memory>
 #include <algorithm>
 #include <filesystem>
 namespace fs = std::filesystem;
@@ -35,6 +36,21 @@ static std::vector<std::string> scan_dir(const std::string& dir,
 static std::vector<std::string> scan_assets(const std::string& dir) {
     return scan_dir(dir, { ".glb", ".gltf", ".fbx" });
 }
+// Nombre valido para BennuGD2 a partir de un texto cualquiera (el nombre de un
+// fichero, lo que ha escrito el usuario): minusculas, sin acentos ni espacios, y
+// que no empiece por numero. La generacion de codigo y el editor de scripts usan
+// la misma regla, o el fichero se llamaria de una manera y el PROCESS de otra.
+static std::string ident_bgd(const std::string& t, const char* pref) {
+    std::string o;
+    for (char c : t) {
+        if (isalnum((unsigned char)c)) o += (char)tolower(c);
+        else if (!o.empty() && o.back() != '_') o += '_';
+    }
+    while (!o.empty() && o.back() == '_') o.pop_back();
+    if (o.empty() || isdigit((unsigned char)o[0])) o = std::string(pref) + o;
+    return o;
+}
+
 static std::vector<std::string> scan_textures(const std::string& dir) {
     return scan_dir(dir, { ".png", ".jpg", ".jpeg", ".tga", ".bmp" });
 }
@@ -980,24 +996,25 @@ int main(int, char**) {
     ImGui_ImplOpenGL3_Init("#version 150");
 
     // ---- editor de scripts (ImGuiColorTextEdit + resaltado BennuGD2) ----
-    TextEditor script;
-    script.SetLanguageDefinition(BennuGD2Language());
-    script.SetText(
-        "// Script del objeto (proceso BennuGD2 = componente/script)\n"
-        "PROCESS barril_explosivo(int id, int vida, float radio)\n"
-        "PRIVATE\n"
-        "    int t;\n"
-        "BEGIN\n"
-        "    LOOP\n"
-        "        IF (vida <= 0)\n"
-        "            // ... explota y avisa a los objetos en 'radio' ...\n"
-        "            g3d_entity_set_scale(id, 0.0, 0.0, 0.0);\n"
-        "            RETURN;\n"
-        "        END\n"
-        "        t = t + 1;\n"
-        "        FRAME;\n"
-        "    END\n"
-        "END\n");
+    /* ---- Los ficheros abiertos en el editor de codigo ----
+       Uno por pestania. El texto de disco se guarda aparte para saber si hay
+       cambios sin guardar sin tener que comparar contra el fichero cada frame.
+       Se guardan por puntero: TextEditor es pesado y no le sienta bien que el
+       vector lo mueva de sitio al crecer. */
+    struct CodeDoc {
+        std::string ruta;        // ruta completa en disco
+        std::string titulo;      // lo que se lee en la pestania
+        std::string objeto;      // objeto del que es el script (vacio si no lo es)
+        std::string en_disco;    // texto tal cual se leyo/guardo
+        bool  sucio = false;
+        TextEditor ed;
+    };
+    std::vector<std::unique_ptr<CodeDoc>> docs;
+    int doc_sel = -1;                  // pestania activa
+    int doc_cerrar = -1;               // pestania que se pide cerrar (con aviso si esta sucia)
+    auto doc_activo = [&]() -> CodeDoc* {
+        return (doc_sel >= 0 && doc_sel < (int)docs.size()) ? docs[doc_sel].get() : nullptr;
+    };
 
     bool show_script = false;              // el editor de script se abre a pantalla completa
     bool ask_regen = false;                // pedir confirmacion para regenerar un script
@@ -1025,8 +1042,6 @@ int main(int, char**) {
         if (game_out.size() > 400000) game_out.erase(0, game_out.size() - 300000);  // no crecer sin fin
     };
     std::string script_obj = "barril_01";  // objeto cuyo script se edita (placeholder)
-    std::string script_file;    // ruta completa del fichero abierto
-    std::string script_title;   // como se llama en la barra del editor
     // ---- herramienta activa (toolbar con iconos) ----
     enum Tool { T_SELECT, T_MOVE, T_ROTATE, T_SCALE, T_PLACE, T_RAISE, T_LOWER, T_SMOOTH, T_FLATTEN, T_PAINT,
                 T_HOLE, T_ZONE, T_LAKE, T_RIVER, T_WATERFALL, T_WATERSOURCE, T_VERTEX,
@@ -1100,8 +1115,18 @@ int main(int, char**) {
     // ---- objetos colocados en la escena (nivel) ----
     // phys: 0=ninguna(decorativo) 1=caja 2=esfera 3=capsula 4=cilindro
     // (todos dinamicos; masa 0 se trata como estatico/inamovible)
+    /* Codigo tuyo enganchado a un objeto 3D. Igual que las acciones de un
+       personaje, pero aqui lo que dispara la llamada es el propio objeto: nacer,
+       cada frame, o que te acerques y pulses (un cofre, una puerta, una palanca). */
+    struct ObjAccion {
+        int evento = 0;                 // 0 al empezar, 1 cada frame, 2 al acercarse y pulsar
+        std::string archivo, proc;      // el .prg y el PROCESS/FUNCTION de dentro
+        std::string tecla = "_E", boton;
+        float radio = 3.0f;             // distancia a la que se puede (evento 2)
+    };
     struct SObj {
         std::string name, asset; int entity; float x, y, z, ry, scale;
+        std::vector<ObjAccion> acciones;
         int   phys = 0;
         float mass = 1.0f;
         float bounce = 0.2f;      // restitucion 0..1
@@ -1555,6 +1580,7 @@ int main(int, char**) {
         int espejo = 0;
         int una_vez = 1;          // 1 = suena entera al pulsar; 0 = mientras la aguantes
         std::string llama;        // PROCESS o FUNCTION tuyo que se llama al dispararla
+        std::string archivo;      // el .prg de Scripts donde vive (vacio: lo crea el editor)
     };
     struct SprObj {
         std::string name;          // nombre del PROCESS generado
@@ -1609,7 +1635,7 @@ int main(int, char**) {
         int   inter_on = 0;
         float inter_radio = 3.0f;
         std::string inter_tecla = "_E", inter_boton = "JOY_BUTTON_A";
-        std::string inter_anim, inter_llama;
+        std::string inter_anim, inter_llama, inter_arch;
         int   inter_mirar = 1;      // se gira hacia el jugador al acercarse
         // ---- comportamiento: que hace cuando nadie le toca ----
         // 0 = quieto, 1 = patrulla entre A y B, 2 = sigue al jugador, 3 = huye
@@ -1648,6 +1674,40 @@ int main(int, char**) {
         "JOY_BUTTON_DPAD_LEFT", "JOY_BUTTON_DPAD_RIGHT"
     };
     const int NBOTONES = (int)(sizeof(BOTONES) / sizeof(BOTONES[0]));
+
+    /* Elegir tecla y boton del mando. Los usan los personajes 2D y tambien los
+       objetos 3D, asi que viven aqui y no dentro de una ficha. */
+    auto combo_tecla_ui = [&](const char* et, std::string& tecla) {
+        if (ImGui::BeginCombo(et, tecla.c_str())) {
+            // Con 70 teclas en la lista, un filtro ahorra el scroll.
+            static char filtro[16] = "";
+            ImGui::SetNextItemWidth(90);
+            ImGui::InputTextWithHint("##ft", "filtrar", filtro, sizeof(filtro));
+            for (int k = 0; k < NTECLAS; k++) {
+                if (filtro[0]) {
+                    bool cuadra = false;
+                    for (const char* a = TECLAS[k]; *a && !cuadra; a++) {
+                        const char *x = a, *y = filtro;
+                        while (*x && *y && toupper((unsigned char)*x) == toupper((unsigned char)*y)) { x++; y++; }
+                        if (!*y) cuadra = true;
+                    }
+                    if (!cuadra) continue;
+                }
+                if (ImGui::Selectable(TECLAS[k], tecla == TECLAS[k])) tecla = TECLAS[k];
+            }
+            ImGui::EndCombo();
+        }
+    };
+    auto combo_boton_ui = [&](const char* et, std::string& b) {
+        const char* cur = b.empty() ? "(ninguno)" : b.c_str();
+        ImGui::SetNextItemWidth(180);
+        if (ImGui::BeginCombo(et, cur)) {
+            if (ImGui::Selectable("(ninguno)", b.empty())) b.clear();
+            for (int k = 0; k < NBOTONES; k++)
+                if (ImGui::Selectable(BOTONES[k], b == BOTONES[k])) b = BOTONES[k];
+            ImGui::EndCombo();
+        }
+    };
 
     // Refresca en el motor un sprite colocado, para verlo en el viewport igual
     // que se vera en el juego (mismo dibujante).
@@ -1799,6 +1859,296 @@ int main(int, char**) {
     { std::error_code ec; fs::create_directories(scripts_dir, ec); }
     std::string scene_path = scenes_dir + "/level.scene";   // escena actual
     std::string status;
+
+    // ================== editor de codigo: abrir, guardar, saltar ==================
+    auto leer_todo = [](const std::string& ruta, std::string& out) -> bool {
+        FILE* f = fopen(ruta.c_str(), "rb");
+        if (!f) return false;
+        out.clear();
+        char b[4096]; size_t n;
+        while ((n = fread(b, 1, sizeof(b), f)) > 0) out.append(b, n);
+        fclose(f);
+        return true;
+    };
+    auto escribir_todo = [](const std::string& ruta, const std::string& t) -> bool {
+        FILE* f = fopen(ruta.c_str(), "wb");
+        if (!f) return false;
+        fwrite(t.data(), 1, t.size(), f);
+        fclose(f);
+        return true;
+    };
+    // Indice de la pestania que tiene abierto ese fichero (-1 si ninguna).
+    auto doc_de = [&](const std::string& ruta) -> int {
+        for (size_t i = 0; i < docs.size(); i++) if (docs[i]->ruta == ruta) return (int)i;
+        return -1;
+    };
+    /* Abre un fichero en una pestania (o se pone en la suya si ya estaba) y deja
+       el editor a la vista. `texto` sirve para el caso de un fichero que aun no
+       existe: se abre con esa plantilla y sin guardar todavia. */
+    auto code_abrir = [&](const std::string& ruta, const std::string& titulo,
+                          const std::string& objeto, const char* texto = nullptr) -> int {
+        int i = doc_de(ruta);
+        if (i < 0) {
+            std::string t;
+            if (!leer_todo(ruta, t)) { if (texto) t = texto; else t.clear(); }
+            docs.push_back(std::make_unique<CodeDoc>());
+            i = (int)docs.size() - 1;
+            docs[i]->ruta = ruta;
+            docs[i]->ed.SetLanguageDefinition(BennuGD2Language());
+            docs[i]->ed.SetText(t);
+            docs[i]->en_disco = t;
+            docs[i]->sucio = false;
+        }
+        docs[i]->titulo = titulo.empty() ? fs::path(ruta).filename().string() : titulo;
+        docs[i]->objeto = objeto;
+        doc_sel = i;
+        show_script = true; focus_script = true;
+        return i;
+    };
+    // Vuelve a leer del disco (tras regenerar el script de un objeto, por ejemplo).
+    auto code_recargar = [&](int i) {
+        if (i < 0 || i >= (int)docs.size()) return;
+        std::string t;
+        if (!leer_todo(docs[i]->ruta, t)) return;
+        docs[i]->ed.SetText(t);
+        docs[i]->en_disco = t;
+        docs[i]->sucio = false;
+    };
+    auto code_guardar = [&](int i) -> bool {
+        if (i < 0 || i >= (int)docs.size()) return false;
+        std::string t = docs[i]->ed.GetText();
+        if (!escribir_todo(docs[i]->ruta, t)) return false;
+        docs[i]->en_disco = t;
+        docs[i]->sucio = false;
+        return true;
+    };
+    auto code_ir_a = [&](int i, int linea) {   // linea 1..n
+        if (i < 0 || i >= (int)docs.size()) return;
+        doc_sel = i;
+        if (linea < 1) linea = 1;
+        TextEditor::Coordinates c(linea - 1, 0);
+        docs[i]->ed.SetCursorPosition(c);
+        docs[i]->ed.SetSelection(c, c);
+        show_script = true; focus_script = true;
+    };
+
+    /* ---- Los PROCESS y FUNCTION que hay en un .prg ----
+       Es lo que se ofrece al asignarle codigo tuyo a un objeto: en vez de teclear
+       el nombre a ciegas, eliges el fichero y de el sale la lista. El mismo
+       barrido alimenta el esquema del editor.
+       No es un analizador del lenguaje: busca la palabra al principio de linea,
+       que es como se escriben en BennuGD2, y se salta lo comentado. */
+    struct PrgSym { std::string nombre, firma; int linea; int es_func; };
+    auto prg_simbolos = [](const std::string& texto) {
+        std::vector<PrgSym> out;
+        size_t i = 0; int linea = 1; bool bloque = false;
+        while (i <= texto.size()) {
+            size_t fin = texto.find('\n', i);
+            if (fin == std::string::npos) fin = texto.size();
+            std::string l = texto.substr(i, fin - i);
+            // comentarios de bloque: no cuenta lo que hay dentro
+            std::string sin;
+            for (size_t k = 0; k < l.size(); k++) {
+                if (bloque) { if (l[k] == '*' && k + 1 < l.size() && l[k+1] == '/') { bloque = false; k++; } continue; }
+                if (l[k] == '/' && k + 1 < l.size() && l[k+1] == '*') { bloque = true; k++; continue; }
+                if (l[k] == '/' && k + 1 < l.size() && l[k+1] == '/') break;
+                sin += l[k];
+            }
+            size_t a = sin.find_first_not_of(" \t");
+            if (a != std::string::npos) {
+                std::string r = sin.substr(a);
+                std::string may;
+                for (char c : r) may += (char)toupper((unsigned char)c);
+                int es_func = -1;
+                if (may.rfind("PROCESS", 0) == 0 && (r.size() > 7 && isspace((unsigned char)r[7]))) es_func = 0;
+                else if (may.rfind("FUNCTION", 0) == 0 && (r.size() > 8 && isspace((unsigned char)r[8]))) es_func = 1;
+                if (es_func >= 0) {
+                    std::string resto = r.substr(es_func ? 8 : 7);
+                    size_t par = resto.find('(');
+                    if (par != std::string::npos) {
+                        // el nombre es la ultima palabra antes del parentesis
+                        // (una FUNCTION puede llevar el tipo delante: "FUNCTION int vida()")
+                        std::string ant = resto.substr(0, par);
+                        size_t e = ant.find_last_not_of(" \t");
+                        if (e != std::string::npos) {
+                            ant = ant.substr(0, e + 1);
+                            size_t b = ant.find_last_of(" \t");
+                            std::string nom = (b == std::string::npos) ? ant : ant.substr(b + 1);
+                            if (!nom.empty()) {
+                                size_t cierra = resto.find(')', par);
+                                std::string args = (cierra == std::string::npos) ? "" : resto.substr(par, cierra - par + 1);
+                                out.push_back({ nom, nom + args, linea, es_func });
+                            }
+                        }
+                    }
+                }
+            }
+            if (fin >= texto.size()) break;
+            i = fin + 1; linea++;
+        }
+        return out;
+    };
+    // Los .prg de la carpeta Scripts del proyecto, en orden alfabetico.
+    auto prg_de_scripts = [&]() {
+        std::vector<std::string> out;
+        std::error_code ec;
+        for (auto& e : fs::directory_iterator(scripts_dir, ec)) {
+            if (!e.is_regular_file(ec)) continue;
+            std::string n = e.path().filename().string();
+            std::string ext = e.path().extension().string();
+            for (auto& c : ext) c = (char)tolower((unsigned char)c);
+            if (ext == ".prg" && n.rfind("__", 0) != 0) out.push_back(n);
+        }
+        std::sort(out.begin(), out.end());
+        return out;
+    };
+    /* ---- Donde vive cada PROCESS/FUNCTION de Scripts ----
+       Para las escenas de antes, que guardaban solo el nombre: si ese proceso
+       existe en algun fichero, se encuentra solo y no hay que volver a elegirlo.
+       Se rehace de vez en cuando, que leer toda la carpeta cada frame sobra. */
+    static std::map<std::string, std::string> proc_idx;
+    static double proc_idx_t = -1.0;
+    auto indice_procs = [&]() -> std::map<std::string, std::string>& { return proc_idx; };
+    // Los procesos/funciones de un .prg de Scripts (por nombre de fichero).
+    static std::map<std::string, std::pair<double, std::vector<PrgSym>>> sim_cache;
+    auto simbolos_de = [&](const std::string& fichero) {
+        std::vector<PrgSym> out;
+        if (fichero.empty()) return out;
+        /* Con la ficha abierta esto se pide varias veces por frame (los
+           desplegables y el aviso de "ese proceso ya no esta"), asi que el
+           resultado se guarda un rato en vez de releer el fichero cada vez. */
+        double ahora = ImGui::GetTime();
+        auto it = sim_cache.find(fichero);
+        if (it != sim_cache.end() && ahora - it->second.first < 0.5) return it->second.second;
+        std::string t;
+        int i = doc_de(scripts_dir + "/" + fichero);       // si esta abierto, lo que se ve
+        if (i >= 0) t = docs[i]->ed.GetText();
+        else if (!leer_todo(scripts_dir + "/" + fichero, t)) return out;
+        out = prg_simbolos(t);
+        sim_cache[fichero] = { ahora, out };
+        return out;
+    };
+
+    /* ================= elegir CODIGO TUYO para un objeto =================
+       Dos desplegables: el fichero .prg de Scripts y, de el, el PROCESS o la
+       FUNCTION. Nada de teclear el nombre a ciegas y descubrir al ejecutar que
+       no existe. "Nuevo" crea el esqueleto y lo abre, "Editar" salta a su linea.
+       `sugerencia` es el nombre que se le pone a lo que se cree (la accion, el
+       objeto), para no tener que inventarselo. */
+    auto selector_codigo = [&](const char* id, std::string& archivo, std::string& proc,
+                               const std::string& sugerencia) {
+        ImGui::PushID(id);
+        // Escenas viejas: solo guardaban el nombre. Si ese proceso esta en algun
+        // fichero de Scripts, se rellena el fichero solo.
+        if (archivo.empty() && !proc.empty()) {
+            double ahora = ImGui::GetTime();
+            if (proc_idx_t < 0.0 || ahora - proc_idx_t > 2.0) {
+                proc_idx.clear(); proc_idx_t = ahora;
+                for (auto& fn : prg_de_scripts())
+                    for (auto& sy : simbolos_de(fn)) {
+                        std::string k; for (char c : sy.nombre) k += (char)tolower((unsigned char)c);
+                        proc_idx.emplace(k, fn);
+                    }
+            }
+            std::string k; for (char c : proc) k += (char)tolower((unsigned char)c);
+            auto it = proc_idx.find(k);
+            if (it != proc_idx.end()) archivo = it->second;
+        }
+
+        /* En el Inspector no caben los dos desplegables uno al lado del otro (es
+           la mitad de ancho que la ventana de personajes), asi que si hay poco
+           sitio se ponen en dos filas en vez de salirse por la derecha. */
+        float ancho = ImGui::GetContentRegionAvail().x;
+        bool estrecho = (ancho < 430.0f);
+        float wcombo = estrecho ? (ancho - 78.0f) : 190.0f;
+        if (wcombo < 90.0f) wcombo = 90.0f;
+
+        ImGui::SetNextItemWidth(wcombo);
+        if (ImGui::BeginCombo("fichero", archivo.empty() ? "(ninguno)" : archivo.c_str())) {
+            if (ImGui::Selectable("(ninguno)", archivo.empty())) { archivo.clear(); }
+            for (auto& fn : prg_de_scripts())
+                if (ImGui::Selectable(fn.c_str(), fn == archivo)) { archivo = fn; }
+            ImGui::EndCombo();
+        }
+        if (!estrecho) ImGui::SameLine();
+        ImGui::SetNextItemWidth(wcombo);
+        if (ImGui::BeginCombo("llama a", proc.empty() ? "(nada)" : proc.c_str())) {
+            if (ImGui::Selectable("(nada)", proc.empty())) proc.clear();
+            for (auto& sy : simbolos_de(archivo)) {
+                if (ImGui::Selectable((sy.nombre + "##" + std::to_string(sy.linea)).c_str(), sy.nombre == proc))
+                    proc = sy.nombre;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sy.firma.c_str());
+            }
+            ImGui::EndCombo();
+        }
+        if (!estrecho) ImGui::SameLine();
+        if (ImGui::SmallButton("Nuevo")) {
+            /* Crea el PROCESS y lo deja abierto para escribirlo. Si el fichero ya
+               existe se le anade al final, que un fichero por accion acaba siendo
+               una carpeta imposible de mirar. */
+            std::string nom = ident_bgd(sugerencia.empty() ? "accion" : sugerencia, "accion");
+            std::string fich = archivo.empty() ? (nom + ".prg") : archivo;
+            std::string ruta = scripts_dir + "/" + fich;
+            // que no choque con uno que ya exista
+            {
+                std::set<std::string> hay;
+                for (auto& sy : simbolos_de(fich)) {
+                    std::string k; for (char c : sy.nombre) k += (char)tolower((unsigned char)c);
+                    hay.insert(k);
+                }
+                std::string base = nom;
+                for (int k = 2; k < 100; k++) {
+                    std::string kk; for (char c : nom) kk += (char)tolower((unsigned char)c);
+                    if (!hay.count(kk)) break;
+                    nom = base + "_" + std::to_string(k);
+                }
+            }
+            std::string cuerpo =
+                "\n// " + nom + ": codigo tuyo, lo llama el juego cuando toca.\n"
+                "// Es un PROCESS normal de BennuGD2: puede durar varios FRAME (un\n"
+                "// disparo, un golpe con su tiempo) o acabar enseguida con RETURN.\n"
+                "PROCESS " + nom + "()\n"
+                "BEGIN\n"
+                "    // ---- tu codigo aqui ----\n"
+                "    RETURN;\n"
+                "END\n";
+            std::string ya;
+            if (leer_todo(ruta, ya)) escribir_todo(ruta, ya + cuerpo);
+            else                     escribir_todo(ruta, cuerpo.substr(1));
+            archivo = fich; proc = nom;
+            proc_idx_t = -1.0;
+            int di = doc_de(ruta);
+            if (di >= 0) code_recargar(di);
+            di = code_abrir(ruta, fich, "");
+            // dejar el cursor en el que se acaba de crear
+            for (auto& sy : prg_simbolos(docs[di]->ed.GetText()))
+                if (sy.nombre == nom) { code_ir_a(di, sy.linea); break; }
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Crea el PROCESS (en el fichero elegido, o en uno nuevo)\ny lo abre en el editor de codigo.");
+        if (!proc.empty() && !archivo.empty()) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Editar")) {
+                std::string ruta = scripts_dir + "/" + archivo;
+                int di = doc_de(ruta);
+                if (di < 0) di = code_abrir(ruta, archivo, "");
+                for (auto& sy : prg_simbolos(docs[di]->ed.GetText()))
+                    if (sy.nombre == proc) { code_ir_a(di, sy.linea); break; }
+                show_script = true; focus_script = true;
+            }
+        }
+        // Avisa de lo que no cuadra ANTES de ejecutar: es justo lo que rompia la
+        // compilacion del juego ("Undefined procedure").
+        if (!proc.empty()) {
+            bool esta = false;
+            for (auto& sy : simbolos_de(archivo)) if (sy.nombre == proc) { esta = true; break; }
+            if (!esta)
+                ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1),
+                                   archivo.empty() ? "  Sin fichero: el editor creara el esqueleto al generar."
+                                                   : "  Ese proceso ya no esta en el fichero.");
+        }
+        ImGui::PopID();
+    };
     bool playing = false;         // Play en marcha: no se puede editar la escena
 
     // ================== copiar / pegar / duplicar / borrar ==================
@@ -2070,8 +2420,62 @@ int main(int, char**) {
     // controles si es el jugador, cuerpo rigido si tiene fisica. El editor solo la
     // escribe la primera vez; a partir de ahi el fichero es tuyo y no se toca.
     // ---------------------------------------------------------------------------
+    /* El hueco de obj_acc[] que le toca a cada accion de "acercarse y pulsar":
+       se cuentan en el mismo orden en el que se generan, asi que el numero sale
+       igual aqui y en main.prg (que es quien declara el array). */
+    auto idx_inter = [&](const SObj& obj, int k) -> int {
+        int n = 0;
+        for (auto& o : objects) {
+            if (&o == &obj) break;
+            for (auto& a : o.acciones) if (a.evento == 2) n++;
+        }
+        for (int i = 0; i < k && i < (int)obj.acciones.size(); i++)
+            if (obj.acciones[i].evento == 2) n++;
+        return n;
+    };
+    // Las llamadas a codigo tuyo de un objeto, listas para meter en su PROCESS.
+    // `dentro` es lo que va en el LOOP; `arranque` lo que va antes de el.
+    auto obj_acciones_codigo = [&](const SObj& o, std::string& arranque, std::string& dentro) {
+        arranque.clear(); dentro.clear();
+        for (int k = 0; k < (int)o.acciones.size(); k++) {
+            const ObjAccion& a = o.acciones[k];
+            if (a.proc.empty()) continue;
+            char b2[900];
+            if (a.evento == 0) {
+                snprintf(b2, sizeof(b2), "    %s();   // tuyo: al empezar\n", a.proc.c_str());
+                arranque += b2;
+            } else if (a.evento == 1) {
+                snprintf(b2, sizeof(b2), "        %s();   // tuyo: cada frame\n", a.proc.c_str());
+                dentro += b2;
+            } else {
+                std::string puls = a.tecla.empty() ? std::string() : ("key(" + a.tecla + ")");
+                if (!a.boton.empty()) {
+                    if (!puls.empty()) puls += " OR ";
+                    puls += "joy_getbutton(" + a.boton + ")";
+                }
+                if (puls.empty()) continue;
+                int i = idx_inter(o, k);
+                float r2 = a.radio * a.radio;
+                snprintf(b2, sizeof(b2),
+                    "        // ---------- tuyo: acercarse y pulsar ----------\n"
+                    "        // obj_acc[] recuerda si ya estaba pulsado, para que valga una vez\n"
+                    "        // por pulsacion y no una por frame mientras la aguantas.\n"
+                    "        IF ((%s) AND obj_acc[%d] == 0)\n"
+                    "            IF ((jug_x - x) * (jug_x - x) + (jug_z - z) * (jug_z - z) < %.3f)\n"
+                    "                %s();\n"
+                    "            END\n"
+                    "        END\n"
+                    "        obj_acc[%d] = (%s);\n",
+                    puls.c_str(), i, r2, a.proc.c_str(), i, puls.c_str());
+                dentro += b2;
+            }
+        }
+    };
+
     auto object_script_template = [&](const SObj& o) -> std::string {
         char b[4096];
+        std::string acc_ini, acc_loop;
+        obj_acciones_codigo(o, acc_ini, acc_loop);
 
         // ---------------- OBJETO ENGANCHADO A UN HUESO (arma en la mano) ----------------
         // Sigue un hueso del personaje. Es un proceso nativo: cada frame lee donde
@@ -2296,7 +2700,8 @@ int main(int, char**) {
 
             s += "\n        // vars nativas: el motor coloca el modelo al hacer FRAME (sin set_position)\n"
                  "        x = px; y = py; z = pz;\n"
-                 "        angle_y = facing;\n";
+                 "        angle_y = facing;\n"
+                 "        jug_x = px; jug_y = py; jug_z = pz;   // lo leen los NPC y los objetos\n";
 
             void* mm = load_model(o.asset);
             if (mm && g3d_model_animation_count(mm) > 0) {
@@ -2324,6 +2729,7 @@ int main(int, char**) {
                     s += b;
                 }
             }
+            s += acc_loop;
             s += "\n        FRAME;\n    END\nEND\n";
             return s;
         }
@@ -2370,6 +2776,7 @@ int main(int, char**) {
             snprintf(b, sizeof(b), "    g3d_rigidbody_set_bounce(cuerpo, %.3f, %.3f);   // rebote, friccion\n",
                      o.bounce, o.friction);
             s += b;
+            s += acc_ini;
             s += "\n    LOOP\n";
 
             // Agua: el objeto flota y salpica en el agua que tenga DEBAJO, sea el
@@ -2426,8 +2833,9 @@ int main(int, char**) {
                  "        z = g3d_rigidbody_render_z(cuerpo);\n"
                  "        angle_x = g3d_rigidbody_angle_x(cuerpo);\n"
                  "        angle_y = g3d_rigidbody_angle_y(cuerpo);\n"
-                 "        angle_z = g3d_rigidbody_angle_z(cuerpo);\n"
-                 "        FRAME;\n    END\nEND\n";
+                 "        angle_z = g3d_rigidbody_angle_z(cuerpo);\n";
+            s += acc_loop;
+            s += "        FRAME;\n    END\nEND\n";
             return s;
         }
 
@@ -2438,7 +2846,7 @@ int main(int, char**) {
         { void* mm = load_model(o.asset);
           if (mm && g3d_model_animation_count(mm) > 0 && !g3d_model_is_skinned(mm))
               pose = "    g3d_model_animate_all(modelo, 0.0, 0);   // posar (piezas en nodos)\n"; }
-        char dh[900];
+        char dh[4096];
         snprintf(dh, sizeof(dh),
             "// ===== OBJETO '%s' =====\n"
             "// Proceso BennuGD2: es el objeto. Usa sus variables nativas (x, y, z,\n"
@@ -2452,14 +2860,16 @@ int main(int, char**) {
             "    size = %.3f;      // escala en %% (100 = 1.0)\n"
             "    entity = g3d_model_spawn(scene, modelo, x, y, z, 0.0, 0.0);\n"
             "    g3d_entity_set_collider(entity, 1);   // solido: el agua lo rodea y salpica en el\n"
-            "%s"
+            "%s%s"
             "    LOOP\n"
             "        // ... tu logica (por ejemplo: angle_y = angle_y + 500; para girarlo) ...\n"
+            "%s"
             "        FRAME;\n"
             "    END\n"
             "END\n",
             o.name.c_str(), o.name.c_str(),
-            o.x, o.y, o.z, o.ry * 57295.78f, o.scale * 100.0f, pose.c_str());
+            o.x, o.y, o.z, o.ry * 57295.78f, o.scale * 100.0f, pose.c_str(),
+            acc_ini.c_str(), acc_loop.c_str());
         return dh;
     };
 
@@ -2511,23 +2921,24 @@ int main(int, char**) {
 
     auto open_object_script = [&](const std::string& objname) {
         script_obj = objname;
-        show_script = true; focus_script = true;
         std::string sp = scripts_dir + "/" + objname + ".prg";
-        script_file = sp; script_title = "Script del objeto:  Scripts/" + objname + ".prg";
-        FILE* f = fopen(sp.c_str(), "r");
-        if (f) {
-            std::string t; char buf[1024]; size_t n;
-            while ((n = fread(buf, 1, sizeof(buf), f)) > 0) t.append(buf, n);
-            fclose(f);
-            script.SetText(t);
-        } else {
-            // No existe: se crea con la plantilla que corresponda (jugador con sus
-            // controles, objeto con fisica con su cuerpo rigido, o vacia).
-            const SObj* po = nullptr;
-            for (auto& o : objects) if (o.name == objname) { po = &o; break; }
-            script.SetText(po ? object_script_template(*po)
-                              : ("PROCESS " + objname + "(int id)\nBEGIN\n    LOOP\n        FRAME;\n    END\nEND\n"));
+        // Si aun no existe se abre con la plantilla que le toque (el jugador con
+        // sus controles, un cuerpo fisico con su rigid body, o vacia): asi la
+        // pestania nace con algo que compila, y se escribe al guardar.
+        std::string plantilla;
+        {
+            FILE* f = fopen(sp.c_str(), "r");
+            if (f) fclose(f);
+            else {
+                const SObj* po = nullptr;
+                for (auto& o : objects) if (o.name == objname) { po = &o; break; }
+                plantilla = po ? object_script_template(*po)
+                               : ("PROCESS " + objname + "(int id)\nBEGIN\n    LOOP\n        FRAME;\n    END\nEND\n");
+            }
         }
+        int i = code_abrir(sp, objname + ".prg", objname,
+                           plantilla.empty() ? nullptr : plantilla.c_str());
+        if (!plantilla.empty()) docs[i]->sucio = true;   // aun no esta en el disco
     };
     // Guardar la escena: una linea OBJECT por objeto (fuente de verdad del juego).
     auto save_scene = [&](const std::string& path) {
@@ -2592,6 +3003,12 @@ int main(int, char**) {
                         o.attach_to, o.att_off[0], o.att_off[1], o.att_off[2],
                         o.att_scale, o.att_yaw, o.attach_bone.c_str());
             fputs("\n", f);
+            // Codigo tuyo enganchado al objeto: una linea por accion, detras de la
+            // suya (los nombres pueden llevar de todo, asi que van separados por |).
+            for (auto& a : o.acciones)
+                fprintf(f, "OBJACC %d|%.3f|%s|%s|%s|%s\n",
+                        a.evento, a.radio, a.tecla.c_str(), a.boton.c_str(),
+                        a.archivo.c_str(), a.proc.c_str());
         }
         // ---- SPRITES 2D del mundo (hojas de sprites) ----
         for (auto& sp : sprites) {
@@ -2623,16 +3040,16 @@ int main(int, char**) {
                 fprintf(f, "SPRFPS %d %d %d\n", sp.fps, sp.iluminado, sp.ajuste_px);
                 fprintf(f, "SPRCOMP %d %.3f %.3f %.3f %.3f\n",
                         sp.comport, sp.com_vel, sp.com_radio, sp.com_bx, sp.com_bz);
-                fprintf(f, "SPRNPC %d|%.3f|%d|%.3f|%d|%s|%s|%s|%s\n",
+                fprintf(f, "SPRNPC %d|%.3f|%d|%.3f|%d|%s|%s|%s|%s|%s\n",
                         sp.solido, sp.sol_radio, sp.inter_on, sp.inter_radio, sp.inter_mirar,
                         sp.inter_tecla.c_str(), sp.inter_boton.c_str(),
-                        sp.inter_anim.c_str(), sp.inter_llama.c_str());
+                        sp.inter_anim.c_str(), sp.inter_llama.c_str(), sp.inter_arch.c_str());
                 fprintf(f, "SPRPAD %d|%s|%s\n", sp.usar_mando,
                         sp.b_jump.c_str(), sp.b_run.c_str());
                 for (auto& ac : sp.acciones)
-                    fprintf(f, "SPRACCION %d|%d|%s|%s|%s|%s|%s\n",
+                    fprintf(f, "SPRACCION %d|%d|%s|%s|%s|%s|%s|%s\n",
                             ac.una_vez, ac.espejo, ac.nombre.c_str(), ac.tecla.c_str(),
-                            ac.boton.c_str(), ac.anim.c_str(), ac.llama.c_str());
+                            ac.boton.c_str(), ac.anim.c_str(), ac.llama.c_str(), ac.archivo.c_str());
             }
         }
         // ---- HUD 2D ----
@@ -2751,8 +3168,8 @@ int main(int, char**) {
                         }
                     }
                     if (!strncmp(line, "SPRNPC ", 7)) {
-                        std::string p9[9];
-                        if (trocear(line + 7, p9, 9) >= 5) {
+                        std::string p9[10];
+                        if (trocear(line + 7, p9, 10) >= 5) {
                             sp.solido      = atoi(p9[0].c_str());
                             sp.sol_radio   = (float)atof(p9[1].c_str());
                             sp.inter_on    = atoi(p9[2].c_str());
@@ -2760,6 +3177,7 @@ int main(int, char**) {
                             sp.inter_mirar = atoi(p9[4].c_str());
                             sp.inter_tecla = p9[5]; sp.inter_boton = p9[6];
                             sp.inter_anim  = p9[7]; sp.inter_llama = p9[8];
+                            sp.inter_arch  = p9[9];
                         }
                         continue;
                     }
@@ -2772,13 +3190,14 @@ int main(int, char**) {
                         continue;
                     }
                     if (!strncmp(line, "SPRACCION ", 10)) {
-                        std::string p7[7];
-                        if (trocear(line + 10, p7, 7) >= 6) {
+                        std::string p7[8];
+                        if (trocear(line + 10, p7, 8) >= 6) {
                             SprAccion ac;
                             ac.una_vez = atoi(p7[0].c_str());
                             ac.espejo  = atoi(p7[1].c_str());
                             ac.nombre  = p7[2]; ac.tecla = p7[3];
                             ac.boton   = p7[4]; ac.anim  = p7[5]; ac.llama = p7[6];
+                            ac.archivo = p7[7];
                             sp.acciones.push_back(ac);
                         }
                         continue;
@@ -2983,6 +3402,24 @@ int main(int, char**) {
                     }
                 }
                 objects.push_back(o);
+                continue;
+            }
+            // Acciones del objeto de arriba (van justo detras de su linea OBJECT).
+            if (!strncmp(line, "OBJACC ", 7) && !objects.empty()) {
+                std::string p6[6];
+                {   std::string t(line + 7);
+                    while (!t.empty() && (t.back()=='\n' || t.back()=='\r')) t.pop_back();
+                    int np = 0; size_t ini = 0;
+                    for (size_t k = 0; k <= t.size() && np < 6; k++)
+                        if (k == t.size() || t[k] == '|') { p6[np++] = t.substr(ini, k - ini); ini = k + 1; }
+                }
+                ObjAccion a;
+                a.evento  = atoi(p6[0].c_str());
+                a.radio   = (float)atof(p6[1].c_str());
+                a.tecla   = p6[2]; a.boton = p6[3];
+                a.archivo = p6[4]; a.proc  = p6[5];
+                objects.back().acciones.push_back(a);
+                continue;
             }
         }
         fclose(f);
@@ -3155,13 +3592,10 @@ int main(int, char**) {
             mf = fopen(mp.c_str(), "r");
             if (!mf) return;
         }
-        std::string t; char b[1024]; size_t n;
-        while ((n = fread(b, 1, sizeof(b), mf)) > 0) t.append(b, n);
         fclose(mf);
-        script.SetText(t);
-        script_file = mp; script_title = "main.prg  (tuyo: el editor no lo toca)";
         script_obj.clear();
-        show_script = true; focus_script = true;
+        int i = code_abrir(mp, "main.prg", "");
+        code_recargar(i);      // el generador acaba de reescribirlo
     };
 
     auto generate_game = [&](bool run) {
@@ -3203,7 +3637,8 @@ int main(int, char**) {
         // juego, porque su fisica vive en el script y el script no se rehacia nunca.
         // En cuanto lo editas a mano, la marca deja de cuadrar y ya no se toca.
         for (auto& o : objects) {
-            bool necesita = o.is_player || (o.phys >= 0 && o.phys <= 4);   // 5 = muro (sin script)
+            bool necesita = o.is_player || (o.phys >= 0 && o.phys <= 4)   // 5 = muro (sin script)
+                            || !o.acciones.empty();
             if (!necesita) continue;
             std::string psp = scripts_dir + "/" + o.name + ".prg";
             FILE* t = fopen(psp.c_str(), "r");
@@ -3214,6 +3649,95 @@ int main(int, char**) {
                 console_add((existe ? "Actualizado Scripts/" : "Creado Scripts/") + o.name + ".prg (" +
                             (o.is_player ? "controles del jugador"
                              : (o.phys == 0) ? "objeto decorativo" : "cuerpo fisico") + ")\n");
+        }
+
+        /* ---- lo que comparten personajes y objetos ----
+           Va antes que nada: en BennuGD2 un GLOBAL tiene que estar declarado por
+           encima del codigo que lo usa, y de aqui para abajo lo usan los NPC (para
+           saber si te has acercado) y los objetos con acciones. Y va fuera del
+           "si hay sprites": un objeto 3D con una accion tambien lo necesita. */
+        {
+            bool hay_jug = false, hay_inter = false;
+            int n_inter = 0;
+            for (auto& sp : sprites) if (sp.is_player) hay_jug = true;
+            for (auto& o : objects) {
+                if (o.is_player) hay_jug = true;
+                for (auto& a : o.acciones) if (a.evento == 2) { hay_inter = true; n_inter++; }
+            }
+            std::string g;
+            if (hay_jug || hay_inter)
+                g += "    float jug_x; float jug_y; float jug_z;   // donde esta el jugador\n";
+            if (n_inter > 0)
+                // Un hueco por accion de "acercarse y pulsar": recuerda si la tecla
+                // ya estaba pulsada el frame anterior, para que valga una vez por
+                // pulsacion y no una por frame.
+                g += "    int obj_acc[" + std::to_string(n_inter) + "];   // teclas de las acciones de objetos\n";
+            if (!g.empty()) { fputs("GLOBAL\n", f); fputs(g.c_str(), f); fputs("END\n\n", f); }
+        }
+
+        // Las acciones pueden llamar a codigo TUYO. Si ese proceso no existe,
+        // el juego no compilaria ("Undefined procedure"), asi que se crea el
+        // esqueleto en Scripts/ y se incluye; luego lo rellenas tu.
+        {
+            std::set<std::string> ya;
+            // Las llamadas pueden venir de una accion del jugador o de la
+            // interaccion de un NPC: se juntan las dos listas. Cada una lleva
+            // el fichero donde vive su codigo, si se eligio uno en el Inspector.
+            struct Llamada { std::string llama, nombre, archivo; };
+            std::vector<Llamada> llamadas;
+            for (auto& sp : sprites) {
+                for (auto& ac : sp.acciones)
+                    if (!ac.llama.empty()) llamadas.push_back({ ac.llama, ac.nombre, ac.archivo });
+                if (sp.inter_on && !sp.inter_llama.empty())
+                    llamadas.push_back({ sp.inter_llama, "hablar con " + sp.name, sp.inter_arch });
+            }
+            // y las de los objetos 3D
+            for (auto& o : objects)
+                for (auto& a : o.acciones)
+                    if (!a.proc.empty()) llamadas.push_back({ a.proc, o.name, a.archivo });
+            for (auto& ac : llamadas) {
+                /* Con fichero elegido solo hay que incluirlo: el codigo es
+                   tuyo y puede tener dentro los procesos que quiera. Sin el,
+                   se sigue creando el esqueleto con el nombre de la llamada,
+                   o el juego no compilaria ("Undefined procedure"). */
+                if (!ac.archivo.empty()) {
+                    FILE* t = fopen((scripts_dir + "/" + ac.archivo).c_str(), "r");
+                    if (t) {
+                        fclose(t);
+                        if (ya.insert(ac.archivo).second)
+                            fprintf(f, "#include \"Scripts/%s\"\n", ac.archivo.c_str());
+                        continue;
+                    }
+                    console_add("AVISO: no encuentro Scripts/" + ac.archivo + " (accion '" + ac.nombre + "')\n");
+                }
+                {
+                    std::string fn = ident_bgd(ac.llama, "f");
+                    if (!ya.insert(fn + ".prg").second) continue;
+                    std::string ruta = scripts_dir + "/" + fn + ".prg";
+                    FILE* t = fopen(ruta.c_str(), "r");
+                    if (t) fclose(t);
+                    else {
+                        FILE* n2 = fopen(ruta.c_str(), "w");
+                        if (n2) {
+                            fprintf(n2,
+                                "// Accion '%s' del personaje: la llama el editor cuando pulsas\n"
+                                "// la tecla o el boton que le has puesto. Es un PROCESS normal de\n"
+                                "// BennuGD2, asi que puede durar varios FRAME (un disparo, un\n"
+                                "// golpe con su tiempo...) o acabar enseguida con RETURN.\n"
+                                "PROCESS %s()\n"
+                                "BEGIN\n"
+                                "    // ---- tu codigo aqui ----\n"
+                                "    RETURN;\n"
+                                "END\n",
+                                ac.nombre.c_str(), fn.c_str());
+                            fclose(n2);
+                            console_add("Creado Scripts/" + fn + ".prg (accion '" + ac.nombre + "')\n");
+                        }
+                    }
+                    fprintf(f, "#include \"Scripts/%s.prg\"\n", fn.c_str());
+                }
+            }
+            if (!ya.empty()) fputs("\n", f);
         }
 
         // Un #include por objeto (SIN duplicar: el codigo vive en Scripts/<n>.prg).
@@ -3489,16 +4013,7 @@ int main(int, char**) {
         }
 
         // Nombre valido de BennuGD2 a partir de un texto cualquiera.
-        auto gen_ident = [](const std::string& t, const char* pref) {
-            std::string o;
-            for (char c : t) {
-                if (isalnum((unsigned char)c)) o += (char)tolower(c);
-                else if (!o.empty() && o.back() != '_') o += '_';
-            }
-            while (!o.empty() && o.back() == '_') o.pop_back();
-            if (o.empty() || isdigit((unsigned char)o[0])) o = std::string(pref) + o;
-            return o;
-        };
+        auto gen_ident = [](const std::string& t, const char* pref) { return ident_bgd(t, pref); };
 
         // ---- SPRITES 2D del mundo (hojas de sprites, estilo HD-2D) ----
         // Por cada hoja se genera: su carga con map_load y las TABLAS de recortes
@@ -3602,61 +4117,10 @@ int main(int, char**) {
                        " / adelante / atras / izquierda / derecha\n";
                 tab("_est", todos); tab("_ini", ini_); tab("_num", num_);
             }
-            {   // Donde esta el jugador, para que los NPC sepan si te has acercado.
-                bool hay_jug = false;
-                for (auto& sp : sprites) if (sp.is_player) hay_jug = true;
-                if (hay_jug)
-                    gl2 += "    float jug_x; float jug_y; float jug_z;   // donde esta el jugador\n";
-            }
             if (!gl2.empty()) {
                 fputs("GLOBAL\n", f);
                 fputs(gl2.c_str(), f);
                 fputs("END\n\n", f);
-            }
-            // Las acciones pueden llamar a codigo TUYO. Si ese proceso no existe,
-            // el juego no compilaria ("Undefined procedure"), asi que se crea el
-            // esqueleto en Scripts/ y se incluye; luego lo rellenas tu.
-            {
-                std::set<std::string> ya;
-                // Las llamadas pueden venir de una accion del jugador o de la
-                // interaccion de un NPC: se juntan las dos listas.
-                std::vector<std::pair<std::string, std::string>> llamadas;   // nombre, para que
-                for (auto& sp : sprites) {
-                    for (auto& ac : sp.acciones)
-                        if (!ac.llama.empty()) llamadas.push_back({ ac.llama, ac.nombre });
-                    if (sp.inter_on && !sp.inter_llama.empty())
-                        llamadas.push_back({ sp.inter_llama, "hablar con " + sp.name });
-                }
-                for (auto& par : llamadas) {
-                    {
-                        struct { std::string llama, nombre; } ac { par.first, par.second };
-                        std::string fn = gen_ident(ac.llama, "f");
-                        if (!ya.insert(fn).second) continue;
-                        std::string ruta = scripts_dir + "/" + fn + ".prg";
-                        FILE* t = fopen(ruta.c_str(), "r");
-                        if (t) fclose(t);
-                        else {
-                            FILE* n2 = fopen(ruta.c_str(), "w");
-                            if (n2) {
-                                fprintf(n2,
-                                    "// Accion '%s' del personaje: la llama el editor cuando pulsas\n"
-                                    "// la tecla o el boton que le has puesto. Es un PROCESS normal de\n"
-                                    "// BennuGD2, asi que puede durar varios FRAME (un disparo, un\n"
-                                    "// golpe con su tiempo...) o acabar enseguida con RETURN.\n"
-                                    "PROCESS %s()\n"
-                                    "BEGIN\n"
-                                    "    // ---- tu codigo aqui ----\n"
-                                    "    RETURN;\n"
-                                    "END\n",
-                                    ac.nombre.c_str(), fn.c_str());
-                                fclose(n2);
-                                console_add("Creado Scripts/" + fn + ".prg (accion '" + ac.nombre + "')\n");
-                            }
-                        }
-                        fprintf(f, "#include \"Scripts/%s.prg\"\n", fn.c_str());
-                    }
-                }
-                if (!ya.empty()) fputs("\n", f);
             }
 
             /* Los controles van RESPECTO A LA CAMARA (igual que en los objetos):
@@ -7278,27 +7742,7 @@ int main(int, char**) {
             ImGui::DragFloat3("Posicion", &o.x, 0.1f);
 
             // ---- lo mismo que un objeto 3D: fisica, jugador y zonas ----
-            auto combo_tecla = [&](const char* et, std::string& tecla) {
-                if (ImGui::BeginCombo(et, tecla.c_str())) {
-                    // Con 70 teclas en la lista, un filtro ahorra el scroll.
-                    static char filtro[16] = "";
-                    ImGui::SetNextItemWidth(90);
-                    ImGui::InputTextWithHint("##ft", "filtrar", filtro, sizeof(filtro));
-                    for (int k = 0; k < NTECLAS; k++) {
-                        if (filtro[0]) {
-                            bool cuadra = false;
-                            for (const char* a = TECLAS[k]; *a && !cuadra; a++) {
-                                const char *x = a, *y = filtro;
-                                while (*x && *y && toupper((unsigned char)*x) == toupper((unsigned char)*y)) { x++; y++; }
-                                if (!*y) cuadra = true;
-                            }
-                            if (!cuadra) continue;
-                        }
-                        if (ImGui::Selectable(TECLAS[k], tecla == TECLAS[k])) tecla = TECLAS[k];
-                    }
-                    ImGui::EndCombo();
-                }
-            };
+            auto combo_tecla = [&](const char* et, std::string& tecla) { combo_tecla_ui(et, tecla); };
             // Animacion de la hoja y boton del mando: los usan tanto el jugador como
             // los NPC, asi que se definen antes de partir en dos la ficha.
             auto combo_anim_de = [&](const char* et, std::string& dest) {
@@ -7311,16 +7755,7 @@ int main(int, char**) {
                     ImGui::EndCombo();
                 }
             };
-            auto combo_boton = [&](const char* et, std::string& b) {
-                const char* cur = b.empty() ? "(ninguno)" : b.c_str();
-                ImGui::SetNextItemWidth(180);
-                if (ImGui::BeginCombo(et, cur)) {
-                    if (ImGui::Selectable("(ninguno)", b.empty())) b.clear();
-                    for (int k = 0; k < NBOTONES; k++)
-                        if (ImGui::Selectable(BOTONES[k], b == BOTONES[k])) b = BOTONES[k];
-                    ImGui::EndCombo();
-                }
-            };
+            auto combo_boton = [&](const char* et, std::string& b) { combo_boton_ui(et, b); };
             ImGui::SeparatorText("Que es y como se comporta");
             bool jug = o.is_player != 0;
             if (ImGui::Checkbox("Es el personaje que se controla", &jug)) {
@@ -7415,10 +7850,7 @@ int main(int, char**) {
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("Marcado: se reproduce del tiron y no se corta (ataques).\n"
                                               "Sin marcar: suena mientras aguantes la tecla o el boton.");
-                        {   char lb[128]; strncpy(lb, ac.llama.c_str(), 127); lb[127] = 0;
-                            ImGui::SetNextItemWidth(180);
-                            if (ImGui::InputTextWithHint("llama a", "mi_funcion", lb, sizeof(lb)))
-                                ac.llama = lb; }
+                        selector_codigo("codaccion", ac.archivo, ac.llama, ac.nombre);
                         ImGui::PopID();
                     }
                     if (borrar_acc >= 0) o.acciones.erase(o.acciones.begin() + borrar_acc);
@@ -7492,10 +7924,7 @@ int main(int, char**) {
                     combo_tecla("Tecla", o.inter_tecla);
                     combo_boton("Boton del mando", o.inter_boton);
                     combo_anim_de("Animacion al hacerlo", o.inter_anim);
-                    {   char lb[128]; strncpy(lb, o.inter_llama.c_str(), 127); lb[127] = 0;
-                        ImGui::SetNextItemWidth(180);
-                        if (ImGui::InputTextWithHint("Llama a", "mi_dialogo", lb, sizeof(lb)))
-                            o.inter_llama = lb; }
+                    selector_codigo("codinter", o.inter_arch, o.inter_llama, o.name + "_hablar");
                     bool mir = o.inter_mirar != 0;
                     if (ImGui::Checkbox("Se gira hacia el jugador al acercarse", &mir)) o.inter_mirar = mir;
                     ImGui::TextDisabled("Si el PROCESS no existe, el editor te crea el esqueleto.");
@@ -8170,7 +8599,48 @@ int main(int, char**) {
                 ImGui::SliderAngle("Rotacion Y", &o.ry);
                 ImGui::DragFloat("Escala", &o.scale, 0.01f, 0.02f, 100.0f);
             }
-            if (ImGui::CollapsingHeader("Script (componente)")) {
+            if (ImGui::CollapsingHeader(ICON_FA_CODE "  Codigo (acciones y script)")) {
+                /* Codigo TUYO enganchado al objeto: eliges el .prg y de el sale la
+                   lista de PROCESS/FUNCTION. Lo mismo que ya se podia hacer con un
+                   personaje, pero para cualquier objeto de la escena. */
+                ImGui::SeparatorText("Acciones");
+                int borrar_acc = -1;
+                for (int k = 0; k < (int)o.acciones.size(); k++) {
+                    ObjAccion& a = o.acciones[k];
+                    ImGui::PushID(k);
+                    const char* ev[] = { "Al empezar (una vez)", "Cada frame",
+                                         "Al acercarse y pulsar" };
+                    // El Inspector es estrecho: el desplegable se queda con poco
+                    // mas de la mitad para que quepa el boton de quitar al lado.
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.52f);
+                    ImGui::Combo("cuando", &a.evento, ev, 3);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Quitar")) borrar_acc = k;
+                    if (a.evento == 2) {
+                        ImGui::SetNextItemWidth(110);
+                        combo_tecla_ui("tecla", a.tecla);
+                        ImGui::SameLine();
+                        combo_boton_ui("boton", a.boton);
+                        ImGui::SetNextItemWidth(150);
+                        ImGui::DragFloat("distancia", &a.radio, 0.1f, 0.5f, 40.0f, "%.1f");
+                        bool hay_jug = false;
+                        for (auto& oo : objects) if (oo.is_player) hay_jug = true;
+                        for (auto& ss : sprites)  if (ss.is_player) hay_jug = true;
+                        if (!hay_jug)
+                            ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1),
+                                "  Falta un jugador en la escena: sin el no hay a quien medir la distancia.");
+                    }
+                    selector_codigo("codobj", a.archivo, a.proc, o.name + "_" + std::to_string(k + 1));
+                    ImGui::Separator();
+                    ImGui::PopID();
+                }
+                if (borrar_acc >= 0) o.acciones.erase(o.acciones.begin() + borrar_acc);
+                if (ImGui::Button(ICON_FA_PLUS "  Anadir accion", ImVec2(-1, 0)))
+                    o.acciones.push_back(ObjAccion());
+                if (!o.acciones.empty())
+                    ImGui::TextDisabled("Se llaman desde el script del objeto; si lo has editado a mano,\nregeneralo abajo para que entren.");
+
+                ImGui::SeparatorText("Script del objeto");
                 ImGui::TextDisabled("Scripts/%s.prg", o.name.c_str());
                 if (ImGui::Button("Editar script del objeto", ImVec2(-1, 0)))
                     open_object_script(o.name);
@@ -8407,7 +8877,8 @@ int main(int, char**) {
                         console_add(status + "\n");
                         // Si estaba abierto en el editor, recargarlo para no dejar
                         // a la vista una version que ya no es la del disco.
-                        if (show_script && script_obj == regen_obj) open_object_script(regen_obj);
+                        { int di = doc_de(scripts_dir + "/" + regen_obj + ".prg");
+                          if (di >= 0) code_recargar(di); }
                     } else {
                         status = "ERROR: no puedo escribir Scripts/" + regen_obj + ".prg";
                         console_add(status + "\n");
@@ -8420,66 +8891,614 @@ int main(int, char**) {
             ImGui::EndPopup();
         }
 
-        // --- Editor de SCRIPT a pantalla completa (se abre desde el Inspector) ---
+        /* ================= EDITOR DE CODIGO (pantalla completa) =================
+           Varios ficheros a la vez en pestanias, el arbol de Scripts al lado, el
+           esquema de PROCESS/FUNCTION del que estas viendo, buscar y reemplazar,
+           autocompletado y compilar marcando la linea del error. Se abre desde el
+           Inspector, desde el menu y con doble clic en un objeto. */
         static std::string compile_out;
+        static std::vector<std::pair<std::string,int>> compile_err;  // fichero, linea
+        static char  buscar_txt[128] = "", reemp_txt[128] = "";
+        static bool  buscar_abierto = false, buscar_case = false, foco_buscar = false;
+        static bool  pedir_nuevo = false, pedir_renombrar = false, pedir_borrar_prg = false, pedir_ir = false;
+        static char  nombre_nuevo[80] = "";
+        static std::string fich_menu;          // fichero sobre el que actua el menu del arbol
+        static int   ir_linea = 1;
+        static float code_zoom = 1.0f;
+        static bool  ver_espacios = false;
+        static int   tabulacion = 4;
+        static int   cerrar_doc = -1;          // pestania que se pide cerrar
+        static bool  ac_abierto = false;       // desplegable del autocompletado
+        static int   ac_sel = 0;
+        static int   ac_col = 0;               // columna donde empieza la palabra
+        static std::vector<std::pair<std::string,std::string>> ac_lista;   // texto, ayuda
+        static std::vector<std::string> fich_cache;
+        static double fich_t = -1.0;
+
         if (show_script) {
+            // ---- utilidades de coordenadas: la columna del editor cuenta las
+            //      tabulaciones expandidas, y para tocar el texto hace falta el
+            //      indice real dentro de la linea.
+            auto col_a_idx = [&](const std::string& l, int col) -> size_t {
+                int c = 0; size_t i = 0;
+                while (i < l.size() && c < col) {
+                    if (l[i] == '\t') c = (c / tabulacion + 1) * tabulacion; else c++;
+                    i++;
+                }
+                return i;
+            };
+            auto idx_a_col = [&](const std::string& l, size_t idx) -> int {
+                int c = 0;
+                for (size_t i = 0; i < idx && i < l.size(); i++) {
+                    if (l[i] == '\t') c = (c / tabulacion + 1) * tabulacion; else c++;
+                }
+                return c;
+            };
+            auto en_lineas = [](const std::string& t) {
+                std::vector<std::string> v; size_t i = 0;
+                for (;;) { size_t f = t.find('\n', i);
+                          if (f == std::string::npos) { v.push_back(t.substr(i)); break; }
+                          v.push_back(t.substr(i, f - i)); i = f + 1; }
+                return v;
+            };
+            auto minus = [](std::string s) { for (auto& c : s) c = (char)tolower((unsigned char)c); return s; };
+            // Buscar hacia delante o hacia atras desde el cursor, dando la vuelta
+            // al llegar al final. Devuelve si ha encontrado algo, y si dio la vuelta.
+            auto buscar_en = [&](CodeDoc* d, bool atras, bool* vuelta) -> bool {
+                std::string pat = buscar_txt;
+                if (!d || pat.empty()) return false;
+                auto ls = en_lineas(d->ed.GetText());
+                if (ls.empty()) return false;
+                auto cur = d->ed.GetCursorPosition();
+                int L = (int)ls.size();
+                int l0 = cur.mLine < L ? cur.mLine : L - 1;
+                size_t i0 = col_a_idx(ls[l0], cur.mColumn);
+                std::string pm = buscar_case ? pat : minus(pat);
+                if (vuelta) *vuelta = false;
+                for (int k = 0; k <= L; k++) {
+                    int ln = atras ? ((l0 - k) % L + L) % L : (l0 + k) % L;
+                    if (vuelta && ((!atras && ln < l0) || (atras && ln > l0))) *vuelta = true;
+                    const std::string& l = ls[ln];
+                    std::string lm = buscar_case ? l : minus(l);
+                    size_t pos;
+                    if (!atras) {
+                        size_t desde = (k == 0) ? i0 : 0;
+                        pos = (desde > lm.size()) ? std::string::npos : lm.find(pm, desde);
+                    } else {
+                        if (k == 0) { if (i0 == 0) continue; pos = lm.rfind(pm, i0 - 1); }
+                        else        pos = lm.rfind(pm);
+                    }
+                    if (pos != std::string::npos) {
+                        int c0 = idx_a_col(l, pos), c1 = idx_a_col(l, pos + pat.size());
+                        d->ed.SetSelection(TextEditor::Coordinates(ln, c0), TextEditor::Coordinates(ln, c1));
+                        d->ed.SetCursorPosition(TextEditor::Coordinates(ln, atras ? c0 : c1));
+                        return true;
+                    }
+                }
+                return false;
+            };
+
             ImGuiViewport* mv = ImGui::GetMainViewport();
             ImGui::SetNextWindowPos(mv->WorkPos);
             ImGui::SetNextWindowSize(mv->WorkSize);
             if (focus_script) { ImGui::SetNextWindowFocus(); focus_script = false; }
-            ImGui::Begin("Editor de script", nullptr,
+            ImGui::Begin("Editor de codigo", nullptr,
                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
-                ImGuiWindowFlags_NoDocking);
+                ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_MenuBar);
 
-            const std::string& obj_script = script_file;
-            ImGui::TextUnformatted(script_title.c_str());
-            ImGui::SameLine(0, 30);
-            if (ImGui::Button("Guardar")) {
-                FILE* f = fopen(obj_script.c_str(), "w");
-                if (f) { std::string t = script.GetText(); fwrite(t.data(), 1, t.size(), f); fclose(f);
-                         compile_out = "Guardado: " + script_file; }
-                else     compile_out = "ERROR: no puedo escribir " + script_file;
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Compilar")) {
-                // guarda el componente del objeto...
-                { FILE* f = fopen(obj_script.c_str(), "w");
-                  if (f) { std::string t = script.GetText(); fwrite(t.data(), 1, t.size(), f); fclose(f); } }
-                // ...y compila un main temporal que lo incluye en contexto de juego.
-                std::string tmp = scripts_dir + "/__compile_check.prg";
-                FILE* f = fopen(tmp.c_str(), "w");
-                if (f) {
-                    fputs("import \"libmod_gfx\";\nimport \"libmod_misc\";\n"
-                          "import \"libmod_input\";\nimport \"libmod_3d\";\n\n", f);
-                    std::string t = script.GetText();
-                    fwrite(t.data(), 1, t.size(), f);
-                    fputs("\nPROCESS main()\nBEGIN\nEND\n", f);
-                    fclose(f);
+            CodeDoc* d = doc_activo();
+            bool ped_guardar = false, ped_guardar_todo = false, ped_compilar = false;
+            bool ped_buscar_sig = false, ped_buscar_ant = false;
+
+            // ------------------------------ menu ------------------------------
+            if (ImGui::BeginMenuBar()) {
+                if (ImGui::BeginMenu("Archivo")) {
+                    if (ImGui::MenuItem("Nuevo script...", "Ctrl+N")) { nombre_nuevo[0] = 0; pedir_nuevo = true; }
+                    if (ImGui::MenuItem("Abrir main.prg"))            open_main_script();
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Guardar", "Ctrl+S", false, d != nullptr))      ped_guardar = true;
+                    if (ImGui::MenuItem("Guardar todo", "Ctrl+Shift+S", false, !docs.empty())) ped_guardar_todo = true;
+                    if (ImGui::MenuItem("Cerrar pestania", "Ctrl+W", false, d != nullptr)) cerrar_doc = doc_sel;
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Cerrar el editor", "Esc"))   show_script = false;
+                    ImGui::EndMenu();
                 }
-                compile_out.clear();
-                std::string cmd = ruta_util("lib/bgdc", BGDC_PATH) + " " + tmp + " 2>&1";
-                FILE* p = popen(cmd.c_str(), "r");
-                if (p) { char buf[512]; size_t n;
-                         while ((n = fread(buf, 1, sizeof(buf) - 1, p)) > 0) { buf[n] = 0; compile_out += buf; }
-                         int rc = pclose(p);
-                         compile_out += (rc == 0) ? "\n[OK] el componente compila en el contexto del juego."
-                                                  : "\n[FALLO] revisa los errores.";
-                } else compile_out = "ERROR: no pude ejecutar bgdc";
-            }
-            ImGui::SameLine();
-            { auto c = script.GetCursorPosition();
-              ImGui::Text("| Ln %d, Col %d", c.mLine + 1, c.mColumn + 1); }
-            ImGui::SameLine(ImGui::GetWindowWidth() - 110);
-            if (ImGui::Button("Cerrar", ImVec2(90, 0))) show_script = false;
-
-            float out_h = compile_out.empty() ? 0.0f : 150.0f;
-            script.Render("CodeEditor", ImVec2(0, -out_h));
-            if (out_h > 0.0f) {
+                if (ImGui::BeginMenu("Editar", d != nullptr)) {
+                    if (ImGui::MenuItem("Deshacer", "Ctrl+Z", false, d->ed.CanUndo())) d->ed.Undo();
+                    if (ImGui::MenuItem("Rehacer", "Ctrl+Y", false, d->ed.CanRedo())) d->ed.Redo();
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Cortar", "Ctrl+X", false, d->ed.HasSelection()))  d->ed.Cut();
+                    if (ImGui::MenuItem("Copiar", "Ctrl+C", false, d->ed.HasSelection())) d->ed.Copy();
+                    if (ImGui::MenuItem("Pegar", "Ctrl+V"))  d->ed.Paste();
+                    if (ImGui::MenuItem("Seleccionar todo", "Ctrl+A")) d->ed.SelectAll();
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Buscar", d != nullptr)) {
+                    if (ImGui::MenuItem("Buscar...", "Ctrl+F"))    { buscar_abierto = true; foco_buscar = true; }
+                    if (ImGui::MenuItem("Siguiente", "F3"))        ped_buscar_sig = true;
+                    if (ImGui::MenuItem("Anterior", "Shift+F3"))   ped_buscar_ant = true;
+                    if (ImGui::MenuItem("Ir a la linea...", "Ctrl+G")) { pedir_ir = true; ir_linea = d->ed.GetCursorPosition().mLine + 1; }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Ver")) {
+                    ImGui::SetNextItemWidth(140);
+                    ImGui::SliderFloat("Tamanio del texto", &code_zoom, 0.7f, 2.0f, "%.2f");
+                    if (ImGui::MenuItem("Ver espacios y tabuladores", nullptr, ver_espacios)) ver_espacios = !ver_espacios;
+                    ImGui::SetNextItemWidth(100);
+                    ImGui::SliderInt("Tabulacion", &tabulacion, 2, 8);
+                    ImGui::EndMenu();
+                }
                 ImGui::Separator();
-                ImGui::BeginChild("salida", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
+                if (ImGui::MenuItem("Compilar  (F5)", nullptr, false, d != nullptr)) ped_compilar = true;
+                ImGui::EndMenuBar();
+            }
+
+            // ------------------------- atajos de teclado -------------------------
+            {
+                ImGuiIO& io = ImGui::GetIO();
+                bool ctrl = io.KeyCtrl, shift = io.KeyShift;
+                if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) { if (shift) ped_guardar_todo = true; else ped_guardar = true; }
+                if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N, false)) { nombre_nuevo[0] = 0; pedir_nuevo = true; }
+                if (ctrl && ImGui::IsKeyPressed(ImGuiKey_W, false)) cerrar_doc = doc_sel;
+                if (ctrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) { buscar_abierto = true; foco_buscar = true; }
+                if (ctrl && ImGui::IsKeyPressed(ImGuiKey_G, false) && d) { pedir_ir = true; ir_linea = d->ed.GetCursorPosition().mLine + 1; }
+                if (ImGui::IsKeyPressed(ImGuiKey_F3, false)) { if (shift) ped_buscar_ant = true; else ped_buscar_sig = true; }
+                if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) ped_compilar = true;
+                if (!ac_abierto && !buscar_abierto && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
+                    ImGui::IsKeyPressed(ImGuiKey_Escape, false)) show_script = false;
+            }
+
+            // =============================== barra de buscar ===============================
+            if (buscar_abierto) {
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.16f, 0.20f, 1.0f));
+                ImGui::BeginChild("barra_buscar", ImVec2(0, ImGui::GetFrameHeightWithSpacing() * 2 + 8), true);
+                ImGui::SetNextItemWidth(260);
+                if (foco_buscar) { ImGui::SetKeyboardFocusHere(); foco_buscar = false; }
+                if (ImGui::InputText("Buscar", buscar_txt, sizeof(buscar_txt), ImGuiInputTextFlags_EnterReturnsTrue))
+                    ped_buscar_sig = true;
+                ImGui::SameLine(); if (ImGui::Button("< Ant")) ped_buscar_ant = true;
+                ImGui::SameLine(); if (ImGui::Button("Sig >")) ped_buscar_sig = true;
+                ImGui::SameLine(); ImGui::Checkbox("May/min", &buscar_case);
+                ImGui::SameLine(ImGui::GetWindowWidth() - 90);
+                if (ImGui::Button("Cerrar##buscar")) buscar_abierto = false;
+                ImGui::SetNextItemWidth(260);
+                ImGui::InputText("Reemplazar por", reemp_txt, sizeof(reemp_txt));
+                ImGui::SameLine();
+                if (ImGui::Button("Reemplazar") && d) {
+                    // Si lo que hay seleccionado es la coincidencia, se cambia; si no,
+                    // primero se salta a la siguiente.
+                    std::string sel = d->ed.GetSelectedText();
+                    bool igual = buscar_case ? (sel == buscar_txt) : (minus(sel) == minus(buscar_txt));
+                    if (igual && !sel.empty()) { d->ed.Delete(); d->ed.InsertText(reemp_txt); }
+                    ped_buscar_sig = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reemplazar todo") && d && buscar_txt[0]) {
+                    d->ed.SetCursorPosition(TextEditor::Coordinates(0, 0));
+                    d->ed.SetSelection(TextEditor::Coordinates(0, 0), TextEditor::Coordinates(0, 0));
+                    int n = 0; bool vuelta = false;
+                    // Se para al dar la vuelta: si lo nuevo contiene lo viejo
+                    // (cambiar "a" por "aa") si no, no acabaria nunca.
+                    while (n < 20000 && buscar_en(d, false, &vuelta) && !vuelta) {
+                        d->ed.Delete(); d->ed.InsertText(reemp_txt); n++;
+                    }
+                    compile_out = "Reemplazadas " + std::to_string(n) + " coincidencias.";
+                    compile_err.clear();
+                }
+                ImGui::EndChild();
+                ImGui::PopStyleColor();
+            }
+
+            // =============================== cuerpo ===============================
+            float alto_salida = compile_out.empty() ? 0.0f : 170.0f;
+            ImGui::BeginChild("cuerpo_code", ImVec2(0, -alto_salida), false);
+
+            // ---------------- panel izquierdo: ficheros + esquema ----------------
+            ImGui::BeginChild("panel_code", ImVec2(230, 0), true);
+            ImGui::TextDisabled("SCRIPTS DEL PROYECTO");
+            ImGui::SameLine(ImGui::GetWindowWidth() - 32);
+            if (ImGui::SmallButton("+")) { nombre_nuevo[0] = 0; pedir_nuevo = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Nuevo script (Ctrl+N)");
+            ImGui::Separator();
+            {
+                double ahora = ImGui::GetTime();
+                if (fich_t < 0.0 || ahora - fich_t > 0.5) { fich_cache = prg_de_scripts(); fich_t = ahora; }
+                ImGui::BeginChild("lista_fich", ImVec2(0, ImGui::GetContentRegionAvail().y * 0.55f), false);
+                for (auto& n : fich_cache) {
+                    std::string ruta = scripts_dir + "/" + n;
+                    int di = doc_de(ruta);
+                    bool abierto = (di >= 0);
+                    bool sel = (di >= 0 && di == doc_sel);
+                    std::string etiqueta = (abierto && docs[di]->sucio ? "* " : "  ") + n;
+                    if (!abierto) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+                    if (ImGui::Selectable((etiqueta + "##f" + n).c_str(), sel)) code_abrir(ruta, n, "");
+                    if (!abierto) ImGui::PopStyleColor();
+                    if (ImGui::BeginPopupContextItem(("ctx" + n).c_str())) {
+                        fich_menu = n;
+                        if (ImGui::MenuItem("Abrir"))     code_abrir(ruta, n, "");
+                        if (ImGui::MenuItem("Renombrar...")) {
+                            snprintf(nombre_nuevo, sizeof(nombre_nuevo), "%s", fs::path(n).stem().string().c_str());
+                            pedir_renombrar = true;
+                        }
+                        if (ImGui::MenuItem("Duplicar")) {
+                            std::string base = fs::path(n).stem().string();
+                            for (int k = 2; k < 100; k++) {
+                                std::string cand = scripts_dir + "/" + base + "_" + std::to_string(k) + ".prg";
+                                FILE* t = fopen(cand.c_str(), "r");
+                                if (t) { fclose(t); continue; }
+                                std::string txt; leer_todo(ruta, txt);
+                                escribir_todo(cand, txt);
+                                fich_t = -1.0;
+                                code_abrir(cand, fs::path(cand).filename().string(), "");
+                                break;
+                            }
+                        }
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Borrar...")) pedir_borrar_prg = true;
+                        ImGui::EndPopup();
+                    }
+                }
+                // main.prg no vive en Scripts, pero se edita igual
+                ImGui::Separator();
+                {
+                    std::string mp = project_dir + "/main.prg";
+                    int di = doc_de(mp);
+                    if (ImGui::Selectable(((di >= 0 && docs[di]->sucio ? "* " : "  ") + std::string("main.prg")).c_str(),
+                                          di >= 0 && di == doc_sel))
+                        open_main_script();
+                }
+                ImGui::EndChild();
+            }
+            ImGui::Separator();
+            ImGui::TextDisabled("PROCESOS Y FUNCIONES");
+            ImGui::BeginChild("esquema", ImVec2(0, 0), false);
+            if (d) {
+                auto syms = prg_simbolos(d->ed.GetText());
+                if (syms.empty()) ImGui::TextDisabled("(ninguno)");
+                for (auto& sy : syms) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, sy.es_func ? ImVec4(0.55f, 0.85f, 1.0f, 1.0f)
+                                                                    : ImVec4(0.75f, 1.0f, 0.65f, 1.0f));
+                    bool clic = ImGui::Selectable((std::string(sy.es_func ? "f  " : "p  ") + sy.nombre +
+                                                  "##sym" + std::to_string(sy.linea)).c_str());
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nlinea %d", sy.firma.c_str(), sy.linea);
+                    if (clic) code_ir_a(doc_sel, sy.linea);
+                }
+            }
+            ImGui::EndChild();
+            ImGui::EndChild();   // panel_code
+
+            // ---------------- derecha: pestanias + editor ----------------
+            ImGui::SameLine();
+            ImGui::BeginChild("zona_editor", ImVec2(0, 0), false);
+            if (docs.empty()) {
+                ImGui::TextDisabled("No hay ningun fichero abierto.");
+                ImGui::TextDisabled("Elige uno de la lista, o crea uno nuevo con el boton +.");
+            } else if (ImGui::BeginTabBar("pestanias_code", ImGuiTabBarFlags_Reorderable |
+                                                            ImGuiTabBarFlags_AutoSelectNewTabs |
+                                                            ImGuiTabBarFlags_FittingPolicyScroll)) {
+                for (int i = 0; i < (int)docs.size(); i++) {
+                    bool abierta = true;
+                    ImGuiTabItemFlags tf = docs[i]->sucio ? ImGuiTabItemFlags_UnsavedDocument : 0;
+                    std::string et = docs[i]->titulo + "###doc" + std::to_string(i);
+                    if (ImGui::BeginTabItem(et.c_str(), &abierta, tf)) {
+                        doc_sel = i;
+                        ImGui::EndTabItem();
+                    }
+                    if (!abierta) cerrar_doc = i;
+                }
+                ImGui::EndTabBar();
+            }
+            d = doc_activo();
+            if (d) {
+                // Aviso de que el fichero cambio por debajo (lo regenero el editor).
+                ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6, 2));
+                auto cur = d->ed.GetCursorPosition();
+                ImGui::TextDisabled("%s", d->ruta.c_str());
+                ImGui::SameLine(ImGui::GetWindowWidth() - 320);
+                ImGui::Text("Ln %d, Col %d%s", cur.mLine + 1, cur.mColumn + 1, d->sucio ? "   *sin guardar" : "");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Guardar")) ped_guardar = true;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Compilar")) ped_compilar = true;
+                ImGui::PopStyleVar();
+
+                d->ed.SetShowWhitespaces(ver_espacios);
+                d->ed.SetTabSize(tabulacion);
+
+                // Con el desplegable del autocompletado abierto, las flechas y el
+                // Enter son suyos: si no, el editor moveria el cursor a la vez.
+                bool robar = false;
+                if (ac_abierto && !ac_lista.empty()) {
+                    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true)) { ac_sel = (ac_sel + 1) % (int)ac_lista.size(); robar = true; }
+                    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true))   { ac_sel = (ac_sel - 1 + (int)ac_lista.size()) % (int)ac_lista.size(); robar = true; }
+                    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))   { ac_abierto = false; robar = true; }
+                    if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
+                        // se cambia la palabra a medias por la elegida
+                        auto c = d->ed.GetCursorPosition();
+                        d->ed.SetSelection(TextEditor::Coordinates(c.mLine, ac_col), c);
+                        d->ed.Delete();
+                        d->ed.InsertText(ac_lista[ac_sel].first);
+                        ac_abierto = false; robar = true;
+                    }
+                }
+                if (robar) d->ed.SetHandleKeyboardInputs(false);
+
+                ImGui::BeginChild("zona_codigo", ImVec2(0, 0), false);
+                ImGui::SetWindowFontScale(code_zoom);
+                d->ed.Render("CodeEditor", ImVec2(0, 0));
+                ImGui::EndChild();
+                if (robar) d->ed.SetHandleKeyboardInputs(true);
+
+                if (d->ed.IsTextChanged()) {
+                    d->sucio = true;
+                    // ---- autocompletado: la palabra que se esta escribiendo ----
+                    auto c = d->ed.GetCursorPosition();
+                    std::string linea = d->ed.GetCurrentLineText();
+                    size_t idx = col_a_idx(linea, c.mColumn), b = idx;
+                    while (b > 0 && (isalnum((unsigned char)linea[b-1]) || linea[b-1] == '_')) b--;
+                    std::string pref = linea.substr(b, idx - b);
+                    ac_col = idx_a_col(linea, b);
+                    ac_lista.clear(); ac_sel = 0;
+                    if (pref.size() >= 2) {
+                        std::string pm = minus(pref);
+                        auto cabe = [&](const std::string& cand) {
+                            return cand.size() > pref.size() && minus(cand).rfind(pm, 0) == 0;
+                        };
+                        const auto& lang = d->ed.GetLanguageDefinition();
+                        for (auto& k : lang.mKeywords) if (cabe(k)) ac_lista.push_back({ k, "palabra clave" });
+                        for (auto& it : lang.mIdentifiers) if (cabe(it.first)) ac_lista.push_back({ it.first, it.second.mDeclaration });
+                        // lo tuyo: los procesos y funciones de los ficheros abiertos
+                        for (auto& dd : docs)
+                            for (auto& sy : prg_simbolos(dd->ed.GetText()))
+                                if (cabe(sy.nombre)) ac_lista.push_back({ sy.nombre, sy.firma + "   (" + dd->titulo + ")" });
+                        std::sort(ac_lista.begin(), ac_lista.end());
+                        ac_lista.erase(std::unique(ac_lista.begin(), ac_lista.end()), ac_lista.end());
+                        if (ac_lista.size() > 40) ac_lista.resize(40);
+                    }
+                    ac_abierto = !ac_lista.empty();
+                }
+                if (ac_abierto && !ac_lista.empty()) {
+                    // Se pinta a mano encima de todo: una ventana de ImGui le
+                    // robaria el foco al editor y dejarias de escribir.
+                    ImVec2 p = d->ed.GetCursorScreenPos();
+                    float lh = ImGui::GetTextLineHeightWithSpacing();
+                    int n = (int)ac_lista.size(); if (n > 8) n = 8;
+                    int desde = ac_sel - n + 1; if (desde < 0) desde = 0;
+                    float w = 340.0f, h = n * lh + 8.0f;
+                    ImDrawList* dl = ImGui::GetForegroundDrawList();
+                    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), IM_COL32(30, 32, 40, 245), 4.0f);
+                    dl->AddRect(p, ImVec2(p.x + w, p.y + h), IM_COL32(90, 130, 200, 255), 4.0f);
+                    for (int k = 0; k < n; k++) {
+                        int i = desde + k;
+                        float y = p.y + 4.0f + k * lh;
+                        if (i == ac_sel)
+                            dl->AddRectFilled(ImVec2(p.x + 2, y), ImVec2(p.x + w - 2, y + lh), IM_COL32(60, 110, 190, 255), 3.0f);
+                        dl->AddText(ImVec2(p.x + 8, y + 1), IM_COL32(235, 235, 235, 255), ac_lista[i].first.c_str());
+                        if (!ac_lista[i].second.empty())
+                            dl->AddText(ImVec2(p.x + 150, y + 1), IM_COL32(150, 150, 160, 255), ac_lista[i].second.c_str());
+                    }
+                }
+                if (d->ed.IsCursorPositionChanged() && !d->ed.IsTextChanged()) ac_abierto = false;
+            }
+            ImGui::EndChild();   // zona_editor
+            ImGui::EndChild();   // cuerpo_code
+
+            // ---------------- salida del compilador ----------------
+            if (alto_salida > 0.0f) {
+                ImGui::Separator();
+                ImGui::BeginChild("salida_code", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
+                if (!compile_err.empty()) {
+                    ImGui::TextDisabled("Doble clic en un error para ir a su linea:");
+                    for (auto& e : compile_err) {
+                        std::string et = fs::path(e.first).filename().string() + ":" + std::to_string(e.second);
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.5f, 1.0f));
+                        if (ImGui::Selectable(et.c_str())) {
+                            int di = doc_de(e.first);
+                            if (di < 0) di = code_abrir(e.first, fs::path(e.first).filename().string(), "");
+                            code_ir_a(di, e.second);
+                        }
+                        ImGui::PopStyleColor();
+                    }
+                    ImGui::Separator();
+                }
                 ImGui::TextUnformatted(compile_out.c_str());
                 ImGui::EndChild();
             }
+
+            // =============================== acciones ===============================
+            if (ped_guardar && d) {
+                if (code_guardar(doc_sel)) { compile_out = "Guardado: " + d->ruta; compile_err.clear(); fich_t = -1.0; }
+                else                       { compile_out = "ERROR: no puedo escribir " + d->ruta; }
+            }
+            if (ped_guardar_todo) {
+                int n = 0;
+                for (int i = 0; i < (int)docs.size(); i++) if (docs[i]->sucio && code_guardar(i)) n++;
+                compile_out = "Guardados " + std::to_string(n) + " ficheros."; compile_err.clear(); fich_t = -1.0;
+            }
+            if ((ped_buscar_sig || ped_buscar_ant) && d) {
+                bool v = false;
+                if (!buscar_en(d, ped_buscar_ant, &v)) {
+                    compile_out = std::string("No se encuentra: ") + buscar_txt; compile_err.clear();
+                }
+            }
+            if (ped_compilar && d) {
+                code_guardar(doc_sel);
+                fich_t = -1.0;
+                /* Se compila EL FICHERO, envuelto en un main de mentira que lo
+                   incluye si el no trae uno. Asi bgdc da la linea del fichero de
+                   verdad y el error se puede marcar donde esta. */
+                std::string txt = d->ed.GetText(), may;
+                for (char c : txt) may += (char)toupper((unsigned char)c);
+                bool tiene_main = (may.find("PROCESS MAIN") != std::string::npos);
+                std::string objetivo = d->ruta;
+                std::string tmp = scripts_dir + "/__check.prg";
+                if (!tiene_main) {
+                    FILE* f2 = fopen(tmp.c_str(), "w");
+                    if (f2) {
+                        fputs("import \"libmod_gfx\";\nimport \"libmod_misc\";\n"
+                              "import \"libmod_input\";\nimport \"libmod_3d\";\n", f2);
+                        fprintf(f2, "#include \"%s\"\n", d->ruta.c_str());
+                        fputs("PROCESS main()\nBEGIN\nEND\n", f2);
+                        fclose(f2);
+                        objetivo = tmp;
+                    }
+                }
+                compile_out.clear(); compile_err.clear();
+                std::string cmd = ruta_util("lib/bgdc", BGDC_PATH) + " \"" + objetivo + "\" 2>&1";
+                FILE* p = popen(cmd.c_str(), "r");
+                if (p) {
+                    char buf[512]; size_t n;
+                    while ((n = fread(buf, 1, sizeof(buf) - 1, p)) > 0) { buf[n] = 0; compile_out += buf; }
+                    int rc = pclose(p);
+                    // "<fichero>:<linea>: error: ..." -> marca en el margen
+                    TextEditor::ErrorMarkers marcas;
+                    { std::vector<std::string> ls = en_lineas(compile_out);
+                      for (auto& l : ls) {
+                          size_t p2 = l.rfind(": error");
+                          if (p2 == std::string::npos) p2 = l.rfind(": warning");
+                          if (p2 == std::string::npos) continue;
+                          size_t p1 = l.rfind(':', p2 - 1);
+                          if (p1 == std::string::npos) continue;
+                          std::string sn = l.substr(p1 + 1, p2 - p1 - 1);
+                          if (sn.empty() || sn.find_first_not_of("0123456789") != std::string::npos) continue;
+                          std::string fich = l.substr(0, p1);
+                          int ln = atoi(sn.c_str());
+                          compile_err.push_back({ fich, ln });
+                          if (fich == d->ruta) marcas[ln] = l.substr(p2 + 2);
+                      }
+                    }
+                    d->ed.SetErrorMarkers(marcas);
+                    compile_out += (rc == 0) ? "\n[OK] compila." : "\n[FALLO] revisa los errores.";
+                    if (rc == 0) { compile_err.clear(); d->ed.SetErrorMarkers(TextEditor::ErrorMarkers()); }
+                    else if (!compile_err.empty()) {
+                        int di = doc_de(compile_err[0].first);
+                        if (di >= 0) code_ir_a(di, compile_err[0].second);
+                    }
+                } else compile_out = "ERROR: no pude ejecutar bgdc";
+                { std::error_code ec; fs::remove(tmp, ec); }
+                /* El .dcb de la PRUEBA no pinta nada en el proyecto. El de main.prg
+                   si: es el juego compilado, y borrarlo dejaria sin nada que
+                   ejecutar a quien acaba de darle a compilar. */
+                if (!tiene_main) { std::error_code ec;
+                                   fs::remove(fs::path(objetivo).replace_extension(".dcb"), ec); }
+            }
+
+            // ---------------- cerrar pestania (con aviso si hay cambios) ----------------
+            if (cerrar_doc >= 0 && cerrar_doc < (int)docs.size()) {
+                if (docs[cerrar_doc]->sucio) ImGui::OpenPopup("Cambios sin guardar");
+                else {
+                    docs.erase(docs.begin() + cerrar_doc);
+                    if (doc_sel >= (int)docs.size()) doc_sel = (int)docs.size() - 1;
+                    cerrar_doc = -1;
+                }
+            } else cerrar_doc = -1;
+            if (ImGui::BeginPopupModal("Cambios sin guardar", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                if (cerrar_doc >= 0 && cerrar_doc < (int)docs.size())
+                    ImGui::Text("%s tiene cambios sin guardar.", docs[cerrar_doc]->titulo.c_str());
+                if (ImGui::Button("Guardar y cerrar", ImVec2(160, 0))) {
+                    code_guardar(cerrar_doc);
+                    docs.erase(docs.begin() + cerrar_doc);
+                    if (doc_sel >= (int)docs.size()) doc_sel = (int)docs.size() - 1;
+                    cerrar_doc = -1; ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cerrar sin guardar", ImVec2(160, 0))) {
+                    docs.erase(docs.begin() + cerrar_doc);
+                    if (doc_sel >= (int)docs.size()) doc_sel = (int)docs.size() - 1;
+                    cerrar_doc = -1; ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancelar", ImVec2(110, 0))) { cerrar_doc = -1; ImGui::CloseCurrentPopup(); }
+                ImGui::EndPopup();
+            }
+
+            // ---------------- nuevo / renombrar / borrar / ir a la linea ----------------
+            if (pedir_nuevo) { ImGui::OpenPopup("Nuevo script"); pedir_nuevo = false; }
+            if (ImGui::BeginPopupModal("Nuevo script", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextUnformatted("Nombre del fichero (sin .prg):");
+                ImGui::SetNextItemWidth(280);
+                bool ok = ImGui::InputText("##nn", nombre_nuevo, sizeof(nombre_nuevo),
+                                           ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::TextDisabled("Se creara con un PROCESS del mismo nombre, listo para llamarlo\ndesde un objeto o un personaje.");
+                if (ImGui::Button("Crear", ImVec2(120, 0)) || ok) {
+                    std::string nom = ident_bgd(nombre_nuevo, "script");
+                    std::string ruta = scripts_dir + "/" + nom + ".prg";
+                    FILE* t = fopen(ruta.c_str(), "r");
+                    if (t) { fclose(t); code_abrir(ruta, nom + ".prg", ""); }
+                    else {
+                        std::string plant =
+                            "// " + nom + ": codigo tuyo. Es un PROCESS normal de BennuGD2, asi que\n"
+                            "// puede durar varios FRAME o acabar enseguida con RETURN.\n"
+                            "PROCESS " + nom + "()\n"
+                            "BEGIN\n"
+                            "    // ---- tu codigo aqui ----\n"
+                            "    RETURN;\n"
+                            "END\n";
+                        escribir_todo(ruta, plant);
+                        fich_t = -1.0;
+                        code_abrir(ruta, nom + ".prg", "");
+                    }
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancelar", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+            if (pedir_renombrar) { ImGui::OpenPopup("Renombrar script"); pedir_renombrar = false; }
+            if (ImGui::BeginPopupModal("Renombrar script", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("Renombrar %s", fich_menu.c_str());
+                ImGui::SetNextItemWidth(280);
+                bool ok = ImGui::InputText("##rn", nombre_nuevo, sizeof(nombre_nuevo),
+                                           ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1),
+                    "Ojo: si algun objeto o personaje llama a este fichero,\nhay que volver a elegirlo en su Inspector.");
+                if (ImGui::Button("Renombrar", ImVec2(120, 0)) || ok) {
+                    std::string nom = ident_bgd(nombre_nuevo, "script");
+                    std::string vieja = scripts_dir + "/" + fich_menu;
+                    std::string nueva = scripts_dir + "/" + nom + ".prg";
+                    std::error_code ec;
+                    fs::rename(vieja, nueva, ec);
+                    if (!ec) {
+                        int di = doc_de(vieja);
+                        if (di >= 0) { docs[di]->ruta = nueva; docs[di]->titulo = nom + ".prg"; }
+                        fich_t = -1.0;
+                    }
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancelar", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+            if (pedir_borrar_prg) { ImGui::OpenPopup("Borrar script"); pedir_borrar_prg = false; }
+            if (ImGui::BeginPopupModal("Borrar script", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("Se va a borrar Scripts/%s", fich_menu.c_str());
+                ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "Esto no se puede deshacer.");
+                if (ImGui::Button("Borrar", ImVec2(120, 0))) {
+                    std::string ruta = scripts_dir + "/" + fich_menu;
+                    std::error_code ec; fs::remove(ruta, ec);
+                    int di = doc_de(ruta);
+                    if (di >= 0) {
+                        docs.erase(docs.begin() + di);
+                        if (doc_sel >= (int)docs.size()) doc_sel = (int)docs.size() - 1;
+                    }
+                    fich_t = -1.0;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancelar", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+            if (pedir_ir) { ImGui::OpenPopup("Ir a la linea"); pedir_ir = false; }
+            if (ImGui::BeginPopupModal("Ir a la linea", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::SetNextItemWidth(120);
+                bool ok = ImGui::InputInt("Linea", &ir_linea, 1, 10, ImGuiInputTextFlags_EnterReturnsTrue);
+                if (ImGui::Button("Ir", ImVec2(120, 0)) || ok) { code_ir_a(doc_sel, ir_linea); ImGui::CloseCurrentPopup(); }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancelar", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+
             ImGui::End();
         }
 

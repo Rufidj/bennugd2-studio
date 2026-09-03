@@ -966,6 +966,15 @@ void TextEditor::Render()
 			{
 				auto focused = ImGui::IsWindowFocused();
 
+				// Donde ha quedado el cursor EN PANTALLA. Quien dibuja encima del
+				// editor (el desplegable del autocompletado) lo necesita, y aqui
+				// es el unico sitio donde se sabe: depende del scroll, del ancho
+				// de cada caracter y de las tabulaciones. Se apunta siempre, no
+				// solo cuando toca pintarlo, que el cursor parpadea.
+				mCursorScreenPos = ImVec2(lineStartScreenPos.x + mTextStart +
+				                          TextDistanceToLineStart(mState.mCursorPosition),
+				                          lineStartScreenPos.y + mCharAdvance.y);
+
 				// Highlight the current line (where the cursor is)
 				if (!HasSelection())
 				{

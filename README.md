@@ -20,9 +20,51 @@ renderiza contra el mismo contexto OpenGL: lo que ves en el editor es lo que cor
 - **Jugador** controlable (char controller, WASD/salto/nado) con **animaciones** automáticas.
 - **Enganchar objetos a huesos** (arma en la mano).
 - **Visor de animaciones** (doble clic en un modelo): previsualiza cada clip y su índice.
-- **Editor de scripts** por objeto con resaltado de sintaxis.
+- **Editor de código** completo: varios ficheros en pestañas, árbol de `Scripts/`,
+  esquema de `PROCESS`/`FUNCTION`, buscar y reemplazar, ir a la línea,
+  autocompletado y compilar marcando la línea del error.
+- **Código tuyo enganchado a cualquier objeto**: eliges el `.prg` y de él sale la
+  lista de procesos; se llaman al empezar, cada frame o al acercarte y pulsar.
 - **Sistema de proyectos** `.bgd2` (carpeta con Assets/Scenes/Scripts) y **generación del juego**
   (`main.prg`) que compila y ejecuta con BennuGD2.
+
+## Editor de código y código propio en los objetos
+
+Pulsa `Editar script` en un objeto (o **Archivo → Abrir main.prg**) y se abre el
+**editor de código** a pantalla completa:
+
+- **Pestañas**: varios ficheros abiertos a la vez, con aviso de los que tienen
+  cambios sin guardar.
+- **Árbol de `Scripts/`** con nuevo, renombrar, duplicar y borrar; y `main.prg`.
+- **Esquema** del fichero: sus `PROCESS` y `FUNCTION`; clic y salta a la línea.
+- **Buscar y reemplazar** (`Ctrl+F`, `Ctrl+H`, `F3`), **ir a la línea** (`Ctrl+G`),
+  deshacer/rehacer, tamaño del texto, tabulación y ver espacios.
+- **Autocompletado** (mientras escribes) con las palabras clave de BennuGD2, la API
+  del motor y los procesos de tus propios ficheros.
+- **Compilar** (`F5`): pasa `bgdc` por el fichero y **marca la línea del error** en el
+  margen, con la lista de errores debajo para saltar a cada uno.
+
+### Asignar código a un objeto o a un personaje
+
+En el Inspector de un objeto 3D (sección **Código**) y en las acciones de un
+personaje 2D, el código propio se elige **de dos listas**: el fichero `.prg` de
+`Scripts/` y, de él, el `PROCESS` o la `FUNCTION`. Nada de teclear el nombre a
+ciegas. `Nuevo` crea el esqueleto (en ese fichero, o en uno nuevo) y lo abre;
+`Editar` salta a su línea.
+
+Un objeto puede llamar a tu código **al empezar** (una vez), **cada frame**, o
+**al acercarse y pulsar** una tecla o un botón del mando, con la distancia que le
+pongas — un cofre, una puerta, una palanca. Sale en su `PROCESS`, como código
+BennuGD2 normal:
+
+```
+    IF ((key(_E) OR joy_getbutton(JOY_BUTTON_A)) AND obj_acc[0] == 0)
+        IF ((jug_x - x) * (jug_x - x) + (jug_z - z) * (jug_z - z) < 6.250)
+            abrir_cofre();
+        END
+    END
+    obj_acc[0] = (key(_E) OR joy_getbutton(JOY_BUTTON_A));
+```
 
 ## HUD 2D (gráficos y textos de BennuGD2)
 

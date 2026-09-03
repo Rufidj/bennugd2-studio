@@ -192,6 +192,9 @@ public:
 	void SetPalette(const Palette& aValue);
 
 	void SetErrorMarkers(const ErrorMarkers& aMarkers) { mErrorMarkers = aMarkers; }
+
+	// Posicion en pantalla del cursor tras el ultimo Render (para dibujar encima).
+	ImVec2 GetCursorScreenPos() const { return mCursorScreenPos; }
 	void SetBreakpoints(const Breakpoints& aMarkers) { mBreakpoints = aMarkers; }
 
 	void Render(const char* aTitle, const ImVec2& aSize = ImVec2(), bool aBorder = false);
@@ -379,6 +382,7 @@ private:
 
 	bool mCheckComments;
 	Breakpoints mBreakpoints;
+	ImVec2 mCursorScreenPos = ImVec2(0, 0);
 	ErrorMarkers mErrorMarkers;
 	ImVec2 mCharAdvance;
 	Coordinates mInteractiveStart, mInteractiveEnd;

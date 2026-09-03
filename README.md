@@ -35,8 +35,28 @@ renderiza contra el mismo contexto OpenGL: lo que ves en el editor es lo que cor
   `.prg`, enseña un texto o quita la cosa de la escena.
 - **Variables del juego** (puntos, vida, llaves) como `GLOBAL`: las cambian las reglas,
   las pinta el HUD 2D y las ve tu código.
+- **Música y sonido**: música por escena (con entrada suave), ambiente por zona pintada,
+  sonido propio de un objeto (más fuerte de cerca) y sonidos como acción de una regla.
 - **Sistema de proyectos** `.bgd2` (carpeta con Assets/Scenes/Scripts) y **generación del juego**
   (`main.prg`) que compila y ejecuta con BennuGD2.
+
+## Música y sonido
+
+Los ficheros van en **`Assets/Music`** y **`Assets/Sounds`** (las crea el editor).
+También se leen los que ya tengas sueltos en `Assets/`, así que no hay que mover
+nada. Música: `ogg`, `mp3`, `mod`, `xm`, `it`, `s3m`, `mid`, `flac`, `wav`.
+Sonidos: `wav`, `ogg`, `flac`.
+
+- **Música de la escena** (panel *Entorno → Sonido*): fichero, volumen, bucle y
+  segundos de entrada. Una por escena, porque SDL_mixer sólo toca una a la vez.
+- **Ambiente por zona**: un sonido en bucle mientras el jugador está dentro de una
+  zona pintada — lluvia, bosque, cueva. Se abre y se cierra su canal al entrar y salir.
+- **Sonido propio de un objeto** (Inspector → *Su sonido*): en bucle y **más fuerte
+  cuanto más cerca estás**, con su radio. Una cascada, una hoguera, una máquina.
+- **Sonar un sonido** como acción de cualquier regla: el golpe, la moneda, el daño.
+
+Cada fichero se carga una sola vez en su `GLOBAL` (`snd_coin`, `musica`), aunque lo
+usen diez reglas, y `main.prg` gana `import "libmod_sound"` si le faltaba.
 
 ## Reglas: si pasa esto, haz esto
 

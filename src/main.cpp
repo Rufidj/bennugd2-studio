@@ -63,6 +63,32 @@ static int trozos(const char* txt, std::string* out, int n) {
     return np;
 }
 
+/* La musica y los sonidos del proyecto. Van en Assets/Music y Assets/Sounds
+   (como Assets, Scenes y Scripts, en ingles), pero se mira TAMBIEN la raiz de
+   Assets: quien ya los tenia sueltos ahi no tiene que mover nada. Los nombres
+   salen relativos a Assets ("Music/tema.ogg"), que es como los pide el juego. */
+static void scan_sonoros(const std::string& assets, const char* sub,
+                         std::initializer_list<const char*> exts,
+                         std::vector<std::string>& out) {
+    out.clear();
+    std::error_code ec;
+    for (auto& e : fs::directory_iterator(assets + "/" + sub, ec)) {
+        if (!e.is_regular_file(ec)) continue;
+        auto ext = e.path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        for (auto x : exts) if (ext == x) {
+            out.push_back(std::string(sub) + "/" + e.path().filename().string()); break;
+        }
+    }
+    for (auto& e : fs::directory_iterator(assets, ec)) {
+        if (!e.is_regular_file(ec)) continue;
+        auto ext = e.path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        for (auto x : exts) if (ext == x) { out.push_back(e.path().filename().string()); break; }
+    }
+    std::sort(out.begin(), out.end());
+}
+
 static std::vector<std::string> scan_textures(const std::string& dir) {
     return scan_dir(dir, { ".png", ".jpg", ".jpeg", ".tga", ".bmp" });
 }
@@ -413,6 +439,17 @@ int main(int, char**) {
     // texturas del proyecto (para pintar el terreno) -- NO hardcodeadas
     std::string tex_dir = project_dir + "/Assets";
     struct PaintTex { std::string file; void* tex; };
+    /* ---- SONIDO ----
+       La musica de la escena (ambiente) y los sonidos que usan las reglas y los
+       objetos. La musica es UNA por escena: SDL_mixer solo toca una a la vez. */
+    std::vector<std::string> musicas, sonidos;
+    std::string esc_musica;            // fichero (relativo a Assets), vacio = sin musica
+    int   esc_mus_vol  = 90;           // 0..128
+    int   esc_mus_loop = 1;
+    float esc_mus_fade = 1.0f;         // segundos de entrada (0 = de golpe)
+    struct ZonaSonido { int zona = 0; std::string sonido; int vol = 90; };
+    std::vector<ZonaSonido> zsonidos;  // ambiente mientras el jugador esta en la zona
+
     std::vector<PaintTex> paints;
     for (auto& f : scan_textures(tex_dir)) paints.push_back({ f, nullptr });   // carga perezosa
     int paint_sel = paints.empty() ? -1 : 0;
@@ -1137,10 +1174,12 @@ int main(int, char**) {
        Objetos 3D y personajes 2D llevan la misma lista: el disparador y las
        acciones son los mismos, y asi hay UN generador y UNA ficha, no dos. */
     struct Accion {
-        int tipo = 0;      // 0 tu PROCESS, 1 variable, 2 destruir esto, 3 mostrar un texto
+        int tipo = 0;      // 0 tu PROCESS, 1 variable, 2 destruir esto, 3 mostrar un texto,
+                           // 4 sonar un sonido
         std::string archivo, proc;                        // 0
         std::string var; int op = 1; float valor = 1.0f;  // 1  (op: 0 poner, 1 sumar, 2 restar)
         std::string texto; float seg = 2.0f;              // 3
+        std::string sonido; int vol = 100;                // 4  (volumen 0..128)
     };
     struct Regla {
         int evento = 0;    // 0 al empezar, 1 cada frame, 2 acercarse y pulsar,
@@ -1187,6 +1226,10 @@ int main(int, char**) {
         float att_scale = 1.0f;
         float att_yaw = 0.0f;            // giro extra (grados)
         int   zone_layer = -1;          // capa de zona que bloquea a este objeto (-1 = ninguna)
+        // sonido propio: se oye mas fuerte cuanto mas cerca estas (cascada, fuego)
+        std::string amb_sonido;
+        float amb_radio = 20.0f;
+        int   amb_vol = 100;            // 0..128 pegado a el
     };
     std::vector<SObj> objects;
     int obj_sel = -1;
@@ -1896,6 +1939,13 @@ int main(int, char**) {
     std::string scenes_dir = project_dir + "/Scenes";
     std::string scripts_dir = project_dir + "/Scripts";
     { std::error_code ec; fs::create_directories(scripts_dir, ec); }
+    // Y las de sonido, al arrancar (luego apply_project las rehace por proyecto).
+    { std::error_code ec;
+      fs::create_directories(assets_dir + "/Music", ec);
+      fs::create_directories(assets_dir + "/Sounds", ec);
+      scan_sonoros(assets_dir, "Music",  { ".ogg", ".mp3", ".mod", ".xm", ".it", ".s3m",
+                                           ".mid", ".midi", ".flac", ".wav" }, musicas);
+      scan_sonoros(assets_dir, "Sounds", { ".wav", ".ogg", ".flac" }, sonidos); }
     std::string scene_path = scenes_dir + "/level.scene";   // escena actual
     std::string status;
 
@@ -2203,6 +2253,17 @@ int main(int, char**) {
             ImGui::EndCombo();
         }
     };
+    auto combo_sonido = [&](const char* et, std::string& dest) {
+        const char* cur = dest.empty() ? "(ninguno)" : dest.c_str();
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
+        if (ImGui::BeginCombo(et, cur)) {
+            if (ImGui::Selectable("(ninguno)", dest.empty())) dest.clear();
+            for (auto& sn : sonidos)
+                if (ImGui::Selectable(sn.c_str(), sn == dest)) dest = sn;
+            if (sonidos.empty()) ImGui::TextDisabled("(pon ficheros en Assets/Sounds)");
+            ImGui::EndCombo();
+        }
+    };
     auto ui_reglas = [&](std::vector<Regla>& rs, const std::string& quien) {
         int borrar = -1;
         for (int k = 0; k < (int)rs.size(); k++) {
@@ -2259,9 +2320,10 @@ int main(int, char**) {
                 Accion& a = r.acciones[q];
                 ImGui::PushID(1000 + q);
                 const char* tt[] = { "Llamar a codigo mio", "Cambiar una variable",
-                                     "Quitar esto de la escena", "Ensenar un texto" };
+                                     "Quitar esto de la escena", "Ensenar un texto",
+                                     "Sonar un sonido" };
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
-                ImGui::Combo("que", &a.tipo, tt, 4);
+                ImGui::Combo("que", &a.tipo, tt, 5);
                 ImGui::SameLine();
                 if (ImGui::SmallButton("x")) quitar = q;
                 if (a.tipo == 0) {
@@ -2274,6 +2336,9 @@ int main(int, char**) {
                     ImGui::SetNextItemWidth(100); ImGui::DragFloat("cuanto", &a.valor, 1.0f, -100000.0f, 100000.0f, "%.0f");
                 } else if (a.tipo == 2) {
                     ImGui::TextDisabled("  desaparece y su proceso termina");
+                } else if (a.tipo == 4) {
+                    combo_sonido("sonido", a.sonido);
+                    ImGui::SliderInt("volumen", &a.vol, 0, 128);
                 } else {
                     char tb[192]; snprintf(tb, sizeof(tb), "%s", a.texto.c_str());
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
@@ -2571,6 +2636,12 @@ int main(int, char**) {
        de main.prg, un hueco por regla, numerados SIEMPRE igual: primero los
        objetos en su orden y luego los personajes. Asi el numero sale el mismo
        generando el juego y editando el script de uno solo. */
+    /* El nombre de la GLOBAL donde vive un sonido cargado. Tiene que salir igual
+       en el sitio que lo carga y en el que lo hace sonar. */
+    auto var_sonido = [](const std::string& fichero) {
+        std::string base = fs::path(fichero).stem().string();
+        return "snd_" + ident_bgd(base, "s");
+    };
     auto total_reglas_obj = [&]() {
         int n = 0; for (auto& q : objects) n += (int)q.reglas.size(); return n;
     };
@@ -2588,6 +2659,41 @@ int main(int, char**) {
         int n = total_reglas_obj();
         for (auto& q : sprites) n += (int)q.reglas.size();
         return n;
+    };
+
+    /* ---- El sonido propio de un objeto, en codigo ----
+       Una cascada o una hoguera suenan mas fuerte cuanto mas cerca estas. El canal
+       se guarda en amb_ch[] (un hueco por objeto con sonido): se abre al entrar en
+       el radio y se cierra al salir, que si no cada frame arrancaria una copia.
+       Sin variables PRIVATE: las tres plantillas de objeto tienen bloques
+       distintos, y las GLOBAL valen para todas. */
+    auto amb_codigo = [&](const SObj& o, int slot) -> std::string {
+        if (o.amb_sonido.empty() || slot < 0) return std::string();
+        float r = o.amb_radio > 0.5f ? o.amb_radio : 0.5f;
+        char b[1200];
+        snprintf(b, sizeof(b),
+            "        // ---- su sonido: se oye mas de cerca ----\n"
+            "        IF ((jug_x - x) * (jug_x - x) + (jug_z - z) * (jug_z - z) < %.3f)\n"
+            "            IF (amb_ch[%d] < 0) amb_ch[%d] = sound_play(%s, -1); END   // -1 = en bucle\n"
+            "            channel_set_volume(amb_ch[%d], %d - %d * sqrt((jug_x - x) * (jug_x - x) + (jug_z - z) * (jug_z - z)) / %.3f);\n"
+            "        ELSE\n"
+            "            IF (amb_ch[%d] >= 0)  sound_stop(amb_ch[%d]);  amb_ch[%d] = -1;  END\n"
+            "        END\n",
+            r * r, slot, slot, var_sonido(o.amb_sonido).c_str(),
+            slot, o.amb_vol, o.amb_vol, r, slot, slot, slot);
+        return b;
+    };
+    // El hueco de amb_ch[] de cada objeto con sonido (y cuantos hay).
+    auto slot_amb = [&](const SObj& o) -> int {
+        int n = 0;
+        for (auto& q : objects) {
+            if (&q == &o) return q.amb_sonido.empty() ? -1 : n;
+            if (!q.amb_sonido.empty()) n++;
+        }
+        return -1;
+    };
+    auto total_amb = [&]() {
+        int n = 0; for (auto& q : objects) if (!q.amb_sonido.empty()) n++; return n;
     };
 
     /* ---- Las reglas, en codigo BennuGD2 ----
@@ -2624,6 +2730,12 @@ int main(int, char**) {
                         if (cuerpo) { q += tab; q += "g3d_rigidbody_destroy(cuerpo);\n"; }
                         q += tab; q += "RETURN;   // este proceso se acaba aqui\n";
                         out += q; continue;
+                    } else if (a.tipo == 4) {
+                        if (a.sonido.empty()) continue;
+                        // El sonido se carga UNA vez al montar la escena; aqui solo
+                        // se toca. sound_play devuelve el canal, que no hace falta.
+                        snprintf(l, sizeof(l), "%ssound_play(%s, 0);\n",
+                                 tab, var_sonido(a.sonido).c_str());
                     } else {
                         // El texto vive en una GLOBAL que pinta escena_aviso con
                         // write_var: no hace falta crear y borrar el write.
@@ -2753,6 +2865,7 @@ int main(int, char**) {
         std::string acc_ini, acc_loop;
         reglas_codigo(o.reglas, base_reglas_obj(o),
                       (o.phys >= 1 && o.phys <= 4) ? 1 : 0, 0, acc_ini, acc_loop);
+        acc_loop += amb_codigo(o, slot_amb(o));
 
         // ---------------- OBJETO ENGANCHADO A UN HUESO (arma en la mano) ----------------
         // Sigue un hueso del personaje. Es un proceso nativo: cada frame lee donde
@@ -3224,6 +3337,12 @@ int main(int, char**) {
         fputs("# escena del editor BennuGD2\n", f);
         for (auto& v : gvars)
             fprintf(f, "GAMEVAR %s|%d\n", v.nombre.c_str(), v.valor);
+        // ---- sonido de la escena ----
+        if (!esc_musica.empty())
+            fprintf(f, "MUSICA %d|%d|%.2f|%s\n", esc_mus_vol, esc_mus_loop, esc_mus_fade,
+                    esc_musica.c_str());
+        for (auto& z : zsonidos)
+            fprintf(f, "ZSONIDO %d|%d|%s\n", z.zona, z.vol, z.sonido.c_str());
         fprintf(f, "WATER %d %.4f %.4f %.4f %.4f %.4f %.3f %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f %.4f %.4f %.2f %.4f %.4f %.4f\n",
                 water_on ? 1 : 0, water_level, w_amp, w_len, w_speed, w_swell,
                 w_deep[0], w_deep[1], w_deep[2], w_shallow[0], w_shallow[1], w_shallow[2],
@@ -3282,6 +3401,8 @@ int main(int, char**) {
                         o.attach_to, o.att_off[0], o.att_off[1], o.att_off[2],
                         o.att_scale, o.att_yaw, o.attach_bone.c_str());
             fputs("\n", f);
+            if (!o.amb_sonido.empty())
+                fprintf(f, "OBJAMB %.3f|%d|%s\n", o.amb_radio, o.amb_vol, o.amb_sonido.c_str());
             // Sus reglas, detras de su linea: una REGLA y las ACCIONES que cuelgan
             // de ella. Van por | porque los nombres y los textos llevan de todo.
             for (auto& r : o.reglas) {
@@ -3289,9 +3410,10 @@ int main(int, char**) {
                         r.evento, r.radio, r.tecla.c_str(), r.boton.c_str(), r.zona,
                         r.var.c_str(), r.cmp, r.valor, r.cada, r.una_vez, r.mientras);
                 for (auto& a : r.acciones)
-                    fprintf(f, "OBJRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s\n",
+                    fprintf(f, "OBJRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d\n",
                             a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
-                            a.op, a.valor, a.seg, a.texto.c_str());
+                            a.op, a.valor, a.seg, a.texto.c_str(),
+                            a.sonido.c_str(), a.vol);
             }
         }
         // ---- SPRITES 2D del mundo (hojas de sprites) ----
@@ -3335,9 +3457,10 @@ int main(int, char**) {
                             r.evento, r.radio, r.tecla.c_str(), r.boton.c_str(), r.zona,
                             r.var.c_str(), r.cmp, r.valor, r.cada, r.una_vez, r.mientras);
                     for (auto& a : r.acciones)
-                        fprintf(f, "SPRRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s\n",
+                        fprintf(f, "SPRRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d\n",
                                 a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
-                                a.op, a.valor, a.seg, a.texto.c_str());
+                                a.op, a.valor, a.seg, a.texto.c_str(),
+                                a.sonido.c_str(), a.vol);
                 }
                 for (auto& ac : sp.acciones)
                     fprintf(f, "SPRACCION %d|%d|%s|%s|%s|%s|%s|%s\n",
@@ -3388,6 +3511,7 @@ int main(int, char**) {
         for (auto& sp : sprites) if (sp.entity >= 0) g3d_sprite_destroy(sp.entity);
         sprites.clear(); spr_sel = -1; spr_follow = -1;
         gvars.clear();
+        esc_musica.clear(); zsonidos.clear();
         lakes.clear(); rivers.clear(); river_draft.clear(); waterfalls.clear();
         wsources.clear();   // los de la escena anterior no son de esta
         // terreno primero: las cuevas/objetos se apoyan en su altura
@@ -3500,7 +3624,7 @@ int main(int, char**) {
                         continue;
                     }
                     if (!strncmp(line, "SPRRACC ", 8) && !sp.reglas.empty()) {
-                        std::string p[8]; trozos(line + 8, p, 8);
+                        std::string p[10]; trozos(line + 8, p, 10);
                         Accion a;
                         a.tipo    = atoi(p[0].c_str());
                         a.archivo = p[1]; a.proc = p[2]; a.var = p[3];
@@ -3508,6 +3632,8 @@ int main(int, char**) {
                         a.valor   = (float)atof(p[5].c_str());
                         a.seg     = (float)atof(p[6].c_str());
                         a.texto   = p[7];
+                        a.sonido  = p[8];
+                        if (!p[9].empty()) a.vol = atoi(p[9].c_str());
                         sp.reglas.back().acciones.push_back(a);
                         continue;
                     }
@@ -3756,8 +3882,32 @@ int main(int, char**) {
                 objects.back().reglas.push_back(r);
                 continue;
             }
+            if (!strncmp(line, "OBJAMB ", 7) && !objects.empty()) {
+                std::string p[3]; trozos(line + 7, p, 3);
+                objects.back().amb_radio  = (float)atof(p[0].c_str());
+                objects.back().amb_vol    = atoi(p[1].c_str());
+                objects.back().amb_sonido = p[2];
+                continue;
+            }
+            if (!strncmp(line, "MUSICA ", 7)) {
+                std::string p[4]; trozos(line + 7, p, 4);
+                esc_mus_vol  = atoi(p[0].c_str());
+                esc_mus_loop = atoi(p[1].c_str());
+                esc_mus_fade = (float)atof(p[2].c_str());
+                esc_musica   = p[3];
+                continue;
+            }
+            if (!strncmp(line, "ZSONIDO ", 8)) {
+                std::string p[3]; trozos(line + 8, p, 3);
+                ZonaSonido z;
+                z.zona = atoi(p[0].c_str());
+                z.vol  = atoi(p[1].c_str());
+                z.sonido = p[2];
+                if (!z.sonido.empty()) zsonidos.push_back(z);
+                continue;
+            }
             if (!strncmp(line, "OBJRACC ", 8) && !objects.empty() && !objects.back().reglas.empty()) {
-                std::string p[8]; trozos(line + 8, p, 8);
+                std::string p[10]; trozos(line + 8, p, 10);
                 Accion a;
                 a.tipo    = atoi(p[0].c_str());
                 a.archivo = p[1]; a.proc = p[2]; a.var = p[3];
@@ -3765,6 +3915,8 @@ int main(int, char**) {
                 a.valor   = (float)atof(p[5].c_str());
                 a.seg     = (float)atof(p[6].c_str());
                 a.texto   = p[7];
+                a.sonido  = p[8];
+                if (!p[9].empty()) a.vol = atoi(p[9].c_str());
                 objects.back().reglas.back().acciones.push_back(a);
                 continue;
             }
@@ -3798,8 +3950,13 @@ int main(int, char**) {
         fs::create_directories(assets_dir, ec);
         fs::create_directories(scenes_dir, ec);
         fs::create_directories(scripts_dir, ec);
+        fs::create_directories(assets_dir + "/Music", ec);
+        fs::create_directories(assets_dir + "/Sounds", ec);
         // re-escanea contenidos del proyecto
         assets = scan_assets(assets_dir);
+        scan_sonoros(assets_dir, "Music",  { ".ogg", ".mp3", ".mod", ".xm", ".it", ".s3m",
+                                             ".mid", ".midi", ".flac", ".wav" }, musicas);
+        scan_sonoros(assets_dir, "Sounds", { ".wav", ".ogg", ".flac" }, sonidos);
         paints.clear();
         for (auto& fpng : scan_textures(tex_dir)) paints.push_back({ fpng, nullptr });
         paint_sel = paints.empty() ? -1 : 0;
@@ -3883,7 +4040,8 @@ int main(int, char**) {
             "// Lo de fuera del bloque del editor es TUYO; el editor no lo toca.\n"
             "// El bloque marcado lleva los objetos y el escenario, y se rehace al\n"
             "// generar el juego. Escribe tu logica en PROCESS main, mas abajo.\n\n"
-            "import \"libmod_gfx\"; import \"libmod_misc\"; import \"libmod_input\"; import \"libmod_3d\";\n\n")
+            "import \"libmod_gfx\"; import \"libmod_misc\"; import \"libmod_input\";\n"
+            "import \"libmod_sound\"; import \"libmod_3d\";\n\n")
             + MK_BEGIN + "\n"
             + body
             + MK_END + "\n\n"
@@ -3913,6 +4071,18 @@ int main(int, char**) {
         std::string out;
         size_t a = cur.find(MK_BEGIN), z = cur.find(MK_END);
         if (!cur.empty() && a != std::string::npos && z != std::string::npos && z > a) {
+            /* Los import viven en TU mitad del fichero, la que el editor no toca.
+               Pero si la escena tiene sonido y ahi no esta libmod_sound, el juego
+               no compila; asi que esa linea si se anade, avisando. Es lo unico que
+               se toca de tu parte, y solo cuando hace falta. */
+            if (cur.find("libmod_sound") == std::string::npos) {
+                size_t imp = cur.find("import \"libmod_3d\"");
+                if (imp != std::string::npos) {
+                    cur.insert(imp, "import \"libmod_sound\"; ");
+                    a = cur.find(MK_BEGIN); z = cur.find(MK_END);
+                    console_add("Anadido import \"libmod_sound\" a main.prg (lo pide el sonido).\n");
+                }
+            }
             out = cur.substr(0, a) + MK_BEGIN + "\n" + body + cur.substr(z);
         } else {
             if (!cur.empty()) {
@@ -4009,6 +4179,21 @@ int main(int, char**) {
            encima del codigo que lo usa, y de aqui para abajo lo usan los NPC (para
            saber si te has acercado) y los objetos con acciones. Y va fuera del
            "si hay sprites": un objeto 3D con una accion tambien lo necesita. */
+        /* ---- todos los sonidos que hace falta cargar ----
+           Cada fichero se carga UNA vez en su GLOBAL, aunque lo usen diez reglas.
+           El orden sale de un set: asi la lista es siempre la misma. */
+        std::set<std::string> sonidos_usados;
+        for (auto& o : objects) {
+            if (!o.amb_sonido.empty()) sonidos_usados.insert(o.amb_sonido);
+            for (auto& r : o.reglas) for (auto& a : r.acciones)
+                if (a.tipo == 4 && !a.sonido.empty()) sonidos_usados.insert(a.sonido);
+        }
+        for (auto& sp : sprites)
+            for (auto& r : sp.reglas) for (auto& a : r.acciones)
+                if (a.tipo == 4 && !a.sonido.empty()) sonidos_usados.insert(a.sonido);
+        for (auto& z : zsonidos) if (!z.sonido.empty()) sonidos_usados.insert(z.sonido);
+        int n_amb = total_amb();
+
         int nreglas = total_reglas();
         bool hay_aviso = false;   // alguna regla ensenia un texto en pantalla
         for (auto& o : objects) for (auto& r : o.reglas) for (auto& a : r.acciones) if (a.tipo == 3) hay_aviso = true;
@@ -4043,8 +4228,41 @@ int main(int, char**) {
             }
             if (hay_aviso)
                 g += "    string aviso_txt; float aviso_t;   // el texto que ensenian las reglas\n";
+            // ---- sonido ----
+            if (!esc_musica.empty()) g += "    int musica;              // la musica de la escena\n";
+            for (auto& sn : sonidos_usados)
+                g += "    int " + var_sonido(sn) + ";" + std::string(14 > (int)var_sonido(sn).size() ? 14 - (int)var_sonido(sn).size() : 1, ' ')
+                   + "// " + sn + "\n";
+            if (n_amb > 0)
+                g += "    int amb_ch[" + std::to_string(n_amb) + "];         // canal del sonido de cada objeto (-1 = callado)\n";
+            if (!zsonidos.empty())
+                g += "    int zamb_ch[" + std::to_string((int)zsonidos.size()) + "];        // canal del ambiente de cada zona\n";
             if (!g.empty()) { fputs("GLOBAL\n", f); fputs(g.c_str(), f); fputs("END\n\n", f); }
         }
+        /* El ambiente de las zonas pintadas: suena mientras el jugador esta dentro.
+           Un canal por zona, que se abre al entrar y se cierra al salir. */
+        if (!zsonidos.empty()) {
+            fputs("// Ambiente de las zonas pintadas (lluvia, bosque, cueva).\n"
+                  "PROCESS escena_ambiente()\n"
+                  "BEGIN\n"
+                  "    LOOP\n", f);
+            for (int i = 0; i < (int)zsonidos.size(); i++) {
+                if (zsonidos[i].sonido.empty()) continue;
+                fprintf(f,
+                  "        IF (g3d_zone_blocked(jug_x, jug_z, %d))\n"
+                  "            IF (zamb_ch[%d] < 0)\n"
+                  "                zamb_ch[%d] = sound_play(%s, -1);\n"
+                  "                channel_set_volume(zamb_ch[%d], %d);\n"
+                  "            END\n"
+                  "        ELSE\n"
+                  "            IF (zamb_ch[%d] >= 0)  sound_stop(zamb_ch[%d]);  zamb_ch[%d] = -1;  END\n"
+                  "        END\n",
+                  zsonidos[i].zona, i, i, var_sonido(zsonidos[i].sonido).c_str(),
+                  i, zsonidos[i].vol, i, i, i);
+            }
+            fputs("        FRAME;\n    END\nEND\n\n", f);
+        }
+
         /* El cartelito de las reglas: un solo write_var pintando una GLOBAL, que
            se vacia cuando se acaba su tiempo. Sin crear y borrar writes. */
         if (hay_aviso)
@@ -5402,6 +5620,33 @@ int main(int, char**) {
         fputs("    escena_camara(camera);\n", f);
         if (hay_aviso)
             fputs("    escena_aviso();   // el cartelito de las reglas\n", f);
+
+        /* ---- SONIDO: cargar y arrancar ----
+           Los ficheros se cargan aqui, una vez, y su GLOBAL la usan las reglas,
+           los objetos y las zonas. Los canales empiezan callados (-1). */
+        if (!sonidos_usados.empty() || !esc_musica.empty()) {
+            fputs("    // ---- sonido ----\n", f);
+            for (auto& sn : sonidos_usados)
+                fprintf(f, "    %s = sound_load(\"Assets/%s\");\n",
+                        var_sonido(sn).c_str(), sn.c_str());
+            for (int i = 0; i < n_amb; i++)
+                fprintf(f, "    amb_ch[%d] = -1;\n", i);
+            for (int i = 0; i < (int)zsonidos.size(); i++)
+                fprintf(f, "    zamb_ch[%d] = -1;\n", i);
+            if (!zsonidos.empty())
+                fputs("    escena_ambiente();   // ambientes de las zonas pintadas\n", f);
+            if (!esc_musica.empty()) {
+                fprintf(f, "    musica = music_load(\"Assets/%s\");\n", esc_musica.c_str());
+                fputs("    IF (musica > 0)\n", f);
+                fprintf(f, "        music_set_volume(%d);\n", esc_mus_vol);
+                if (esc_mus_fade > 0.05f)
+                    fprintf(f, "        music_fade_in(musica, %d, %d);   // entra en %.1f s\n",
+                            esc_mus_loop ? -1 : 0, (int)(esc_mus_fade * 1000.0f), esc_mus_fade);
+                else
+                    fprintf(f, "        music_play(musica, %d);\n", esc_mus_loop ? -1 : 0);
+                fputs("    END\n", f);
+            }
+        }
         // El HUD va al final del montaje: primero los recursos (map/fpg/fnt) y
         // luego sus procesos, que ya encuentran cargado lo que van a dibujar.
         if (!spr_load.empty() || !spr_launch.empty()) {
@@ -8474,6 +8719,57 @@ int main(int, char**) {
         // --- Panel: Entorno (agua / mar / lago) ---
         ImGui::Begin("Entorno");
         ImGui::TextDisabled("Terreno y agua auto: menu 'Terreno' (arriba).");
+
+        /* ---- SONIDO de la escena ----
+           La musica de fondo (una por escena: SDL_mixer solo toca una a la vez) y
+           los ambientes que suenan mientras el jugador esta dentro de una zona
+           pintada -- lluvia, bosque, cueva. Los golpes y los sonidos de una
+           cascada concreta van por otro lado: en las reglas y en el objeto. */
+        if (ImGui::CollapsingHeader(ICON_FA_MUSIC "  Sonido")) {
+            auto combo_fichero = [&](const char* et, std::string& dest,
+                                     const std::vector<std::string>& lista) {
+                const char* cur = dest.empty() ? "(ninguno)" : dest.c_str();
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
+                if (ImGui::BeginCombo(et, cur)) {
+                    if (ImGui::Selectable("(ninguno)", dest.empty())) dest.clear();
+                    for (auto& m : lista)
+                        if (ImGui::Selectable(m.c_str(), m == dest)) dest = m;
+                    ImGui::EndCombo();
+                }
+            };
+            ImGui::SeparatorText("Musica de esta escena");
+            combo_fichero("musica", esc_musica, musicas);
+            if (musicas.empty())
+                ImGui::TextDisabled("Pon los ficheros en Assets/Music (ogg, mp3, mod, xm...)");
+            if (!esc_musica.empty()) {
+                ImGui::SliderInt("Volumen", &esc_mus_vol, 0, 128);
+                bool lp = esc_mus_loop != 0;
+                if (ImGui::Checkbox("En bucle", &lp)) esc_mus_loop = lp ? 1 : 0;
+                ImGui::SliderFloat("Entra (s)", &esc_mus_fade, 0.0f, 8.0f, "%.1f");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("0 = arranca de golpe. Con un par de segundos\nentra sola y no pega un salto al empezar.");
+            }
+            ImGui::SeparatorText("Ambiente por zona");
+            ImGui::TextWrapped("Suena mientras el jugador esta dentro de la zona pintada.");
+            int quitar = -1;
+            for (int i = 0; i < (int)zsonidos.size(); i++) {
+                ImGui::PushID(3000 + i);
+                const char* zz[] = { "Capa 0", "Capa 1", "Capa 2", "Capa 3" };
+                ImGui::SetNextItemWidth(110);
+                ImGui::Combo("zona", &zsonidos[i].zona, zz, 4);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Quitar")) quitar = i;
+                combo_fichero("sonido", zsonidos[i].sonido, sonidos);
+                ImGui::SliderInt("volumen", &zsonidos[i].vol, 0, 128);
+                ImGui::Separator();
+                ImGui::PopID();
+            }
+            if (quitar >= 0) zsonidos.erase(zsonidos.begin() + quitar);
+            if (ImGui::Button(ICON_FA_PLUS "  Anadir ambiente de zona", ImVec2(-1, 0)))
+                zsonidos.push_back(ZonaSonido());
+            if (sonidos.empty())
+                ImGui::TextDisabled("Pon los ficheros en Assets/Sounds (wav, ogg).");
+        }
         ImGui::SeparatorText(ICON_FA_WATER "  Agua (mar global)");
         ImGui::Checkbox("Activar agua (mar/lago)", &water_on);
         ImGui::BeginDisabled(!water_on);
@@ -9158,6 +9454,15 @@ int main(int, char**) {
                 ui_reglas(o.reglas, o.name);
                 if (!o.reglas.empty())
                     ImGui::TextDisabled("Salen en el script del objeto; si lo has editado a mano,\nregeneralo abajo para que entren.");
+
+                ImGui::SeparatorText("Su sonido");
+                combo_sonido("sonido propio", o.amb_sonido);
+                if (!o.amb_sonido.empty()) {
+                    ImGui::DragFloat("Se oye a", &o.amb_radio, 0.5f, 1.0f, 300.0f, "%.0f");
+                    ImGui::SliderInt("Volumen pegado a el", &o.amb_vol, 0, 128);
+                    ImGui::TextDisabled("En bucle, mas fuerte cuanto mas cerca: una cascada,\nuna hoguera, una maquina.");
+                } else
+                    ImGui::TextDisabled("Suena en bucle mientras el jugador este cerca.");
 
                 ImGui::SeparatorText("Script del objeto");
                 ImGui::TextDisabled("Scripts/%s.prg", o.name.c_str());
@@ -9995,7 +10300,8 @@ int main(int, char**) {
                     FILE* f2 = fopen(tmp.c_str(), "w");
                     if (f2) {
                         fputs("import \"libmod_gfx\";\nimport \"libmod_misc\";\n"
-                              "import \"libmod_input\";\nimport \"libmod_3d\";\n", f2);
+                              "import \"libmod_input\";\nimport \"libmod_sound\";\n"
+                              "import \"libmod_3d\";\n", f2);
                         fprintf(f2, "#include \"%s\"\n", d->ruta.c_str());
                         fputs("PROCESS main()\nBEGIN\nEND\n", f2);
                         fclose(f2);

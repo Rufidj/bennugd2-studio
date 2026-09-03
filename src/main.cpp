@@ -305,6 +305,7 @@ extern "C" {
     int   g3d_scatter_add(const char *asset, float x, float y, float z, float yaw, float scale);
     int   g3d_scatter_build(float wind);
     int   g3d_scatter_count(void);
+    int   g3d_instances_free_slots(void);
     int   g3d_scatter_kinds(void);
     const char *g3d_scatter_kind_asset(int kind);
     int   g3d_scatter_kind_count(int kind);
@@ -523,6 +524,14 @@ int main(int, char**) {
     // Plataformas de perfil: la profundidad se bloquea a proposito y solo se anda
     // por el eje de la pantalla. Sin esto el personaje se va al fondo y se pierde.
     bool  cam_25d = false;
+    /* Tercera persona: que la camara la gire EL JUGADOR mientras juega, en vez de
+       estar clavada en un angulo. El angulo pasa a ser una GLOBAL del juego
+       (escena_orbita), y de ella salen tanto el brazo de la camara como los
+       controles: si girase la camara y los controles siguieran atados al angulo
+       de antes, la D dejaria de llevar a la derecha de la pantalla. */
+    int   cam_girable = 0;        // 0 = angulo fijo, 1 = la gira el jugador
+    int   cam_gira_con = 0;       // 0 = raton, 1 = teclas, 2 = stick derecho
+    float cam_gira_vel = 120.0f;  // grados por segundo (teclas y mando)
     // FPS: cuanto se adelanta la camara respecto al centro del personaje. Sin esto
     // queda DENTRO del modelo y se ven las caras interiores de la cabeza y el
     // torso. Adelantada lo justo, se siguen viendo los brazos y las piernas.
@@ -2751,6 +2760,54 @@ int main(int, char**) {
         return n;
     };
 
+    /* ---- Girar la camara: lo que se mete en el proceso del jugador ----
+       Escribe escena_orbita, que es de donde salen el brazo de la camara y los
+       controles. Con teclas y mando el giro es por segundo (por eso escena_dt);
+       con el raton, por pixel movido. */
+    auto girar_camara_codigo = [&]() -> std::string {
+        if (!cam_girable || cam_mode != 1) return std::string();
+        char b[900];
+        if (cam_gira_con == 0) {
+            snprintf(b, sizeof(b),
+                "        // ---------- GIRAR LA CAMARA (raton) ----------\n"
+                "        g3d_mouse_update();\n"
+                "        escena_orbita = escena_orbita - g3d_mouse_dx() * %.3f;\n",
+                cam_sens);
+        } else if (cam_gira_con == 1) {
+            snprintf(b, sizeof(b),
+                "        // ---------- GIRAR LA CAMARA (teclas Q y E) ----------\n"
+                "        IF (key(_Q)) escena_orbita = escena_orbita - %.1f * escena_dt; END\n"
+                "        IF (key(_E)) escena_orbita = escena_orbita + %.1f * escena_dt; END\n",
+                cam_gira_vel * 1000.0f, cam_gira_vel * 1000.0f);
+        } else {
+            snprintf(b, sizeof(b),
+                "        // ---------- GIRAR LA CAMARA (stick derecho) ----------\n"
+                "        // el eje viene de -100 a 100; la zona muerta evita la deriva\n"
+                "        IF (joy_getaxis(JOY_AXIS_RIGHTX) > 20 OR joy_getaxis(JOY_AXIS_RIGHTX) < -20)\n"
+                "            escena_orbita = escena_orbita + joy_getaxis(JOY_AXIS_RIGHTX) / 100.0 * %.1f * escena_dt;\n"
+                "        END\n",
+                cam_gira_vel * 1000.0f);
+        }
+        return b;
+    };
+    // Los controles del jugador, atados a la camara. Si la camara se puede girar,
+    // el angulo se lee en marcha; si no, se hornean el seno y el coseno.
+    auto ejes_camara_codigo = [&](const char* tab) -> std::string {
+        char b[700];
+        if (cam_girable && cam_mode == 1) {
+            snprintf(b, sizeof(b),
+                "%swx = adel * (0.0 - sin(escena_orbita)) + lat * (0.0 - cos(escena_orbita));\n"
+                "%swz = adel * cos(escena_orbita) + lat * (0.0 - sin(escena_orbita));\n", tab, tab);
+        } else {
+            float ob = cam_orbit * 0.0174533f;
+            snprintf(b, sizeof(b),
+                "%swx = adel * %.4f + lat * %.4f;\n"
+                "%swz = adel * %.4f + lat * %.4f;\n",
+                tab, -sinf(ob), -cosf(ob), tab, cosf(ob), -sinf(ob));
+        }
+        return b;
+    };
+
     /* ---- El sonido propio de un objeto, en codigo ----
        Una cascada o una hoguera suenan mas fuerte cuanto mas cerca estas. El canal
        se guarda en amb_ch[] (un hueco por objeto con sonido): se abre al entrar en
@@ -3091,6 +3148,9 @@ int main(int, char**) {
                 float fx = -sinf(ob), fz =  cosf(ob);   // hacia donde mira la camara
                 float rx = -cosf(ob), rz = -sinf(ob);   // la derecha de la PANTALLA
                 char mv[1400];
+                // girar la camara va ANTES de leer los controles: si no, el paso de
+                // este frame usaria el angulo del anterior y se notaria el retraso.
+                s += girar_camara_codigo();
                 if (cam_mode == 1 && cam_25d) {
                     snprintf(mv, sizeof(mv),
                 "        // ---------- CONTROLES (2.5D: solo izquierda y derecha) ----------\n"
@@ -3113,9 +3173,8 @@ int main(int, char**) {
                 "        IF (key(_S) OR key(_DOWN))  adel = adel - 1.0; END\n"
                 "        IF (key(_D) OR key(_RIGHT)) lat  = lat  + 1.0; END\n"
                 "        IF (key(_A) OR key(_LEFT))  lat  = lat  - 1.0; END\n"
-                "        wx = adel * %.4f + lat * %.4f;\n"
-                "        wz = adel * %.4f + lat * %.4f;\n",
-                        cam_orbit, fx, rx, fz, rz);
+                "%s",
+                        cam_orbit, ejes_camara_codigo("        ").c_str());
                 } else {
                     snprintf(mv, sizeof(mv),
                 "        // ---------- CONTROLES ----------\n"
@@ -3446,10 +3505,11 @@ int main(int, char**) {
         fprintf(f, "FLOWCFG %.4f %.4f %.1f\n", ws_evap, ws_rate, ws_prefill);
         fprintf(f, "SUN %d %.2f %.2f %.3f %.2f %.2f\n",
                 sun_cycle ? 1 : 0, sun_day_sec, sun_hour, sun_intensity, sun_azim, sun_elev);
-        fprintf(f, "CAMERA %d %d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %d %.2f %d\n",
+        fprintf(f, "CAMERA %d %d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %d %.2f %d %d %d %.1f\n",
                 cam_mode, cam_follow, cam_pos[0], cam_pos[1], cam_pos[2],
                 cam_look[0], cam_look[1], cam_look[2], gcam_dist, cam_height, cam_fwd, cam_sens,
-                shadow_res, cam_orbit, cam_25d ? 1 : 0);
+                shadow_res, cam_orbit, cam_25d ? 1 : 0,
+                cam_girable, cam_gira_con, cam_gira_vel);
         auto fprint_fx = [&](const WaterFX& x) {
             fprintf(f, " FX %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %d",
                     x.amp, x.len, x.speed, x.deep[0], x.deep[1], x.deep[2],
@@ -3882,14 +3942,17 @@ int main(int, char**) {
             int cm, cfol, sres = 2048; float px,py,pz, lx,ly,lz, cd, ch, cf = 0.45f, cs = 120.0f;
             float corb = 0.0f;   // las escenas de antes van a la espalda, angulo 0
             int c25 = 0;
-            int nleidos = sscanf(line, "CAMERA %d %d %f %f %f %f %f %f %f %f %f %f %d %f %d",
-                       &cm, &cfol, &px,&py,&pz, &lx,&ly,&lz, &cd, &ch, &cf, &cs, &sres, &corb, &c25);
+            int cgir = 0, cgcon = 0; float cgvel = 120.0f;
+            int nleidos = sscanf(line, "CAMERA %d %d %f %f %f %f %f %f %f %f %f %f %d %f %d %d %d %f",
+                       &cm, &cfol, &px,&py,&pz, &lx,&ly,&lz, &cd, &ch, &cf, &cs, &sres, &corb, &c25,
+                       &cgir, &cgcon, &cgvel);
             if (nleidos >= 10) {   // las escenas de antes no traen el adelanto
                 cam_mode = cm; cam_follow = cfol;
                 cam_pos[0]=px; cam_pos[1]=py; cam_pos[2]=pz;
                 cam_look[0]=lx; cam_look[1]=ly; cam_look[2]=lz;
                 gcam_dist = cd; cam_height = ch; cam_fwd = cf; cam_sens = cs;
                 cam_orbit = corb; cam_25d = (c25 != 0);
+                cam_girable = cgir; cam_gira_con = cgcon; cam_gira_vel = cgvel;
                 shadow_res = sres; g3d_renderer_set_shadow_resolution((unsigned)shadow_res);
                 continue;
             }
@@ -4033,6 +4096,11 @@ int main(int, char**) {
     auto apply_project = [&](const std::string& dir, const std::string& pname) {
         project_dir = dir; project_name = pname;
         assets_dir  = dir + "/Assets";
+        /* El sembrado carga sus modelos relativos a ESTE directorio. Sin volver a
+           fijarlo, seguia buscandolos en el proyecto anterior: los assets con el
+           mismo nombre en los dos colaban, y los que solo estaban en el nuevo no
+           se cargaban -- sembrabas y no aparecia nada, sin un mensaje. */
+        g3d_scatter_set_base(project_dir.c_str());
         scenes_dir  = dir + "/Scenes";
         scripts_dir = dir + "/Scripts";
         tex_dir     = assets_dir;
@@ -4313,6 +4381,12 @@ int main(int, char**) {
                el cartelito la usan, y en BennuGD2 un GLOBAL tiene que estar por
                encima del codigo que lo lee -- incluidos los #include. */
             std::string g = "    float escena_dt;         // lo que dura un frame\n";
+            /* El angulo de la camara en tercera persona, cuando la gira el jugador.
+               De aqui salen el brazo de la camara Y los controles, que si no la D
+               dejaria de llevar a la derecha de la pantalla al girar. En milesimas
+               de grado, como todos los angulos de BennuGD2. */
+            if (cam_girable && cam_mode == 1)
+                g += "    float escena_orbita;     // hacia donde mira la camara (la gira el jugador)\n";
             if (hay_jug)
                 g += "    float jug_x; float jug_y; float jug_z;   // donde esta el jugador\n";
             // ---- las variables del juego ----
@@ -4652,7 +4726,8 @@ int main(int, char**) {
         {
             std::string cp =
                 "PROCESS escena_camara(int cam)\n"
-                "PRIVATE float tx; float ty; float tz; float dist; float libre;\nEND\n"
+                "PRIVATE float tx; float ty; float tz; float dist; float libre;\n"
+                "        float ax; float ay; float az; float alen;\nEND\n"
                 "BEGIN\n"
                 "    ctype = C_3D; csubtype = C3D_CAMERA;\n"
                 "    entity = cam;\n";
@@ -4680,7 +4755,28 @@ int main(int, char**) {
             cp += "    LOOP\n";
             if (follow) {
                 cp += "        g3d_entity_get_position(follow_ent, &tx, &ty, &tz);\n";
-                if (cam_mode == 1) {          // tercera persona
+                if (cam_mode == 1 && cam_girable) {
+                    /* Brazo GIRABLE: su direccion se recalcula cada frame desde
+                       escena_orbita, que mueve el jugador. Con el brazo baked (el
+                       caso de abajo) la camara se quedaba clavada en un angulo. */
+                    snprintf(b, sizeof(b),
+                        "        // el brazo gira con escena_orbita (lo mueve el jugador)\n"
+                        "        ax = sin(escena_orbita) * %.4f;\n"
+                        "        az = 0.0 - cos(escena_orbita) * %.4f;\n"
+                        "        ay = %.4f;\n"
+                        "        alen = sqrt(ax * ax + ay * ay + az * az);\n"
+                        "        IF (alen < 0.01) alen = 0.01; END\n"
+                        "        // se acorta si hay terreno o algo en medio\n"
+                        "        libre = g3d_camera_safe_distance(tx, ty + 1.0, tz,\n"
+                        "                                         ax, ay, az, alen, 0.6);\n"
+                        "        IF (libre < dist) dist = libre;\n"
+                        "        ELSE dist = dist + (libre - dist) * 0.08; END\n"
+                        "        x = tx + dist * ax / alen; y = ty + 1.0 + dist * ay / alen;\n"
+                        "        z = tz + dist * az / alen;\n"
+                        "        target_x = tx; target_y = ty + 1.0; target_z = tz;\n",
+                        gcam_dist, gcam_dist, cam_height - 1.0f);
+                    // (el bloque se pega mas abajo, con el de los demas modos)
+                } else if (cam_mode == 1) {          // tercera persona
                     /* Brazo de camara CON COLISION. Sin esto la camara se mete
                        dentro de una loma y el personaje desaparece: se ve el
                        interior del terreno. g3d_camera_safe_distance acorta el
@@ -4943,6 +5039,8 @@ int main(int, char**) {
                     fputs(spr_regla_ini.c_str(), f);
                     fputs("\n    LOOP\n"
                           "        prevx = g3d_char_x(ch); prevz = g3d_char_z(ch);\n", f);
+                    // girar la camara antes de leer los controles, que salen de su angulo
+                    fputs(girar_camara_codigo().c_str(), f);
                     fprintf(f,
                           "        // ---------- CONTROLES (las teclas del editor, respecto a la camara) ----------\n"
                           "        adel = 0.0; lat = 0.0;\n"
@@ -4963,10 +5061,7 @@ int main(int, char**) {
                               "            IF (joy_getbutton(JOY_BUTTON_DPAD_RIGHT)) lat  = lat  + 1.0; END\n"
                               "            IF (joy_getbutton(JOY_BUTTON_DPAD_LEFT))  lat  = lat  - 1.0; END\n"
                               "        END\n", f);
-                    fprintf(f,
-                          "        wx = adel * %.4f + lat * %.4f;\n"
-                          "        wz = adel * %.4f + lat * %.4f;\n",
-                          fxk, rxk, fzk, rzk);
+                    fputs(ejes_camara_codigo("        ").c_str(), f);
                     {
                         std::string correr = "key(" + sp.k_run + ")";
                         if (!sp.b_run.empty()) correr += " OR joy_getbutton(" + sp.b_run + ")";
@@ -7252,7 +7347,29 @@ int main(int, char**) {
                                             (rand() / (float)RAND_MAX) * 360.0f, sc);
                             placed++;
                         }
-                        if (placed) g3d_scatter_build(1.0f);
+                        if (placed) {
+                            g3d_scatter_build(1.0f);
+                            /* Sembrar y no ver nada era mudo: el modelo puede no
+                               cargarse, o el fondo de grupos puede estar lleno. Si
+                               esta especie se queda sin grupos, se dice. */
+                            int gr = -1;
+                            for (int k = 0; k < g3d_scatter_kinds(); k++) {
+                                const char* na = g3d_scatter_kind_asset(k);
+                                if (na && asset == na) { gr = g3d_scatter_kind_groups(k); break; }
+                            }
+                            if (gr == 0) {
+                                status = "No se ve: " + asset + " no ha dado ninguna malla";
+                                console_add("SIEMBRA: '" + asset + "' no ha dado ninguna malla.\n"
+                                            "  Puede que el fichero no este en Assets de ESTE proyecto,\n"
+                                            "  o que no queden huecos de instancias libres (quedan " +
+                                            std::to_string(g3d_instances_free_slots()) + ").\n");
+                            } else if (g3d_instances_free_slots() < 16) {
+                                console_add("SIEMBRA: quedan solo " +
+                                            std::to_string(g3d_instances_free_slots()) +
+                                            " huecos de instancias; con menos, las especies nuevas\n"
+                                            "  dejaran de aparecer. Quita alguna especie del sembrado.\n");
+                            }
+                        }
                     }
                 }
             } else if (tool == T_VERTEX && terrain) {
@@ -8994,6 +9111,26 @@ int main(int, char**) {
                        del mundo, de perfil la D llevaba al personaje hacia el fondo.
                        Esto ata los controles a la pantalla y, ademas, bloquea la
                        profundidad, que es lo que hace que sea un plataformas. */
+                    {   // girar la camara mientras se juega
+                        bool gir = cam_girable != 0;
+                        if (ImGui::Checkbox("El jugador puede girar la camara", &gir))
+                            cam_girable = gir ? 1 : 0;
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("El angulo de arriba pasa a ser el INICIAL, y en el juego\n"
+                                              "se gira. Los controles giran con ella: la D siempre\n"
+                                              "lleva a la derecha de la pantalla.");
+                        if (cam_girable) {
+                            const char* cc[] = { "con el raton", "con las teclas Q y E",
+                                                 "con el stick derecho del mando" };
+                            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.72f);
+                            ImGui::Combo("Se gira", &cam_gira_con, cc, 3);
+                            if (cam_gira_con == 0)
+                                ImGui::SliderFloat("Sensibilidad", &cam_sens, 20.0f, 400.0f, "%.0f");
+                            else
+                                ImGui::SliderFloat("Grados por segundo", &cam_gira_vel, 20.0f, 540.0f, "%.0f");
+                            ImGui::TextDisabled("Ojo: entra en la plantilla del jugador al crearla.\nSi su script ya existe, regeneralo.");
+                        }
+                    }
                     ImGui::Checkbox("Plataformas 2.5D (bloquear profundidad)", &cam_25d);
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("Solo izquierda/derecha y salto: el personaje no puede\n"

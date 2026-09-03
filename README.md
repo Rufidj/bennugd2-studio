@@ -22,7 +22,9 @@ renderiza contra el mismo contexto OpenGL: lo que ves en el editor es lo que cor
   modelo y tiene botón **Ajustar al modelo**: un collider más pequeño que el dibujo
   es la otra razón de "lo atraviesa".
 - **Muros invisibles** y **zonas de barrera pintables por capas** (qué objeto pasa y cuál no).
-- **Jugador** controlable (char controller, WASD/salto/nado) con **animaciones** automáticas.
+- **Jugador** controlable (char controller, WASD/salto/nado) con **animaciones** automáticas,
+  y **cámara girable** en tercera persona (ratón, teclas Q/E o stick derecho): los
+  controles giran con ella, así que la D siempre lleva a la derecha de la pantalla.
 - **Enganchar objetos a huesos** (arma en la mano).
 - **Visor de animaciones** (doble clic en un modelo): previsualiza cada clip y su índice.
 - **Editor de código** completo: varios ficheros en pestañas, árbol de `Scripts/`,

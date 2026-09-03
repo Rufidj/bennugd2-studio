@@ -18,6 +18,9 @@ renderiza contra el mismo contexto OpenGL: lo que ves en el editor es lo que cor
 - **Física (Jolt)** por objeto: caja/esfera/cápsula/cilindro, masa, rebote, fricción, flotación.
   Elige si el cuerpo es **fijo** (corta el paso: rocas, muros, barcos) o **se puede
   empujar** — un cuerpo ligero el personaje lo aparta, y eso parece "no choca".
+  La colisión **se dibuja en la escena** con el objeto elegido, nace del tamaño del
+  modelo y tiene botón **Ajustar al modelo**: un collider más pequeño que el dibujo
+  es la otra razón de "lo atraviesa".
 - **Muros invisibles** y **zonas de barrera pintables por capas** (qué objeto pasa y cuál no).
 - **Jugador** controlable (char controller, WASD/salto/nado) con **animaciones** automáticas.
 - **Enganchar objetos a huesos** (arma en la mano).

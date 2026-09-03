@@ -2472,6 +2472,27 @@ int main(int, char**) {
         }
     };
 
+    /* El tamanio de colision que le pega al modelo.
+       El cuerpo que se genera es un cubo (o una esfera) de medio lado `csize`, y
+       venia siempre a 1.0: en una roca de cinco unidades eso es una bolita
+       enterrada en la base, y el personaje se metia dentro del dibujo como si no
+       chocara. Se saca de la caja del modelo, a lo ancho, que es lo que corta el
+       paso; con un tope para que algo muy plano y muy ancho no levante un muro
+       invisible por encima. */
+    auto csize_del_modelo = [&](const SObj& o) -> float {
+        void* m = load_model(o.asset);
+        float mn[3], mx[3];
+        if (!m || !g3d_model_bounds(m, mn, mx)) return o.csize;
+        float sc = o.scale > 0.001f ? o.scale : 1.0f;
+        float ex = (mx[0] - mn[0]) * 0.5f * sc;
+        float ey = (mx[1] - mn[1]) * 0.5f * sc;
+        float ez = (mx[2] - mn[2]) * 0.5f * sc;
+        float c = ex > ez ? ex : ez;
+        if (c > ey * 1.5f) c = ey * 1.5f;      // tope: no levantar torres invisibles
+        if (c < 0.1f) c = 0.1f; if (c > 50.0f) c = 50.0f;
+        return c;
+    };
+
     auto object_script_template = [&](const SObj& o) -> std::string {
         char b[4096];
         std::string acc_ini, acc_loop;
@@ -5750,6 +5771,7 @@ int main(int, char**) {
                                      "_" + std::to_string((int)objects.size());
                             o.entity = drag_ent;
                             o.x = hit[0]; o.y = hit[1]; o.z = hit[2]; o.ry = 0; o.scale = 1;
+                            o.csize = csize_del_modelo(o);   // la colision, del tamanio del modelo
                             objects.push_back(o); obj_sel = (int)objects.size() - 1;
                             drag_ent = -1; drag_asset = -1;
                         }
@@ -5981,6 +6003,63 @@ int main(int, char**) {
                 ImVec2 st;
                 if(okp&&proj(ct,st)) dl->AddLine(sp,st,IM_COL32(255,120,120,180),1.5f);
                 if(okp){ dl->AddCircleFilled(sp,5.0f,col); dl->AddText(ImVec2(sp.x+7,sp.y-8),col,"CAM"); }
+            }
+        }
+
+        /* ---- La COLISION del objeto elegido, dibujada ----
+           El cuerpo que se genera es un cubo (o una esfera) de medio lado "tamanio
+           colision", y sin verlo no habia forma de saber que se quedaba corto: el
+           personaje se mete dentro del dibujo y parece que la fisica no va. */
+        if (!playing && obj_sel >= 0 && obj_sel < (int)objects.size()) {
+            const SObj& oc = objects[obj_sel];
+            if (oc.phys >= 1) {
+                float c = oc.csize > 0.05f ? oc.csize : 0.5f;
+                auto pw = [&](float wx, float wy, float wz, ImVec2& out) -> bool {
+                    float p2[2];
+                    if (!g3d_editor_world_to_screen(wx, wy, wz, (float)vp.w, (float)vp.h, p2)) return false;
+                    out = ImVec2(img_min.x + p2[0], img_min.y + p2[1]);
+                    return true;
+                };
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                ImU32 col = (oc.phys == 5) ? IM_COL32(255, 170, 80, 200)
+                                           : IM_COL32(120, 235, 150, 210);
+                if (oc.phys == 1 || oc.phys == 5) {
+                    // caja (y el muro invisible, que es una caja alta)
+                    float y0 = (oc.phys == 5) ? oc.y - 5.0f : oc.y;
+                    float y1 = (oc.phys == 5) ? oc.y + 30.0f : oc.y + 2.0f * c;
+                    float px4[4] = { oc.x - c, oc.x + c, oc.x + c, oc.x - c };
+                    float pz4[4] = { oc.z - c, oc.z - c, oc.z + c, oc.z + c };
+                    ImVec2 a[4], b[4]; bool oa[4], ob[4];
+                    for (int k = 0; k < 4; k++) {
+                        oa[k] = pw(px4[k], y0, pz4[k], a[k]);
+                        ob[k] = pw(px4[k], y1, pz4[k], b[k]);
+                    }
+                    for (int k = 0; k < 4; k++) {
+                        int n = (k + 1) % 4;
+                        if (oa[k] && oa[n]) dl->AddLine(a[k], a[n], col, 2.0f);
+                        if (ob[k] && ob[n]) dl->AddLine(b[k], b[n], col, 2.0f);
+                        if (oa[k] && ob[k]) dl->AddLine(a[k], b[k], col, 2.0f);
+                    }
+                } else {
+                    // esfera, capsula y cilindro: dos anillos, uno tumbado y otro de pie
+                    float cy = oc.y + c;
+                    const int N = 28;
+                    ImVec2 pr, p0; bool hr = false, h0 = false;
+                    for (int pl = 0; pl < 2; pl++) {
+                        hr = false;
+                        for (int k = 0; k <= N; k++) {
+                            float t = 6.2831853f * (float)k / (float)N;
+                            float wx, wy, wz;
+                            if (pl == 0) { wx = oc.x + cosf(t) * c; wy = cy;                wz = oc.z + sinf(t) * c; }
+                            else         { wx = oc.x + cosf(t) * c; wy = cy + sinf(t) * c;  wz = oc.z; }
+                            ImVec2 q; bool ok = pw(wx, wy, wz, q);
+                            if (ok && hr) dl->AddLine(pr, q, col, 2.0f);
+                            if (k == 0) { p0 = q; h0 = ok; }
+                            pr = q; hr = ok;
+                        }
+                        (void)p0; (void)h0;
+                    }
+                }
             }
         }
 
@@ -6763,6 +6842,7 @@ int main(int, char**) {
                             o.name = assets[asset_sel].substr(0, assets[asset_sel].find('.')) +
                                      "_" + std::to_string((int)objects.size());
                             o.entity = e; o.x = hit[0]; o.y = hit[1]; o.z = hit[2]; o.ry = 0; o.scale = 1;
+                            o.csize = csize_del_modelo(o);   // la colision, del tamanio del modelo
                             objects.push_back(o); obj_sel = (int)objects.size() - 1; spr_sel = -1;
                         }
                     } else {                                         // SELECCIONAR
@@ -8755,6 +8835,17 @@ int main(int, char**) {
                     if (!fijo)
                         ImGui::DragFloat("Masa / peso", &o.mass, 0.1f, 0.01f, 1000.0f, "%.2f kg");
                     ImGui::DragFloat("Tamano colision", &o.csize, 0.05f, 0.1f, 50.0f, "%.2f");
+                    if (ImGui::Button("Ajustar al modelo", ImVec2(-1, 0)))
+                        o.csize = csize_del_modelo(o);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Pone la colision del tamanio que tiene el modelo.\nMientras este objeto este elegido, la colision se\ndibuja en la escena para que se vea si cuadra.");
+                    {   // Aviso cuando la colision se queda corta: es lo que hace
+                        // que el personaje se meta dentro del dibujo "sin chocar".
+                        float ideal = csize_del_modelo(o);
+                        if (o.csize < ideal * 0.6f)
+                            ImGui::TextColored(ImVec4(1, 0.55f, 0.45f, 1),
+                                "La colision (%.2f) es mucho menor que el modelo (~%.2f):\nse puede meter dentro del dibujo.", o.csize, ideal);
+                    }
                     if (o.mass <= 0.0f) {
                         // Decorado solido: barcos, rocas, cajones que no se empujan.
                         ImGui::TextColored(ImVec4(0.4f,0.9f,0.4f,1), "FIJO: choca con todo pero nada lo mueve");

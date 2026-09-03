@@ -2819,9 +2819,10 @@ int main(int, char**) {
         } else {
             snprintf(b, sizeof(b),
                 "        // ---------- GIRAR LA CAMARA (stick derecho) ----------\n"
-                "        // el eje viene de -100 a 100; la zona muerta evita la deriva\n"
-                "        IF (joy_getaxis(JOY_AXIS_RIGHTX) > 20 OR joy_getaxis(JOY_AXIS_RIGHTX) < -20)\n"
-                "            escena_orbita = escena_orbita + joy_getaxis(JOY_AXIS_RIGHTX) / 100.0 * %.1f * escena_dt;\n"
+                "        // El eje va de -32767 a 32767. La zona muerta (un cuarto) evita\n"
+                "        // que la camara derive sola con el stick en reposo.\n"
+                "        IF (joy_getaxis(JOY_AXIS_RIGHTX) > 8000 OR joy_getaxis(JOY_AXIS_RIGHTX) < -8000)\n"
+                "            escena_orbita = escena_orbita + joy_getaxis(JOY_AXIS_RIGHTX) / 32000.0 * %.1f * escena_dt;\n"
                 "        END\n",
                 cam_gira_vel * 1000.0f);
         }
@@ -6104,7 +6105,11 @@ int main(int, char**) {
             fputs("// Arranca el juego por su escena inicial.\n"
                   "FUNCTION escena_iniciar()\n"
                   "BEGIN\n"
-                  "    escena_actual = -1; escena_pedida = -1;\n", f);
+                  "    escena_actual = -1; escena_pedida = -1;\n"
+                  "    /* El mando hay que ELEGIRLO: BennuGD2 arranca sin ninguno puesto\n"
+                  "       (-1) y hasta que no se elige, joy_getbutton() y joy_getaxis()\n"
+                  "       devuelven 0 siempre -- el mando parecia no funcionar. */\n"
+                  "    IF (joy_numjoysticks() > 0) joy_select(0); END\n", f);
             if (hay_aviso_juego) fputs("    escena_aviso();   // el cartelito de las reglas\n", f);
             fprintf(f, "    escena_cargar(%d);\n"
                        "    escena_gestor();   // atiende los cambios de escena\n"

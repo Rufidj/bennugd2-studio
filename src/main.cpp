@@ -1112,6 +1112,7 @@ int main(int, char**) {
     };
 
     bool show_gvars = false;               // ventana de variables del juego
+    bool show_escenas = false;             // ventana de escenas del proyecto
     bool show_script = false;              // el editor de script se abre a pantalla completa
     bool ask_regen = false;                // pedir confirmacion para regenerar un script
     std::string regen_obj;                 // objeto cuyo script se va a regenerar
@@ -1226,6 +1227,7 @@ int main(int, char**) {
         std::string var; int op = 1; float valor = 1.0f;  // 1  (op: 0 poner, 1 sumar, 2 restar)
         std::string texto; float seg = 2.0f;              // 3
         std::string sonido; int vol = 100;                // 4  (volumen 0..128)
+        std::string escena;                               // 5  (fichero .scene destino)
     };
     struct Regla {
         int evento = 0;    // 0 al empezar, 1 cada frame, 2 acercarse y pulsar,
@@ -1992,7 +1994,30 @@ int main(int, char**) {
       scan_sonoros(assets_dir, "Music",  { ".ogg", ".mp3", ".mod", ".xm", ".it", ".s3m",
                                            ".mid", ".midi", ".flac", ".wav" }, musicas);
       scan_sonoros(assets_dir, "Sounds", { ".wav", ".ogg", ".flac" }, sonidos); }
+    /* Las escenas del proyecto, en el mismo orden que las numera la generacion:
+       alfabetico. El numero tiene que salir igual aqui (que es donde se elige la
+       escena de destino) y alli (que es donde se escribe el codigo). */
+    auto escenas_del_proyecto = [&]() {
+        std::vector<std::string> out;
+        std::error_code ec;
+        for (auto& e : fs::directory_iterator(scenes_dir, ec)) {
+            if (!e.is_regular_file(ec)) continue;
+            if (e.path().extension() != ".scene") continue;
+            out.push_back(e.path().filename().string());
+        }
+        std::sort(out.begin(), out.end());
+        return out;
+    };
+    auto indice_escena = [&](const std::string& fichero) -> int {
+        auto l = escenas_del_proyecto();
+        for (size_t i = 0; i < l.size(); i++) if (l[i] == fichero) return (int)i;
+        return -1;
+    };
+
     std::string scene_path = scenes_dir + "/level.scene";   // escena actual
+    // La escena por la que empieza el juego (relativa al proyecto). Es la que dice
+    // el manifiesto .bgd2; las demas se llegan cambiando de escena desde una regla.
+    std::string escena_inicial = "Scenes/level.scene";
     std::string status;
 
     // ================== editor de codigo: abrir, guardar, saltar ==================
@@ -2420,9 +2445,9 @@ int main(int, char**) {
                 ImGui::PushID(1000 + q);
                 const char* tt[] = { "Llamar a codigo mio", "Cambiar una variable",
                                      "Quitar esto de la escena", "Ensenar un texto",
-                                     "Sonar un sonido" };
+                                     "Sonar un sonido", "Ir a otra escena" };
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
-                ImGui::Combo("que", &a.tipo, tt, 5);
+                ImGui::Combo("que", &a.tipo, tt, 6);
                 ImGui::SameLine();
                 if (ImGui::SmallButton("x")) quitar = q;
                 if (a.tipo == 0) {
@@ -2438,6 +2463,18 @@ int main(int, char**) {
                 } else if (a.tipo == 4) {
                     combo_sonido("sonido", a.sonido);
                     ImGui::SliderInt("volumen", &a.vol, 0, 128);
+                } else if (a.tipo == 5) {
+                    const char* cur = a.escena.empty() ? "(elige una)" : a.escena.c_str();
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.7f);
+                    if (ImGui::BeginCombo("escena", cur)) {
+                        for (auto& e : escenas_del_proyecto())
+                            if (ImGui::Selectable(e.c_str(), e == a.escena)) a.escena = e;
+                        ImGui::EndCombo();
+                    }
+                    if (!a.escena.empty() && indice_escena(a.escena) < 0)
+                        ImGui::TextColored(ImVec4(1, 0.6f, 0.4f, 1), "  Esa escena ya no esta.");
+                    else
+                        ImGui::TextDisabled("  Se desmonta esta y se monta la otra.");
                 } else {
                     char tb[192]; snprintf(tb, sizeof(tb), "%s", a.texto.c_str());
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
@@ -2877,6 +2914,14 @@ int main(int, char**) {
                         if (cuerpo) { q += tab; q += "g3d_rigidbody_destroy(cuerpo);\n"; }
                         q += tab; q += "RETURN;   // este proceso se acaba aqui\n";
                         out += q; continue;
+                    } else if (a.tipo == 5) {
+                        int ne = indice_escena(a.escena);
+                        if (ne < 0) continue;
+                        /* No se cambia aqui mismo: quien pide el cambio es un objeto
+                           de la escena que se va, y se moriria a media faena. Se deja
+                           pedido y lo hace escena_gestor. */
+                        snprintf(l, sizeof(l), "%sescena_pedida = %d;   // ir a %s\n",
+                                 tab, ne, a.escena.c_str());
                     } else if (a.tipo == 4) {
                         if (a.sonido.empty()) continue;
                         // El sonido se carga UNA vez al montar la escena; aqui solo
@@ -3068,9 +3113,14 @@ int main(int, char**) {
                 "// ===== JUGADOR '" + o.name + "' =====\n"
                 "// Creado por el editor con los controles dentro: a partir de aqui es TUYO.\n"
                 "// Cambia las teclas, la velocidad o anade lo que quieras (doble salto, dash...).\n"
-                "//   id     = la entidad de este objeto en la escena\n"
+                "//   ent    = la entidad de este objeto en la escena\n"
                 "//   modelo = su modelo, necesario para las animaciones\n"
-                "PROCESS " + o.name + "(int id, int modelo)\n"
+                /* El parametro NO puede llamarse 'id': en BennuGD2 'id' es el
+                   identificador del propio proceso. Al pisarlo con el numero de la
+                   entidad, cualquier cosa que preguntara por este proceso se volvia
+                   loca -- signal(TYPE ...) se llamaba a si misma sin fin y tumbaba
+                   el juego al cambiar de escena. */
+                "PROCESS " + o.name + "(int ent, int modelo)\n"
                 "PRIVATE\n"
                 "    int ch; int gnd; int inw; int moja;\n"
                 "    float wx; float wz; float wl; float spd; float t; float facing; float wlev;\n"
@@ -3082,7 +3132,7 @@ int main(int, char**) {
                 "    // escena_iniciar (para que la camara pueda seguirla) y aqui se ata a\n"
                 "    // la var nativa 'entity'; el motor la dibuja desde x/y/z/angle_y solo.\n"
                 "    ctype = C_3D; csubtype = C3D_ENTITY;\n"
-                "    entity = id;\n";
+                "    entity = ent;\n";
             { char sz[96]; snprintf(sz, sizeof(sz),
                 "    size = %.3f;   // escala en %% (100 = 1.0)\n", o.scale * 100.0f);
               s += sz; }
@@ -3472,7 +3522,7 @@ int main(int, char**) {
                 const SObj* po = nullptr;
                 for (auto& o : objects) if (o.name == objname) { po = &o; break; }
                 plantilla = po ? object_script_template(*po)
-                               : ("PROCESS " + objname + "(int id)\nBEGIN\n    LOOP\n        FRAME;\n    END\nEND\n");
+                               : ("PROCESS " + objname + "(int ent)\nBEGIN\n    LOOP\n        FRAME;\n    END\nEND\n");
             }
         }
         int i = code_abrir(sp, objname + ".prg", objname,
@@ -3484,8 +3534,7 @@ int main(int, char**) {
         FILE* f = fopen(path.c_str(), "w");
         if (!f) { status = "ERROR guardando escena"; return; }
         fputs("# escena del editor BennuGD2\n", f);
-        for (auto& v : gvars)
-            fprintf(f, "GAMEVAR %s|%d\n", v.nombre.c_str(), v.valor);
+        // (las variables del juego van en el .bgd2 del proyecto, no aqui)
         // ---- sonido de la escena ----
         if (!esc_musica.empty())
             fprintf(f, "MUSICA %d|%d|%.2f|%s\n", esc_mus_vol, esc_mus_loop, esc_mus_fade,
@@ -3560,10 +3609,10 @@ int main(int, char**) {
                         r.evento, r.radio, r.tecla.c_str(), r.boton.c_str(), r.zona,
                         r.var.c_str(), r.cmp, r.valor, r.cada, r.una_vez, r.mientras);
                 for (auto& a : r.acciones)
-                    fprintf(f, "OBJRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d\n",
+                    fprintf(f, "OBJRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s\n",
                             a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
                             a.op, a.valor, a.seg, a.texto.c_str(),
-                            a.sonido.c_str(), a.vol);
+                            a.sonido.c_str(), a.vol, a.escena.c_str());
             }
         }
         // ---- SPRITES 2D del mundo (hojas de sprites) ----
@@ -3607,10 +3656,10 @@ int main(int, char**) {
                             r.evento, r.radio, r.tecla.c_str(), r.boton.c_str(), r.zona,
                             r.var.c_str(), r.cmp, r.valor, r.cada, r.una_vez, r.mientras);
                     for (auto& a : r.acciones)
-                        fprintf(f, "SPRRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d\n",
+                        fprintf(f, "SPRRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s\n",
                                 a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
                                 a.op, a.valor, a.seg, a.texto.c_str(),
-                                a.sonido.c_str(), a.vol);
+                                a.sonido.c_str(), a.vol, a.escena.c_str());
                 }
                 for (auto& ac : sp.acciones)
                     fprintf(f, "SPRACCION %d|%d|%s|%s|%s|%s|%s|%s\n",
@@ -3660,7 +3709,6 @@ int main(int, char**) {
         hud.clear(); hud_sel = -1;   // el HUD tambien es de la escena
         for (auto& sp : sprites) if (sp.entity >= 0) g3d_sprite_destroy(sp.entity);
         sprites.clear(); spr_sel = -1; spr_follow = -1;
-        gvars.clear();
         esc_musica.clear(); zsonidos.clear();
         lakes.clear(); rivers.clear(); river_draft.clear(); waterfalls.clear();
         wsources.clear();   // los de la escena anterior no son de esta
@@ -3774,7 +3822,7 @@ int main(int, char**) {
                         continue;
                     }
                     if (!strncmp(line, "SPRRACC ", 8) && !sp.reglas.empty()) {
-                        std::string p[10]; trozos(line + 8, p, 10);
+                        std::string p[11]; trozos(line + 8, p, 11);
                         Accion a;
                         a.tipo    = atoi(p[0].c_str());
                         a.archivo = p[1]; a.proc = p[2]; a.var = p[3];
@@ -3784,6 +3832,7 @@ int main(int, char**) {
                         a.texto   = p[7];
                         a.sonido  = p[8];
                         if (!p[9].empty()) a.vol = atoi(p[9].c_str());
+                        a.escena  = p[10];
                         sp.reglas.back().acciones.push_back(a);
                         continue;
                     }
@@ -4060,7 +4109,7 @@ int main(int, char**) {
                 continue;
             }
             if (!strncmp(line, "OBJRACC ", 8) && !objects.empty() && !objects.back().reglas.empty()) {
-                std::string p[10]; trozos(line + 8, p, 10);
+                std::string p[11]; trozos(line + 8, p, 11);
                 Accion a;
                 a.tipo    = atoi(p[0].c_str());
                 a.archivo = p[1]; a.proc = p[2]; a.var = p[3];
@@ -4070,13 +4119,19 @@ int main(int, char**) {
                 a.texto   = p[7];
                 a.sonido  = p[8];
                 if (!p[9].empty()) a.vol = atoi(p[9].c_str());
+                a.escena  = p[10];
                 objects.back().reglas.back().acciones.push_back(a);
                 continue;
             }
             // Las variables del juego (puntos, vida...): van con la escena.
+            /* Las escenas de antes guardaban aqui las variables del juego. Ahora
+               son del proyecto, asi que se recogen pero sin repetir: la escena solo
+               aporta las que falten. */
             if (!strncmp(line, "GAMEVAR ", 8)) {
                 std::string p[2]; trozos(line + 8, p, 2);
-                if (!p[0].empty()) { GameVar v; v.nombre = p[0]; v.valor = atoi(p[1].c_str()); gvars.push_back(v); }
+                bool ya = false;
+                for (auto& v : gvars) if (v.nombre == p[0]) ya = true;
+                if (!p[0].empty() && !ya) { GameVar v; v.nombre = p[0]; v.valor = atoi(p[1].c_str()); gvars.push_back(v); }
                 continue;
             }
         }
@@ -4139,8 +4194,15 @@ int main(int, char**) {
         std::string bgd2 = project_dir + "/" + project_name + ".bgd2";
         FILE* f = fopen(bgd2.c_str(), "w");
         if (f) {
-            std::string rel = fs::path(scene_path).lexically_relative(project_dir).string();
+            /* La escena INICIAL es la del juego, no la que tengas abierta: con
+               varias escenas, editar la cueva no puede cambiar por donde empieza. */
+            std::string rel = escena_inicial;
+            if (rel.empty()) rel = fs::path(scene_path).lexically_relative(project_dir).string();
             fprintf(f, "BGD2PROJECT 1\nname=%s\nscene=%s\n", project_name.c_str(), rel.c_str());
+            /* Las variables del juego son del PROYECTO y no de una escena: los
+               puntos y la vida tienen que sobrevivir al cambiar de mapa. */
+            for (auto& v : gvars)
+                fprintf(f, "var=%s|%d\n", v.nombre.c_str(), v.valor);
             fclose(f);
         }
     };
@@ -4166,14 +4228,20 @@ int main(int, char**) {
         std::string scn;
         FILE* f = fopen(bgd2path.c_str(), "r");
         if (f) {
+            gvars.clear();
             char line[512];
             while (fgets(line, sizeof(line), f)) {
                 char buf[512];
                 if (sscanf(line, "scene=%511[^\n]", buf) == 1) scn = buf;
+                else if (!strncmp(line, "var=", 4)) {
+                    std::string p2[2]; trozos(line + 4, p2, 2);
+                    if (!p2[0].empty()) { GameVar v; v.nombre = p2[0]; v.valor = atoi(p2[1].c_str()); gvars.push_back(v); }
+                }
             }
             fclose(f);
         }
         if (!scn.empty()) {
+            escena_inicial = scn;          // por esta escena empieza el juego
             std::string sp = (fs::path(project_dir) / scn).string();
             if (fs::exists(sp)) { scene_path = sp; load_scene(sp); }
         }
@@ -4294,11 +4362,61 @@ int main(int, char**) {
         char* setup_buf = NULL; size_t setup_sz = 0;
         FILE* f = open_memstream(&setup_buf, &setup_sz);
         if (!f) { status = "ERROR preparando el escenario"; return; }
-        fputs("GLOBAL int scene; int camera; int light;\n"
-      "    float escena_pitch;   // hacia donde mira en vertical (FPS)\n"
-      "    float escena_yaw;     // hacia donde mira en horizontal (FPS)\n"
-      "END\n\n", f);
+
+        /* ---- lo que es del JUEGO y lo que es de UNA escena ----
+           Con varias escenas en el mismo main.prg, las GLOBAL no pueden salir una
+           vez por escena (estarian declaradas dos veces) y los procesos comunes
+           tampoco. Asi que las declaraciones se recogen aparte, sin repetir, y se
+           escriben todas juntas al principio; el cuerpo de cada escena va detras.
+           Las tablas que dependen del tamanio de la escena (las reglas, los
+           canales de sonido) se quedan con el maximo de todas. */
+        std::vector<std::string> glob_lin;
+        std::set<std::string>    glob_set;
+        auto add_global = [&](const std::string& bloque) {
+            size_t i = 0;
+            while (i < bloque.size()) {
+                size_t nl = bloque.find('\n', i);
+                std::string l = bloque.substr(i, (nl == std::string::npos ? bloque.size() : nl) - i);
+                if (!l.empty() && l != "GLOBAL" && l != "END" && glob_set.insert(l).second)
+                    glob_lin.push_back(l);
+                if (nl == std::string::npos) break;
+                i = nl + 1;
+            }
+        };
+        int max_reglas = 0, max_amb = 0, max_zamb = 0;
+        /* Procesos que son del JUEGO y no de una escena (el cartelito de las
+           reglas, el contador de FPS, el motor de fisica): se escriben una sola
+           vez aunque haya diez escenas. */
+        std::vector<std::string> proc_comun;
+        std::set<std::string>    proc_comun_set;
+        /* Los #include tambien son del juego: dos escenas pueden llamar al mismo
+           .prg tuyo, y incluirlo dos veces es "Process/function already defined". */
+        std::vector<std::string> includes;
+        std::set<std::string>    includes_set;
+        auto add_include = [&](const std::string& rel) {
+            if (includes_set.insert(rel).second)
+                includes.push_back("#include \"" + rel + "\"\n");
+        };
+        auto add_proc_comun = [&](const std::string& nombre, const std::string& texto) {
+            if (proc_comun_set.insert(nombre).second) proc_comun.push_back(texto);
+        };
+        add_global("int scene; int camera; int light;\n"
+                   "    float escena_pitch;   // hacia donde mira en vertical (FPS)\n"
+                   "    float escena_yaw;     // hacia donde mira en horizontal (FPS)\n");
         // ---- localizar el jugador y los objetos enganchados a su esqueleto ----
+
+        /* ---- el cuerpo de UNA escena ----
+           Todo lo de aqui dentro se genera una vez por escena, y sus procesos
+           llevan delante el nombre de la escena (pref) para no chocar entre
+           ellos: dos escenas tienen cada una su sol, su camara y su montaje. */
+        std::string pref = "escena";
+        /* Lo que lanza cada escena, para poder matarlo al cambiar a otra. Se apunta
+           segun se genera: es la unica forma de que la lista no se quede coja
+           cuando manana se anada otro proceso al montaje. */
+        std::vector<std::string> lanzados;
+        bool hay_aviso_juego = false;   // alguna escena ensenia textos
+        auto generar_escena = [&]() {
+            lanzados.clear();
         int player_idx = -1;
         for (size_t i = 0; i < objects.size(); i++)
             if (objects[i].is_player) { player_idx = (int)i; break; }
@@ -4368,6 +4486,7 @@ int main(int, char**) {
         bool hay_aviso = false;   // alguna regla ensenia un texto en pantalla
         for (auto& o : objects) for (auto& r : o.reglas) for (auto& a : r.acciones) if (a.tipo == 3) hay_aviso = true;
         for (auto& sp : sprites) for (auto& r : sp.reglas) for (auto& a : r.acciones) if (a.tipo == 3) hay_aviso = true;
+        if (hay_aviso) hay_aviso_juego = true;
         {
             bool hay_jug = false;
             for (auto& sp : sprites) if (sp.is_player) hay_jug = true;
@@ -4392,16 +4511,11 @@ int main(int, char**) {
             // ---- las variables del juego ----
             for (auto& v : gvars)
                 g += "    int " + v.nombre + " = " + std::to_string(v.valor) + ";\n";
-            if (nreglas > 0) {
-                /* El estado de las reglas. Un hueco por regla:
-                   - regla_hecha: la de "solo la primera vez" ya se cumplio
-                   - regla_ant:   su condicion se cumplia el frame anterior (para
-                                  disparar AL cumplirse y no sesenta veces por segundo)
-                   - regla_t:     su reloj, para las de "cada N segundos" */
-                std::string n = std::to_string(nreglas);
-                g += "    int regla_hecha[" + n + "]; int regla_ant[" + n + "];\n";
-                g += "    float regla_t[" + n + "];\n";
-            }
+            /* El estado de las reglas (regla_hecha / regla_ant / regla_t) no se
+               declara aqui: los huecos se numeran DENTRO de cada escena, asi que
+               las tablas se quedan con el maximo de todas y se declaran al final.
+               Se ponen a cero al montar una escena. */
+            if (nreglas > max_reglas) max_reglas = nreglas;
             if (hay_aviso)
                 g += "    string aviso_txt; float aviso_t;   // el texto que ensenian las reglas\n";
             // ---- sonido ----
@@ -4409,19 +4523,17 @@ int main(int, char**) {
             for (auto& sn : sonidos_usados)
                 g += "    int " + var_sonido(sn) + ";" + std::string(14 > (int)var_sonido(sn).size() ? 14 - (int)var_sonido(sn).size() : 1, ' ')
                    + "// " + sn + "\n";
-            if (n_amb > 0)
-                g += "    int amb_ch[" + std::to_string(n_amb) + "];         // canal del sonido de cada objeto (-1 = callado)\n";
-            if (!zsonidos.empty())
-                g += "    int zamb_ch[" + std::to_string((int)zsonidos.size()) + "];        // canal del ambiente de cada zona\n";
-            if (!g.empty()) { fputs("GLOBAL\n", f); fputs(g.c_str(), f); fputs("END\n\n", f); }
+            if (n_amb > max_amb) max_amb = n_amb;
+            if ((int)zsonidos.size() > max_zamb) max_zamb = (int)zsonidos.size();
+            add_global(g);
         }
         /* El ambiente de las zonas pintadas: suena mientras el jugador esta dentro.
            Un canal por zona, que se abre al entrar y se cierra al salir. */
         if (!zsonidos.empty()) {
-            fputs("// Ambiente de las zonas pintadas (lluvia, bosque, cueva).\n"
-                  "PROCESS escena_ambiente()\n"
+            fprintf(f, "// Ambiente de las zonas pintadas (lluvia, bosque, cueva).\n"
+                  "PROCESS %s_ambiente()\n"
                   "BEGIN\n"
-                  "    LOOP\n", f);
+                  "    LOOP\n", pref.c_str());
             for (int i = 0; i < (int)zsonidos.size(); i++) {
                 if (zsonidos[i].sonido.empty()) continue;
                 fprintf(f,
@@ -4442,7 +4554,8 @@ int main(int, char**) {
         /* El cartelito de las reglas: un solo write_var pintando una GLOBAL, que
            se vacia cuando se acaba su tiempo. Sin crear y borrar writes. */
         if (hay_aviso)
-            fputs("// Ensenia el texto de las reglas mientras dure su tiempo.\n"
+            add_proc_comun("aviso",
+                  "// Ensenia el texto de las reglas mientras dure su tiempo.\n"
                   "PROCESS escena_aviso()\n"
                   "BEGIN\n"
                   "    write_var(0, 640, 40, 4, aviso_txt);   // fuente del sistema, centrado arriba\n"
@@ -4453,7 +4566,7 @@ int main(int, char**) {
                   "        END\n"
                   "        FRAME;\n"
                   "    END\n"
-                  "END\n\n", f);
+                  "END\n\n");
 
         // Las acciones pueden llamar a codigo TUYO. Si ese proceso no existe,
         // el juego no compilaria ("Undefined procedure"), asi que se crea el
@@ -4492,7 +4605,7 @@ int main(int, char**) {
                     if (t) {
                         fclose(t);
                         if (ya.insert(ac.archivo).second)
-                            fprintf(f, "#include \"Scripts/%s\"\n", ac.archivo.c_str());
+                            add_include("Scripts/" + ac.archivo);
                         continue;
                     }
                     console_add("AVISO: no encuentro Scripts/" + ac.archivo + " (accion '" + ac.nombre + "')\n");
@@ -4521,7 +4634,7 @@ int main(int, char**) {
                             console_add("Creado Scripts/" + fn + ".prg (accion '" + ac.nombre + "')\n");
                         }
                     }
-                    fprintf(f, "#include \"Scripts/%s.prg\"\n", fn.c_str());
+                    add_include("Scripts/" + fn + ".prg");
                 }
             }
             if (!ya.empty()) fputs("\n", f);
@@ -4534,17 +4647,15 @@ int main(int, char**) {
             FILE* s = fopen(sp.c_str(), "r");
             if (!s) continue;
             fclose(s);
-            fprintf(f, "#include \"Scripts/%s.prg\"\n", o.name.c_str());
+            add_include("Scripts/" + o.name + ".prg");
         }
         fputs("\n", f);
         // main
         // Lo que comparten el montaje y el bucle tiene que ser GLOBAL: antes era
         // todo PRIVATE de un unico PROCESS main, y al partirlo en dos deja de valer.
-        fputs("GLOBAL\n"
-              "    int follow_ent;          // entidad a la que sigue la camara\n"
-              "    int pplayer; int pmodel; // entidad y modelo del jugador\n"
-              "    int atc[32]; int atn[32];// enganches a huesos: entidad y nodo\n"
-              "END\n\n", f);
+        add_global("    int follow_ent;          // entidad a la que sigue la camara\n"
+                   "    int pplayer; int pmodel; // entidad y modelo del jugador\n"
+                   "    int atc[32]; int atn[32];// enganches a huesos: entidad y nodo\n");
         // ---- la luz del sol como proceso BennuGD2 (variables nativas) ----
         // Igual que cualquier objeto 3D: fija ctype/csubtype y sus datos en las
         // variables nativas, y el motor las envia a la luz cada FRAME. La direccion
@@ -4556,7 +4667,7 @@ int main(int, char**) {
             float az = sun_azim * 3.14159265f / 180.0f;
             float el = sun_elev * 3.14159265f / 180.0f;
             fprintf(f,
-                  "PROCESS escena_sol()\n"
+                  "PROCESS %s_sol()\n"
                   "BEGIN\n"
                   "    ctype = C_3D; csubtype = C3D_LIGHT;\n"
                   "    x = 0.0; y = 0.0; z = 0.0;\n"
@@ -4570,6 +4681,7 @@ int main(int, char**) {
                   "        FRAME;\n"
                   "    END\n"
                   "END\n\n",
+                  pref.c_str(),
                   -cosf(az) * cosf(el), -sinf(el), -sinf(az) * cosf(el),
                   sun_intensity, shadow_res);
         } else {
@@ -4580,7 +4692,7 @@ int main(int, char**) {
                La trigonometria de BennuGD2 va en MILESIMAS de grado (comprobado:
                sin(90000) = 1), de ahi los angulos x1000. */
             fprintf(f,
-                  "PROCESS escena_sol()\n"
+                  "PROCESS %s_sol()\n"
                   "PRIVATE\n"
                   "    float hora;    // 0 = amanecer, 90000 = mediodia, 180000 = ocaso\n"
                   "    float alt;     // altura del sol, -1 (medianoche) .. 1 (mediodia)\n"
@@ -4622,7 +4734,7 @@ int main(int, char**) {
                   "        FRAME;\n"
                   "    END\n"
                   "END\n\n",
-                  shadow_res, sun_hour * 1000.0f, sun_day_sec,
+                  pref.c_str(), shadow_res, sun_hour * 1000.0f, sun_day_sec,
                   360000.0f / (sun_day_sec * 60.0f), sun_intensity);
         }
 
@@ -4663,7 +4775,7 @@ int main(int, char**) {
                vez en escena_iniciar, porque no tiene sentido reenviarlo cada
                frame. */
             fprintf(f,
-                  "PROCESS escena_agua()\n"
+                  "PROCESS %s_agua()\n"
                   "BEGIN\n"
                   "    ctype = C_3D; csubtype = C3D_WATER;\n"
                   "    entity = 0;   // el agua es UNA: basta con no ser -1\n"
@@ -4677,6 +4789,7 @@ int main(int, char**) {
                   "        FRAME;\n"
                   "    END\n"
                   "END\n\n",
+                  pref.c_str(),
                   w_amp, w_len, w_speed, water_foam, surf_height, splash_amount,
                   ws_evap, ws_flow, surf_dir);
         }
@@ -4694,11 +4807,11 @@ int main(int, char**) {
             auto dt = pn.rfind('.');  if (dt != std::string::npos) pn = pn.substr(0, dt);
             for (auto& c : pn) if (!isalnum((unsigned char)c)) c = '_';
             fprintf(f,
-                  "PROCESS vegetacion_%s()\n"
+                  "PROCESS %s_veg_%s()\n"
                   "BEGIN\n"
                   "    ctype = C_3D; csubtype = C3D_SCATTER;\n"
                   "    // 'entity' ata este proceso a SU especie; los ejemplares ya\n"
-                  "    // los cargo g3d_scatter_load en escena_iniciar.\n"
+                  "    // los cargo g3d_scatter_load al montar la escena.\n"
                   "    entity = g3d_scatter_group(\"%s\");\n"
                   "    wind = %.3f;        // balanceo (0 = quieto: rocas, troncos)\n"
                   "    draw_dist = %.1f;   // mas alla no se dibuja\n"
@@ -4708,7 +4821,7 @@ int main(int, char**) {
                   "        FRAME;\n"
                   "    END\n"
                   "END\n\n",
-                  pn.c_str(), nm,
+                  pref.c_str(), pn.c_str(), nm,
                   g3d_scatter_get_kind_wind(k),
                   g3d_scatter_get_kind_distance(k),
                   g3d_scatter_get_kind_solid(k));
@@ -4725,7 +4838,7 @@ int main(int, char**) {
                         (spr_follow >= 0 && spr_follow < (int)sprites.size())));
         {
             std::string cp =
-                "PROCESS escena_camara(int cam)\n"
+                "PROCESS " + pref + "_camara(int cam)\n"
                 "PRIVATE float tx; float ty; float tz; float dist; float libre;\n"
                 "        float ax; float ay; float az; float alen;\nEND\n"
                 "BEGIN\n"
@@ -4868,9 +4981,7 @@ int main(int, char**) {
                 fputs("// ===== SPRITES 2D del mundo (hojas colocadas en el editor) =====\n"
                       "// Las tablas son el recorte de cada fotograma dentro de la hoja:\n"
                       "// x,y,w,h y el ancla ax,ay (el punto que se apoya en el suelo).\n", f);
-                fputs("GLOBAL\n", f);
-                fputs(gl.c_str(), f);
-                fputs("END\n\n", f);
+                add_global(gl);
             }
             // ---- un PROCESS por personaje ----
             // Un sprite se maneja como cualquier objeto del editor: puede ser
@@ -4926,9 +5037,7 @@ int main(int, char**) {
                 tab("_est", todos); tab("_ini", ini_); tab("_num", num_);
             }
             if (!gl2.empty()) {
-                fputs("GLOBAL\n", f);
-                fputs(gl2.c_str(), f);
-                fputs("END\n\n", f);
+                add_global(gl2);
             }
 
             /* Los controles van RESPECTO A LA CAMARA (igual que en los objetos):
@@ -5411,6 +5520,7 @@ int main(int, char**) {
                     fputs("        FRAME;\n    END\nEND\n\n", f);
                 }
                 spr_launch.push_back("    " + nom + "();\n");
+                lanzados.push_back(nom);
             }
             if (!spr_launch.empty())
                 console_add("Sprites 2D: " + std::to_string((int)spr_launch.size()) +
@@ -5494,16 +5604,14 @@ int main(int, char**) {
             // Un GLOBAL vacio no tiene sentido: un HUD de solo textos con la
             // fuente del sistema no carga ningun recurso ni declara variables.
             if (!hud_globals.empty() || !hud_vars.empty()) {
-                fputs("GLOBAL\n", f);
                 if (!hud_globals.empty()) {
-                    fputs("    // recursos: se cargan en escena_iniciar\n", f);
-                    fputs(hud_globals.c_str(), f);
+                    add_global("    // recursos del HUD: se cargan al montar la escena\n");
+                    add_global(hud_globals);
                 }
                 if (!hud_vars.empty()) {
-                    fputs("    // variables que muestran los textos: ponles valor desde tu codigo\n", f);
-                    fputs(hud_vars.c_str(), f);
+                    add_global("    // variables que muestran los textos: ponles valor desde tu codigo\n");
+                    add_global(hud_vars);
                 }
-                fputs("END\n\n", f);
             }
 
             const char* ALIN[9] = { "ALIGN_TOP_LEFT", "ALIGN_TOP", "ALIGN_TOP_RIGHT",
@@ -5562,6 +5670,7 @@ int main(int, char**) {
                           "END\n\n", f);
                 }
                 hud_launch.push_back("    " + pname[i] + "();\n");
+                lanzados.push_back(pname[i]);
             }
             // Que se vea en la consola que el HUD ha entrado en el juego: si algo
             // no sale en pantalla, aqui se ve si siquiera se ha generado.
@@ -5574,15 +5683,17 @@ int main(int, char**) {
             }
         }
 
-        fputs("// Monta el escenario: terreno, agua, objetos, sus procesos y la camara.\n"
-              "FUNCTION escena_iniciar()\n", f);
+        fputs("// Monta el escenario: terreno, agua, objetos, sus procesos y la camara.\n", f);
+        fprintf(f, "FUNCTION %s_montar()\n", pref.c_str());
         fputs("PRIVATE int e; int m; int tex; int mat;\nEND\nBEGIN\n", f);
         fputs("    set_mode(1280,720); set_fps(60,0); window_set_title(\"EDITOR_PLAY\");\n", f);
         fputs("    scene = g3d_scene_create(\"juego\"); g3d_scene_set_active(scene);\n", f);
         fputs("    camera = g3d_camera_create(); g3d_camera_set_active(camera);\n", f);
-        fputs("    escena_sol();   // la luz del sol (proceso con vars nativas)\n", f);
+        fprintf(f, "    %s_sol();   // la luz del sol (proceso con vars nativas)\n", pref.c_str());
+        lanzados.push_back(pref + "_sol");
         if (show_fps) fputs("    depurar_coste();   // fps y coste en pantalla\n", f);
-        if (water_on) fputs("    escena_agua();   // el agua, con sus locales\n", f);
+        if (water_on) { fprintf(f, "    %s_agua();   // el agua, con sus locales\n", pref.c_str());
+                        lanzados.push_back(pref + "_agua"); }
         fputs("    g3d_sky_set_gradient(0.35,0.55,0.85, 0.82,0.88,0.96); g3d_sky_enable(1);\n", f);
         // terreno: mismo grid/worldsize que el editor (160 / 400), plano y luego
         // se le aplica el relieve esculpido y el pintado guardados en la escena.
@@ -5717,7 +5828,8 @@ int main(int, char**) {
                 auto sl = pn.rfind('/'); if (sl != std::string::npos) pn = pn.substr(sl + 1);
                 auto dt = pn.rfind('.');  if (dt != std::string::npos) pn = pn.substr(0, dt);
                 for (auto& c : pn) if (!isalnum((unsigned char)c)) c = '_';
-                fprintf(f, "    vegetacion_%s();\n", pn.c_str());
+                { fprintf(f, "    %s_veg_%s();\n", pref.c_str(), pn.c_str());
+                  lanzados.push_back(pref + "_veg_" + pn); }
             }
         fputs("    escena_dt = 1.0 / 60.0;\n", f);
         int pj = 0;   // indice de cuerpo fisico (literal)
@@ -5783,6 +5895,7 @@ int main(int, char**) {
             // con la plantilla para que el juego salga jugable a la primera.
             if ((int)i == player_idx) {   // su script ya se aseguro mas arriba
                 fprintf(f, "    %s(e, m);   // jugador: entidad + modelo (para animar)\n", o.name.c_str());
+                lanzados.push_back(o.name);
             } else {
                 // Aqui solo llega un objeto fisico/decorativo si es objetivo de
                 // camara o enganche (su plantilla se auto-crea la entidad, asi que
@@ -5790,7 +5903,7 @@ int main(int, char**) {
                 // enganche a hueso se rehacen en su turno del plan; de momento no se
                 // engancha follow_ent a estos (limitacion conocida, sin crash).
                 FILE* s = fopen(sp.c_str(), "r");
-                if (s) { fclose(s); fprintf(f, "    %s(m);\n", o.name.c_str()); }
+                if (s) { fclose(s); fprintf(f, "    %s(m);\n", o.name.c_str()); lanzados.push_back(o.name); }
             }
         }
         // ---- objetos enganchados a un hueso: se lanza su proceso ahora, que ya se
@@ -5814,7 +5927,8 @@ int main(int, char**) {
         // ---- CAMARA: se lanza su proceso (definido arriba). follow_ent ya esta
         //      puesto (el jugador se spawnea antes), asi que la camara ve al
         //      objetivo desde su primer frame. ----
-        fputs("    escena_camara(camera);\n", f);
+        fprintf(f, "    %s_camara(camera);\n", pref.c_str());
+        lanzados.push_back(pref + "_camara");
         if (hay_aviso)
             fputs("    escena_aviso();   // el cartelito de las reglas\n", f);
 
@@ -5831,7 +5945,8 @@ int main(int, char**) {
             for (int i = 0; i < (int)zsonidos.size(); i++)
                 fprintf(f, "    zamb_ch[%d] = -1;\n", i);
             if (!zsonidos.empty())
-                fputs("    escena_ambiente();   // ambientes de las zonas pintadas\n", f);
+                { fprintf(f, "    %s_ambiente();   // ambientes de las zonas pintadas\n", pref.c_str());
+                  lanzados.push_back(pref + "_ambiente"); }
             if (!esc_musica.empty()) {
                 fprintf(f, "    musica = music_load(\"Assets/%s\");\n", esc_musica.c_str());
                 fputs("    IF (musica > 0)\n", f);
@@ -5860,6 +5975,59 @@ int main(int, char**) {
         // que main.prg pueda ser tuyo: arrancas el escenario, lanzas el motor y
         // encima escribes lo que quieras.
         fputs("    RETURN;\nEND\n\n", f);
+        };
+
+        /* ================= UNA PASADA POR ESCENA =================
+           Cada .scene del proyecto se carga, se genera su cuerpo y se apunta lo que
+           lanza. Al acabar se vuelve a la que estabas editando. */
+        std::vector<std::string> esc_ruta, esc_pref, esc_nombre;
+        std::vector<std::vector<std::string>> esc_lanzados;
+        {
+            std::string volver_a = scene_path;
+            std::vector<std::string> rutas;
+            { std::error_code ec;
+              for (auto& e : fs::directory_iterator(scenes_dir, ec)) {
+                  if (!e.is_regular_file(ec)) continue;
+                  if (e.path().extension() != ".scene") continue;
+                  rutas.push_back(e.path().string());
+              }
+              std::sort(rutas.begin(), rutas.end()); }
+            if (rutas.empty()) rutas.push_back(scene_path);
+            std::set<std::string> prefs_usados;
+            std::map<std::string, std::string> nombre_visto;   // proceso -> escena donde esta
+            for (auto& ruta : rutas) {
+                if (ruta != scene_path) load_scene(ruta);
+                scene_path = ruta;
+                // las rutas de relieve, pintado y zonas son de ESTA escena
+                rel_scene  = fs::path(scene_path).lexically_relative(project_dir).string();
+                rel_relief = rel_scene + ".terrain";
+                rel_paint  = rel_scene + ".paint.png";
+                rel_zones  = rel_scene + ".zones";
+                std::string base = ident_bgd(fs::path(ruta).stem().string(), "esc");
+                std::string p2 = base;
+                for (int k = 2; k < 100 && prefs_usados.count(p2); k++) p2 = base + "_" + std::to_string(k);
+                prefs_usados.insert(p2);
+                pref = p2;
+                generar_escena();
+                esc_ruta.push_back(ruta);
+                esc_pref.push_back(pref);
+                esc_nombre.push_back(fs::path(ruta).stem().string());
+                esc_lanzados.push_back(lanzados);
+                /* Dos escenas no pueden tener un objeto con el mismo nombre: cada
+                   uno es un PROCESS, y dos PROCESS iguales no compilan. Se avisa
+                   aqui, que es cuando se sabe, y no con un error de bgdc. */
+                for (auto& n : lanzados) {
+                    auto it = nombre_visto.find(n);
+                    if (it != nombre_visto.end() && it->second != esc_nombre.back())
+                        console_add("AVISO: '" + n + "' esta en '" + it->second + "' y en '" +
+                                    esc_nombre.back() + "'. Los nombres no se pueden repetir\n"
+                                    "  entre escenas: renombra uno de los dos o el juego no compilara.\n");
+                    else nombre_visto[n] = esc_nombre.back();
+                }
+            }
+            if (scene_path != volver_a) { load_scene(volver_a); scene_path = volver_a; }
+        }
+
         fputs("// Avanza el mundo fisico una vez por frame. Cada objeto (barril, jugador,\n"
               "// arma, camara) es su propio proceso y se coloca solo; aqui solo la fisica.\n"
               "PROCESS escena_motor()\n", f);
@@ -5868,10 +6036,107 @@ int main(int, char**) {
         fputs("        g3d_rigidbody_step(escena_dt);\n", f);
         // El enganche de armas ya no va aqui: cada arma es su propio proceso que
         // sigue el hueso con sus variables nativas.
-        fputs("        FRAME;\n    END\nEND\n", f);
+        fputs("        FRAME;\n    END\nEND\n\n", f);
+
+        /* ================= CAMBIAR DE ESCENA =================
+           Desmontar es matar los procesos de la escena que estaba puesta (por su
+           nombre, uno a uno: let_me_alone() se llevaria por delante tu main) y
+           soltar lo del motor -- entidades, cuerpos, muros, vegetacion, zonas,
+           manantiales y personajes. Luego se monta la nueva. */
+        {
+            fputs("// Quita de en medio la escena que estuviera puesta.\n"
+                  "FUNCTION escena_descargar()\n"
+                  "BEGIN\n", f);
+            for (size_t i = 0; i < esc_pref.size(); i++) {
+                fprintf(f, "    IF (escena_actual == %d)\n", (int)i);
+                for (auto& n : esc_lanzados[i])
+                    fprintf(f, "        signal(TYPE %s, S_KILL);\n", n.c_str());
+                fputs("    END\n", f);
+            }
+            fputs("    // y lo que guarda el motor de esa escena\n"
+                  "    g3d_rigidbody_clear();\n"
+                  "    g3d_collider_clear();\n"
+                  "    g3d_char_clear_all();\n"
+                  "    g3d_scatter_clear();\n"
+                  "    g3d_zone_clear();\n"
+                  "    g3d_watersim_clear_sources();\n"
+                  "    music_stop();\n"
+                  "    RETURN;\nEND\n\n", f);
+
+            fprintf(f, "// Monta la escena n (0..%d).\n"
+                       "FUNCTION escena_cargar(int n)\n"
+                       "PRIVATE int i;\nEND\n"
+                       "BEGIN\n"
+                       "    escena_descargar();\n", (int)esc_pref.size() - 1);
+            if (max_reglas > 0)
+                fprintf(f,
+                    "    // las reglas de la escena nueva empiezan de cero\n"
+                    "    FOR (i = 0; i <= %d; i = i + 1)\n"
+                    "        regla_hecha[i] = 0; regla_ant[i] = 0; regla_t[i] = 0.0;\n"
+                    "    END\n", max_reglas);
+            for (size_t i = 0; i < esc_pref.size(); i++)
+                fprintf(f, "    IF (n == %d) %s_montar(); END\n", (int)i, esc_pref[i].c_str());
+            fputs("    escena_actual = n;\n"
+                  "    RETURN;\nEND\n\n", f);
+
+            fputs("/* Vigila las peticiones de cambio de escena. No se cambia en el sitio\n"
+                  "   donde se pide (una regla de un objeto) porque ese objeto es de la\n"
+                  "   escena que se va: se moriria a media faena. */\n"
+                  "PROCESS escena_gestor()\n"
+                  "BEGIN\n"
+                  "    LOOP\n"
+                  "        IF (escena_pedida >= 0)\n"
+                  "            escena_cargar(escena_pedida);\n"
+                  "            escena_pedida = -1;\n"
+                  "        END\n"
+                  "        FRAME;\n"
+                  "    END\n"
+                  "END\n\n", f);
+
+            /* escena_iniciar() y escena_motor() son los dos nombres que llama TU
+               main.prg desde siempre: se quedan como estan y por dentro arrancan
+               la escena inicial del proyecto. */
+            int inicial = 0;
+            for (size_t i = 0; i < esc_ruta.size(); i++) {
+                std::string rel = fs::path(esc_ruta[i]).lexically_relative(project_dir).string();
+                if (rel == escena_inicial || esc_ruta[i] == escena_inicial) inicial = (int)i;
+            }
+            fputs("// Arranca el juego por su escena inicial.\n"
+                  "FUNCTION escena_iniciar()\n"
+                  "BEGIN\n"
+                  "    escena_actual = -1; escena_pedida = -1;\n", f);
+            if (hay_aviso_juego) fputs("    escena_aviso();   // el cartelito de las reglas\n", f);
+            fprintf(f, "    escena_cargar(%d);\n"
+                       "    escena_gestor();   // atiende los cambios de escena\n"
+                       "    RETURN;\nEND\n", inicial);
+        }
         fclose(f);
-        std::string setup(setup_buf ? setup_buf : "", setup_sz);
+        std::string cuerpo(setup_buf ? setup_buf : "", setup_sz);
         free(setup_buf);
+
+        /* ---- se monta el fichero: primero lo del juego, luego las escenas ----
+           En BennuGD2 un GLOBAL tiene que estar declarado por encima del codigo que
+           lo usa, asi que las declaraciones recogidas van las primeras, detras los
+           procesos comunes, y al final el cuerpo de cada escena. */
+        std::string setup = "GLOBAL\n";
+        for (auto& l : glob_lin) setup += l + "\n";
+        setup += "    int escena_actual; int escena_pedida;   // que escena esta puesta / cual se pide\n";
+        if (max_reglas > 0) {
+            std::string n = std::to_string(max_reglas);
+            setup += "    // el estado de las reglas (el mayor numero de reglas de una escena)\n";
+            setup += "    int regla_hecha[" + n + "]; int regla_ant[" + n + "];\n";
+            setup += "    float regla_t[" + n + "];\n";
+        }
+        if (max_amb > 0)
+            setup += "    int amb_ch[" + std::to_string(max_amb) + "];   // canal del sonido de cada objeto (-1 = callado)\n";
+        if (max_zamb > 0)
+            setup += "    int zamb_ch[" + std::to_string(max_zamb) + "];  // canal del ambiente de cada zona\n";
+        setup += "END\n\n";
+        // el codigo tuyo y el de cada objeto, una sola vez aunque lo pidan dos escenas
+        for (auto& in : includes) setup += in;
+        if (!includes.empty()) setup += "\n";
+        for (auto& pc : proc_comun) setup += pc;
+        setup += cuerpo;
 
         // Volcar el montaje al bloque marcado de main.prg, sin tocar tu codigo.
         // Y borrar el __escena.prg de versiones anteriores, que ya no se usa.
@@ -6344,6 +6609,7 @@ int main(int, char**) {
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Escena")) {
+                ImGui::MenuItem(ICON_FA_LAYER_GROUP "  Escenas del proyecto", nullptr, &show_escenas);
                 ImGui::MenuItem(ICON_FA_PERSON_RUNNING "  Sprites 3D (hojas y personajes)",
                                 nullptr, &show_spr_win);
                 ImGui::Separator();
@@ -10051,6 +10317,145 @@ int main(int, char**) {
             ImGui::SameLine();
             if (ImGui::Button("Cancelar", ImVec2(140, 0))) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
+        }
+
+        /* ---- Las ESCENAS del proyecto ----
+           Cada escena es su fichero en Scenes/. En el juego se montan una cada vez
+           y se viaja de una a otra con la accion "Ir a otra escena" de una regla:
+           tocar una puerta, entrar en una zona, cumplirse algo. */
+        if (show_escenas) {
+            ImGui::SetNextWindowSize(ImVec2(430, 340), ImGuiCond_FirstUseEver);
+            ImGui::Begin("Escenas del proyecto", &show_escenas);
+            ImGui::TextWrapped("La marcada con la estrella es por la que empieza el juego. "
+                               "Para viajar de una a otra, ponle a un objeto una regla con "
+                               "la accion \"Ir a otra escena\".");
+            ImGui::Separator();
+            auto lista = escenas_del_proyecto();
+            static char nom_esc[80] = "";
+            static std::string esc_menu;
+            static bool pedir_nueva = false, pedir_ren_esc = false, pedir_borrar_esc = false;
+            for (auto& e : lista) {
+                std::string ruta = scenes_dir + "/" + e;
+                bool abierta  = (ruta == scene_path);
+                bool inicial  = (escena_inicial == "Scenes/" + e);
+                ImGui::PushID(e.c_str());
+                if (ImGui::SmallButton(inicial ? ICON_FA_STAR : ICON_FA_STAR_HALF_STROKE))
+                    { escena_inicial = "Scenes/" + e; write_manifest(); }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(inicial ? "Es la escena inicial del juego"
+                                              : "Hacer que el juego empiece por esta");
+                ImGui::SameLine();
+                if (ImGui::Selectable((e + (abierta ? "   (abierta)" : "")).c_str(), abierta)) {
+                    if (!abierta) { save_scene(scene_path); load_scene(ruta); scene_path = ruta; }
+                }
+                if (ImGui::BeginPopupContextItem("ctx_esc")) {
+                    esc_menu = e;
+                    if (ImGui::MenuItem("Abrir")) { save_scene(scene_path); load_scene(ruta); scene_path = ruta; }
+                    if (ImGui::MenuItem("Empezar el juego por esta")) { escena_inicial = "Scenes/" + e; write_manifest(); }
+                    if (ImGui::MenuItem("Duplicar")) {
+                        std::string base = fs::path(e).stem().string();
+                        for (int k = 2; k < 100; k++) {
+                            std::string cand = scenes_dir + "/" + base + "_" + std::to_string(k) + ".scene";
+                            std::error_code ec;
+                            if (fs::exists(cand, ec)) continue;
+                            fs::copy_file(ruta, cand, ec);
+                            // el relieve, el pintado, las zonas y la siembra van aparte
+                            for (const char* suf : { ".terrain", ".paint.png", ".zones", ".scatter" }) {
+                                std::error_code e2;
+                                if (fs::exists(ruta + suf, e2)) fs::copy_file(ruta + suf, cand + suf, e2);
+                            }
+                            break;
+                        }
+                    }
+                    if (ImGui::MenuItem("Renombrar...")) {
+                        snprintf(nom_esc, sizeof(nom_esc), "%s", fs::path(e).stem().string().c_str());
+                        pedir_ren_esc = true;
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Borrar...")) pedir_borrar_esc = true;
+                    ImGui::EndPopup();
+                }
+                ImGui::PopID();
+            }
+            if (lista.empty()) ImGui::TextDisabled("(ninguna)");
+            ImGui::Spacing();
+            if (ImGui::Button(ICON_FA_PLUS "  Escena nueva", ImVec2(-1, 0))) { nom_esc[0] = 0; pedir_nueva = true; }
+            ImGui::TextDisabled("Al abrir otra se guarda antes la que tengas puesta.");
+
+            if (pedir_nueva) { ImGui::OpenPopup("Escena nueva"); pedir_nueva = false; }
+            if (ImGui::BeginPopupModal("Escena nueva", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextUnformatted("Nombre (sin .scene):");
+                ImGui::SetNextItemWidth(260);
+                bool ok = ImGui::InputText("##ne", nom_esc, sizeof(nom_esc), ImGuiInputTextFlags_EnterReturnsTrue);
+                if (ImGui::Button("Crear", ImVec2(120, 0)) || ok) {
+                    std::string nom = ident_bgd(nom_esc, "escena");
+                    std::string ruta = scenes_dir + "/" + nom + ".scene";
+                    std::error_code ec;
+                    if (!fs::exists(ruta, ec)) {
+                        save_scene(scene_path);      // no perder lo que tenias
+                        objects.clear(); obj_sel = -1;
+                        sprites.clear(); spr_sel = -1; spr_follow = -1;
+                        hud.clear(); hud_sel = -1;
+                        esc_musica.clear(); zsonidos.clear();
+                        scene_path = ruta;
+                        save_scene(scene_path);      // nace vacia, con el terreno de ahora
+                    }
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancelar", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+            if (pedir_ren_esc) { ImGui::OpenPopup("Renombrar escena"); pedir_ren_esc = false; }
+            if (ImGui::BeginPopupModal("Renombrar escena", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("Renombrar %s", esc_menu.c_str());
+                ImGui::SetNextItemWidth(260);
+                bool ok = ImGui::InputText("##re", nom_esc, sizeof(nom_esc), ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1),
+                    "Ojo: si alguna regla manda a esta escena, vuelve a elegirla.");
+                if (ImGui::Button("Renombrar", ImVec2(120, 0)) || ok) {
+                    std::string nom = ident_bgd(nom_esc, "escena");
+                    std::string vieja = scenes_dir + "/" + esc_menu;
+                    std::string nueva = scenes_dir + "/" + nom + ".scene";
+                    std::error_code ec;
+                    if (!fs::exists(nueva, ec)) {
+                        fs::rename(vieja, nueva, ec);
+                        for (const char* suf : { ".terrain", ".paint.png", ".zones", ".scatter" }) {
+                            std::error_code e2;
+                            if (fs::exists(vieja + suf, e2)) fs::rename(vieja + suf, nueva + suf, e2);
+                        }
+                        if (scene_path == vieja) scene_path = nueva;
+                        if (escena_inicial == "Scenes/" + esc_menu) { escena_inicial = "Scenes/" + nom + ".scene"; }
+                        write_manifest();
+                    }
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancelar", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+            if (pedir_borrar_esc) { ImGui::OpenPopup("Borrar escena"); pedir_borrar_esc = false; }
+            if (ImGui::BeginPopupModal("Borrar escena", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("Se va a borrar Scenes/%s", esc_menu.c_str());
+                ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "Con su relieve, su pintado y su siembra. No se puede deshacer.");
+                bool es_abierta = (scene_path == scenes_dir + "/" + esc_menu);
+                if (es_abierta) ImGui::TextDisabled("(es la que tienes abierta: abre otra antes)");
+                ImGui::BeginDisabled(es_abierta);
+                if (ImGui::Button("Borrar", ImVec2(120, 0))) {
+                    std::string ruta = scenes_dir + "/" + esc_menu;
+                    std::error_code ec;
+                    fs::remove(ruta, ec);
+                    for (const char* suf : { ".terrain", ".paint.png", ".zones", ".scatter" }) {
+                        std::error_code e2; fs::remove(ruta + suf, e2);
+                    }
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                if (ImGui::Button("Cancelar", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+            ImGui::End();
         }
 
         /* ---- Las VARIABLES DEL JUEGO: puntos, vida, llaves... ----

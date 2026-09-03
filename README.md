@@ -39,6 +39,8 @@ renderiza contra el mismo contexto OpenGL: lo que ves en el editor es lo que cor
   las pinta el HUD 2D y las ve tu código.
 - **Música y sonido**: música por escena (con entrada suave), ambiente por zona pintada,
   sonido propio de un objeto (más fuerte de cerca) y sonidos como acción de una regla.
+- **Varias escenas** por proyecto y **viajar de una a otra** en el juego (una regla lo pide:
+  tocar una puerta, entrar en una zona, cumplirse algo).
 - **Sistema de proyectos** `.bgd2` (carpeta con Assets/Scenes/Scripts) y **generación del juego**
   (`main.prg`) que compila y ejecuta con BennuGD2.
 
@@ -65,6 +67,27 @@ usen diez reglas, y `main.prg` gana `import "libmod_sound"` si le faltaba.
 > en el editor se oiga. Espacios, guiones y corchetes sí valen. El editor lo marca en
 > rojo y ofrece **renombrar** el fichero, arreglando de paso todas las referencias de
 > la escena.
+
+## Varias escenas
+
+Cada escena es su fichero en `Scenes/`. En **Escena → Escenas del proyecto** las tienes
+todas: crear, abrir, duplicar (con su relieve, su pintado y su siembra), renombrar,
+borrar, y marcar con la estrella **por cuál empieza el juego**.
+
+En el `main.prg` generado, cada escena trae sus propios procesos con su nombre delante
+(`pueblo_sol`, `pueblo_camara`, `pueblo_montar`) y se monta una cada vez. Viajar de una
+a otra es la acción **"Ir a otra escena"** de cualquier regla: el objeto que la pide no
+cambia nada él mismo — deja la petición y la atiende `escena_gestor`, porque quien pide
+el viaje es de la escena que se va y se moriría a media faena. Al llegar, se matan los
+procesos de la anterior y se sueltan sus cuerpos, muros, vegetación, zonas, manantiales
+y personajes.
+
+Dos cosas que conviene saber:
+
+- Los **nombres no se pueden repetir entre escenas** (cada objeto es un `PROCESS`). El
+  editor avisa por la consola al generar si encuentra dos iguales.
+- Las **variables del juego viven en el proyecto** (`.bgd2`), no en la escena: los
+  puntos y la vida sobreviven al cambio de mapa.
 
 ## Reglas: si pasa esto, haz esto
 

@@ -5138,19 +5138,16 @@ int main(int, char**) {
             toolBtn(ICON_FA_FAUCET_DRIP,         T_WATERSOURCE, "Manantial: clic para poner una fuente; el agua fluye sola (rios/cascadas con fisica)");
             ImGui::SameLine(0, 12); ImGui::TextDisabled("|"); ImGui::SameLine(0, 12);
             toolBtn(ICON_FA_FONT,                T_HUD,     "HUD 2D: graficos y textos de pantalla (panel 'HUD 2D')");
-            if (toolBtn(ICON_FA_PERSON_RUNNING, T_SPRITE,
-                        "Sprite 2D en el mundo 3D: abre la ventana de hojas y coloca personajes"))
-                show_spr_win = true;
-            // Y un boton propio para enseniarla/esconderla, que quede claro si esta
-            // abierta: la herramienta se queda marcada aunque cierres la ventana.
+            // Un solo boton: coge la herramienta y saca la ventana. Estando ya en
+            // ella el clic la esconde o la vuelve a sacar, que cerrarla no deje la
+            // herramienta marcada y sin manera de volver.
             {
-                bool on = show_spr_win;
-                if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.59f, 0.98f, 1.0f));
-                if (ImGui::Button(ICON_FA_TABLE_CELLS "##ventana_spr")) show_spr_win = !show_spr_win;
-                if (on) ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip(show_spr_win ? "Cerrar la ventana de Sprites 3D"
-                                                   : "Abrir la ventana de Sprites 3D (hojas y animaciones)");
+                bool ya = (tool == T_SPRITE);
+                if (toolBtn(ICON_FA_PERSON_RUNNING, T_SPRITE,
+                            ya ? (show_spr_win ? "Sprites 3D: esconder la ventana de hojas"
+                                               : "Sprites 3D: sacar la ventana de hojas")
+                               : "Sprite 2D en el mundo 3D: hojas, animaciones y personajes"))
+                    show_spr_win = ya ? !show_spr_win : true;
             }
 
             // ---- PLAY: compila el juego y lo ejecuta en su propia ventana ----

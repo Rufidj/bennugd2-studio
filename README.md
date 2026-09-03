@@ -41,6 +41,8 @@ renderiza contra el mismo contexto OpenGL: lo que ves en el editor es lo que cor
   sonido propio de un objeto (más fuerte de cerca) y sonidos como acción de una regla.
 - **Varias escenas** por proyecto y **viajar de una a otra** en el juego (una regla lo pide:
   tocar una puerta, entrar en una zona, cumplirse algo).
+- **Menús** (principal, pausa, opciones): eliges la fuente, escribes las opciones y dices
+  qué hace cada una; se manejan con teclado, mando y ratón.
 - **Sistema de proyectos** `.bgd2` (carpeta con Assets/Scenes/Scripts) y **generación del juego**
   (`main.prg`) que compila y ejecuta con BennuGD2.
 
@@ -67,6 +69,25 @@ usen diez reglas, y `main.prg` gana `import "libmod_sound"` si le faltaba.
 > en el editor se oiga. Espacios, guiones y corchetes sí valen. El editor lo marca en
 > rojo y ofrece **renombrar** el fichero, arreglando de paso todas las referencias de
 > la escena.
+
+## Menús
+
+**Escena → Menús del juego**. Un menú es una lista de opciones y lo que hace cada una,
+con las mismas acciones que una regla: empezar la partida (*ir a otra escena*), llamar a
+tu `PROCESS`, cambiar una variable, sonar algo, abrir otro menú, cerrarse o salir del
+juego.
+
+- **Cuándo sale**: al arrancar el juego, al pulsar una tecla o botón (lleva su vigilante
+  y no se abre dos veces), o sólo cuando lo llame una regla.
+- **Cómo se ve**: fuente `.fnt` de `Assets` (o la del sistema), gráfico de fondo,
+  posición, separación y los dos colores — el normal y el de la opción elegida.
+- **Cómo se maneja**: teclado, mando y ratón, los tres a la vez si quieres, con sonido
+  al moverse y al elegir.
+- **Congela el juego** mientras está abierto (`signal(ALL_PROCESS, S_FREEZE)`): eso es el
+  menú de pausa.
+
+Sale como un `PROCESS` de BennuGD2 normal: los textos se crean una vez con `write()` y
+mover la selección es cambiar dos colores con `write_set_rgba`, no rehacer la pantalla.
 
 ## Varias escenas
 

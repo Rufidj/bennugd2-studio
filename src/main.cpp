@@ -1113,6 +1113,7 @@ int main(int, char**) {
 
     bool show_gvars = false;               // ventana de variables del juego
     bool show_escenas = false;             // ventana de escenas del proyecto
+    bool show_menus = false;               // ventana de menus del juego
     bool show_script = false;              // el editor de script se abre a pantalla completa
     bool ask_regen = false;                // pedir confirmacion para regenerar un script
     std::string regen_obj;                 // objeto cuyo script se va a regenerar
@@ -1228,6 +1229,8 @@ int main(int, char**) {
         std::string texto; float seg = 2.0f;              // 3
         std::string sonido; int vol = 100;                // 4  (volumen 0..128)
         std::string escena;                               // 5  (fichero .scene destino)
+        // 6 = cerrar el menu, 7 = salir del juego (no llevan datos)
+        std::string menu;                                 // 8  (menu que se abre)
     };
     struct Regla {
         int evento = 0;    // 0 al empezar, 1 cada frame, 2 acercarse y pulsar,
@@ -1247,6 +1250,32 @@ int main(int, char**) {
     /* Las variables del juego: puntos, vida, llaves... Salen como GLOBAL de
        BennuGD2, asi que el HUD 2D las puede pintar con write_var y tu codigo las
        ve sin hacer nada. Enteras a proposito: es lo que se cuenta. */
+    /* ================== MENUS ==================
+       Un menu es una lista de opciones y lo que hace cada una: lo mismo que una
+       regla, pero disparado desde una pantalla. Vale para el menu principal, para
+       la pausa y para las opciones. Los menus son del PROYECTO, no de una escena:
+       el de pausa tiene que estar en todas. */
+    struct MenuOpc {
+        std::string texto = "Opcion";
+        std::vector<Accion> acciones;
+    };
+    struct Menu {
+        std::string nombre = "menu";       // nombre del PROCESS que se genera
+        int  cuando = 0;                   // 0 al arrancar, 1 con una tecla/boton, 2 solo si lo llama una regla
+        std::string tecla = "_ESC", boton = "JOY_BUTTON_START";
+        int  x = 640, y = 260, sep = 44;
+        std::string fuente;                // .fnt de Assets ("" = la del sistema)
+        std::string fondo;                 // grafico de fondo (opcional)
+        int  col[4]     = { 200, 200, 200, 255 };
+        int  col_sel[4] = { 255, 230, 120, 255 };
+        int  con_teclado = 1, con_mando = 1, con_raton = 1;
+        std::string snd_mover, snd_elegir;
+        int  pausa = 1;                    // congela el juego mientras esta abierto
+        std::vector<MenuOpc> opciones;
+    };
+    std::vector<Menu> menus;
+    int menu_sel = -1;
+
     struct GameVar { std::string nombre; int valor = 0; };
     std::vector<GameVar> gvars;
     struct SObj {
@@ -2388,6 +2417,76 @@ int main(int, char**) {
         }
         aviso_audio(dest);
     };
+    auto ui_acciones = [&](std::vector<Accion>& acc, const std::string& quien, int contexto) {
+            int quitar = -1;
+            for (int q = 0; q < (int)acc.size(); q++) {
+                Accion& a = acc[q];
+                ImGui::PushID(1000 + q);
+                const char* tt[] = { "Llamar a codigo mio", "Cambiar una variable",
+                                     "Quitar esto de la escena", "Ensenar un texto",
+                                     "Sonar un sonido", "Ir a otra escena",
+                                     "Cerrar el menu", "Salir del juego",
+                                     "Abrir un menu" };
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+                ImGui::Combo("que", &a.tipo, tt, 9);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x")) quitar = q;
+                if (a.tipo == 0) {
+                    selector_codigo("codregla", a.archivo, a.proc, quien);
+                } else if (a.tipo == 1) {
+                    combo_var("variable", a.var);
+                    const char* oo[] = { "ponerla en", "sumarle", "restarle" };
+                    ImGui::SetNextItemWidth(120); ImGui::Combo("operacion", &a.op, oo, 3);
+                    ImGui::SetNextItemWidth(100); ImGui::DragFloat("cuanto", &a.valor, 1.0f, -100000.0f, 100000.0f, "%.0f");
+                } else if (a.tipo == 2) {
+                    if (contexto) ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "  (esto es para objetos, no para un menu)");
+                    else          ImGui::TextDisabled("  desaparece y su proceso termina");
+                } else if (a.tipo == 6) {
+                    if (contexto) ImGui::TextDisabled("  se cierra y el juego sigue");
+                    else          ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "  (esto es para un menu)");
+                } else if (a.tipo == 7) {
+                    ImGui::TextDisabled("  se acaba el programa (exit)");
+                } else if (a.tipo == 8) {
+                    const char* cur = a.menu.empty() ? "(elige uno)" : a.menu.c_str();
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
+                    if (ImGui::BeginCombo("menu", cur)) {
+                        for (auto& mm : menus)
+                            if (ImGui::Selectable(mm.nombre.c_str(), mm.nombre == a.menu)) a.menu = mm.nombre;
+                        if (menus.empty()) ImGui::TextDisabled("(ninguno: Escena > Menus del juego)");
+                        ImGui::EndCombo();
+                    }
+                } else if (a.tipo == 4) {
+                    combo_sonido("sonido", a.sonido);
+                    ImGui::SliderInt("volumen", &a.vol, 0, 128);
+                } else if (a.tipo == 5) {
+                    const char* cur = a.escena.empty() ? "(elige una)" : a.escena.c_str();
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.7f);
+                    if (ImGui::BeginCombo("escena", cur)) {
+                        for (auto& e : escenas_del_proyecto())
+                            if (ImGui::Selectable(e.c_str(), e == a.escena)) a.escena = e;
+                        ImGui::EndCombo();
+                    }
+                    if (!a.escena.empty() && indice_escena(a.escena) < 0)
+                        ImGui::TextColored(ImVec4(1, 0.6f, 0.4f, 1), "  Esa escena ya no esta.");
+                    else
+                        ImGui::TextDisabled("  Se desmonta esta y se monta la otra.");
+                } else {
+                    char tb[192]; snprintf(tb, sizeof(tb), "%s", a.texto.c_str());
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
+                    if (ImGui::InputTextWithHint("texto", "+10 puntos!", tb, sizeof(tb))) a.texto = tb;
+                    ImGui::SetNextItemWidth(90);
+                    ImGui::DragFloat("segundos", &a.seg, 0.1f, 0.2f, 20.0f, "%.1f");
+                }
+                ImGui::PopID();
+            }
+            if (quitar >= 0) acc.erase(acc.begin() + quitar);
+            if (ImGui::SmallButton("+ que pase algo mas")) acc.push_back(Accion());
+            if (acc.empty())
+                ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1),
+                    contexto ? "  (sin nada que hacer: la opcion no hara nada)"
+                             : "  (sin nada que hacer: la regla no se genera)");
+    };
+
     auto ui_reglas = [&](std::vector<Regla>& rs, const std::string& quien) {
         int borrar = -1;
         for (int k = 0; k < (int)rs.size(); k++) {
@@ -2439,55 +2538,7 @@ int main(int, char**) {
             }
 
             ImGui::TextDisabled("...entonces:");
-            int quitar = -1;
-            for (int q = 0; q < (int)r.acciones.size(); q++) {
-                Accion& a = r.acciones[q];
-                ImGui::PushID(1000 + q);
-                const char* tt[] = { "Llamar a codigo mio", "Cambiar una variable",
-                                     "Quitar esto de la escena", "Ensenar un texto",
-                                     "Sonar un sonido", "Ir a otra escena" };
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
-                ImGui::Combo("que", &a.tipo, tt, 6);
-                ImGui::SameLine();
-                if (ImGui::SmallButton("x")) quitar = q;
-                if (a.tipo == 0) {
-                    selector_codigo("codregla", a.archivo, a.proc,
-                                    quien + "_" + std::to_string(k + 1));
-                } else if (a.tipo == 1) {
-                    combo_var("variable", a.var);
-                    const char* oo[] = { "ponerla en", "sumarle", "restarle" };
-                    ImGui::SetNextItemWidth(120); ImGui::Combo("operacion", &a.op, oo, 3);
-                    ImGui::SetNextItemWidth(100); ImGui::DragFloat("cuanto", &a.valor, 1.0f, -100000.0f, 100000.0f, "%.0f");
-                } else if (a.tipo == 2) {
-                    ImGui::TextDisabled("  desaparece y su proceso termina");
-                } else if (a.tipo == 4) {
-                    combo_sonido("sonido", a.sonido);
-                    ImGui::SliderInt("volumen", &a.vol, 0, 128);
-                } else if (a.tipo == 5) {
-                    const char* cur = a.escena.empty() ? "(elige una)" : a.escena.c_str();
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.7f);
-                    if (ImGui::BeginCombo("escena", cur)) {
-                        for (auto& e : escenas_del_proyecto())
-                            if (ImGui::Selectable(e.c_str(), e == a.escena)) a.escena = e;
-                        ImGui::EndCombo();
-                    }
-                    if (!a.escena.empty() && indice_escena(a.escena) < 0)
-                        ImGui::TextColored(ImVec4(1, 0.6f, 0.4f, 1), "  Esa escena ya no esta.");
-                    else
-                        ImGui::TextDisabled("  Se desmonta esta y se monta la otra.");
-                } else {
-                    char tb[192]; snprintf(tb, sizeof(tb), "%s", a.texto.c_str());
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
-                    if (ImGui::InputTextWithHint("texto", "+10 puntos!", tb, sizeof(tb))) a.texto = tb;
-                    ImGui::SetNextItemWidth(90);
-                    ImGui::DragFloat("segundos", &a.seg, 0.1f, 0.2f, 20.0f, "%.1f");
-                }
-                ImGui::PopID();
-            }
-            if (quitar >= 0) r.acciones.erase(r.acciones.begin() + quitar);
-            if (ImGui::SmallButton("+ que pase algo mas")) r.acciones.push_back(Accion());
-            if (r.acciones.empty())
-                ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "  (sin nada que hacer: la regla no se genera)");
+            ui_acciones(r.acciones, quien + "_" + std::to_string(k + 1), 0);
             ImGui::Separator();
             ImGui::PopID();
         }
@@ -2915,6 +2966,13 @@ int main(int, char**) {
                         if (cuerpo) { q += tab; q += "g3d_rigidbody_destroy(cuerpo);\n"; }
                         q += tab; q += "RETURN;   // este proceso se acaba aqui\n";
                         out += q; continue;
+                    } else if (a.tipo == 8) {
+                        if (a.menu.empty()) continue;
+                        // no se abre dos veces si ya esta puesto
+                        snprintf(l, sizeof(l), "%sIF (NOT exists(TYPE %s)) %s(); END\n",
+                                 tab, a.menu.c_str(), a.menu.c_str());
+                    } else if (a.tipo == 7) {
+                        snprintf(l, sizeof(l), "%sexit();\n", tab);
                     } else if (a.tipo == 5) {
                         int ne = indice_escena(a.escena);
                         if (ne < 0) continue;
@@ -3610,10 +3668,10 @@ int main(int, char**) {
                         r.evento, r.radio, r.tecla.c_str(), r.boton.c_str(), r.zona,
                         r.var.c_str(), r.cmp, r.valor, r.cada, r.una_vez, r.mientras);
                 for (auto& a : r.acciones)
-                    fprintf(f, "OBJRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s\n",
+                    fprintf(f, "OBJRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s\n",
                             a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
                             a.op, a.valor, a.seg, a.texto.c_str(),
-                            a.sonido.c_str(), a.vol, a.escena.c_str());
+                            a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str());
             }
         }
         // ---- SPRITES 2D del mundo (hojas de sprites) ----
@@ -3657,10 +3715,10 @@ int main(int, char**) {
                             r.evento, r.radio, r.tecla.c_str(), r.boton.c_str(), r.zona,
                             r.var.c_str(), r.cmp, r.valor, r.cada, r.una_vez, r.mientras);
                     for (auto& a : r.acciones)
-                        fprintf(f, "SPRRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s\n",
+                        fprintf(f, "SPRRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s\n",
                                 a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
                                 a.op, a.valor, a.seg, a.texto.c_str(),
-                                a.sonido.c_str(), a.vol, a.escena.c_str());
+                                a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str());
                 }
                 for (auto& ac : sp.acciones)
                     fprintf(f, "SPRACCION %d|%d|%s|%s|%s|%s|%s|%s\n",
@@ -3823,7 +3881,7 @@ int main(int, char**) {
                         continue;
                     }
                     if (!strncmp(line, "SPRRACC ", 8) && !sp.reglas.empty()) {
-                        std::string p[11]; trozos(line + 8, p, 11);
+                        std::string p[12]; trozos(line + 8, p, 12);
                         Accion a;
                         a.tipo    = atoi(p[0].c_str());
                         a.archivo = p[1]; a.proc = p[2]; a.var = p[3];
@@ -3833,7 +3891,7 @@ int main(int, char**) {
                         a.texto   = p[7];
                         a.sonido  = p[8];
                         if (!p[9].empty()) a.vol = atoi(p[9].c_str());
-                        a.escena  = p[10];
+                        a.escena  = p[10]; a.menu = p[11];
                         sp.reglas.back().acciones.push_back(a);
                         continue;
                     }
@@ -4110,7 +4168,7 @@ int main(int, char**) {
                 continue;
             }
             if (!strncmp(line, "OBJRACC ", 8) && !objects.empty() && !objects.back().reglas.empty()) {
-                std::string p[11]; trozos(line + 8, p, 11);
+                std::string p[12]; trozos(line + 8, p, 12);
                 Accion a;
                 a.tipo    = atoi(p[0].c_str());
                 a.archivo = p[1]; a.proc = p[2]; a.var = p[3];
@@ -4120,7 +4178,7 @@ int main(int, char**) {
                 a.texto   = p[7];
                 a.sonido  = p[8];
                 if (!p[9].empty()) a.vol = atoi(p[9].c_str());
-                a.escena  = p[10];
+                a.escena  = p[10]; a.menu = p[11];
                 objects.back().reglas.back().acciones.push_back(a);
                 continue;
             }
@@ -4207,10 +4265,86 @@ int main(int, char**) {
             fclose(f);
         }
     };
+    /* Los menus se guardan aparte del manifiesto: son una lista con opciones y
+       acciones dentro, y el .bgd2 es de clave=valor. Un fichero por proyecto. */
+    auto guardar_menus = [&]() {
+        std::string ruta = project_dir + "/menus.def";
+        if (menus.empty()) { std::error_code ec; fs::remove(ruta, ec); return; }
+        FILE* f = fopen(ruta.c_str(), "w");
+        if (!f) return;
+        fputs("# menus del proyecto (los hace el editor)\n", f);
+        for (auto& m : menus) {
+            fprintf(f, "MENU %d|%d|%d|%d|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%s\n",
+                    m.cuando, m.x, m.y, m.sep, m.pausa,
+                    m.con_teclado, m.con_mando, m.con_raton,
+                    m.nombre.c_str(), m.tecla.c_str(), m.boton.c_str(),
+                    m.fuente.c_str(), m.fondo.c_str(),
+                    m.snd_mover.c_str(), m.snd_elegir.c_str());
+            fprintf(f, "MCOLOR %d %d %d %d %d %d %d %d\n",
+                    m.col[0], m.col[1], m.col[2], m.col[3],
+                    m.col_sel[0], m.col_sel[1], m.col_sel[2], m.col_sel[3]);
+            for (auto& o : m.opciones) {
+                fprintf(f, "MOPC %s\n", o.texto.c_str());
+                for (auto& a : o.acciones)
+                    fprintf(f, "MACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s\n",
+                            a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
+                            a.op, a.valor, a.seg, a.texto.c_str(),
+                            a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str());
+            }
+        }
+        fclose(f);
+    };
+    auto cargar_menus = [&]() {
+        menus.clear(); menu_sel = -1;
+        FILE* f = fopen((project_dir + "/menus.def").c_str(), "r");
+        if (!f) return;
+        char line[1024];
+        while (fgets(line, sizeof(line), f)) {
+            if (!strncmp(line, "MENU ", 5)) {
+                std::string p[15]; trozos(line + 5, p, 15);
+                Menu m;
+                m.cuando = atoi(p[0].c_str());
+                m.x = atoi(p[1].c_str()); m.y = atoi(p[2].c_str()); m.sep = atoi(p[3].c_str());
+                m.pausa = atoi(p[4].c_str());
+                m.con_teclado = atoi(p[5].c_str()); m.con_mando = atoi(p[6].c_str()); m.con_raton = atoi(p[7].c_str());
+                m.nombre = p[8]; m.tecla = p[9]; m.boton = p[10];
+                m.fuente = p[11]; m.fondo = p[12];
+                m.snd_mover = p[13]; m.snd_elegir = p[14];
+                menus.push_back(m);
+            } else if (!strncmp(line, "MCOLOR ", 7) && !menus.empty()) {
+                Menu& m = menus.back();
+                sscanf(line, "MCOLOR %d %d %d %d %d %d %d %d",
+                       &m.col[0], &m.col[1], &m.col[2], &m.col[3],
+                       &m.col_sel[0], &m.col_sel[1], &m.col_sel[2], &m.col_sel[3]);
+            } else if (!strncmp(line, "MOPC ", 5) && !menus.empty()) {
+                MenuOpc o;
+                std::string t(line + 5);
+                while (!t.empty() && (t.back() == '\n' || t.back() == '\r')) t.pop_back();
+                o.texto = t;
+                menus.back().opciones.push_back(o);
+            } else if (!strncmp(line, "MACC ", 5) && !menus.empty() && !menus.back().opciones.empty()) {
+                std::string p[12]; trozos(line + 5, p, 12);
+                Accion a;
+                a.tipo = atoi(p[0].c_str());
+                a.archivo = p[1]; a.proc = p[2]; a.var = p[3];
+                a.op = atoi(p[4].c_str());
+                a.valor = (float)atof(p[5].c_str());
+                a.seg = (float)atof(p[6].c_str());
+                a.texto = p[7]; a.sonido = p[8];
+                if (!p[9].empty()) a.vol = atoi(p[9].c_str());
+                a.escena = p[10]; a.menu = p[11];
+                menus.back().opciones.back().acciones.push_back(a);
+            }
+        }
+        fclose(f);
+        if (!menus.empty()) menu_sel = 0;
+    };
+
     // GUARDAR PROYECTO: escena actual + manifiesto .bgd2
     auto save_project = [&]() {
         save_scene(scene_path);                 // objetos + terreno + pintado
         write_manifest();
+        guardar_menus();
         status = "Proyecto guardado: " + project_name;
     };
     // crea un proyecto nuevo: carpetas + fichero .bgd2
@@ -4246,6 +4380,7 @@ int main(int, char**) {
             std::string sp = (fs::path(project_dir) / scn).string();
             if (fs::exists(sp)) { scene_path = sp; load_scene(sp); }
         }
+        cargar_menus();
         status = "Proyecto abierto: " + project_name;
     };
 
@@ -4469,6 +4604,12 @@ int main(int, char**) {
             for (auto& r : sp.reglas) for (auto& a : r.acciones)
                 if (a.tipo == 4 && !a.sonido.empty()) sonidos_usados.insert(a.sonido);
         for (auto& z : zsonidos) if (!z.sonido.empty()) sonidos_usados.insert(z.sonido);
+        for (auto& mm : menus) {
+            if (!mm.snd_mover.empty())  sonidos_usados.insert(mm.snd_mover);
+            if (!mm.snd_elegir.empty()) sonidos_usados.insert(mm.snd_elegir);
+            for (auto& o : mm.opciones) for (auto& a : o.acciones)
+                if (a.tipo == 4 && !a.sonido.empty()) sonidos_usados.insert(a.sonido);
+        }
         int n_amb = total_amb();
         /* El juego no puede abrir rutas con letras fuera del ASCII (medido: una
            tilde o un emoji en el nombre y music_load/sound_load devuelven 0). Aqui
@@ -4488,6 +4629,9 @@ int main(int, char**) {
         for (auto& o : objects) for (auto& r : o.reglas) for (auto& a : r.acciones) if (a.tipo == 3) hay_aviso = true;
         for (auto& sp : sprites) for (auto& r : sp.reglas) for (auto& a : r.acciones) if (a.tipo == 3) hay_aviso = true;
         if (hay_aviso) hay_aviso_juego = true;
+        // los menus tambien pueden ensenar textos
+        for (auto& mm : menus) for (auto& o : mm.opciones) for (auto& a : o.acciones)
+            if (a.tipo == 3) hay_aviso_juego = true;
         {
             bool hay_jug = false;
             for (auto& sp : sprites) if (sp.is_player) hay_jug = true;
@@ -4596,6 +4740,12 @@ int main(int, char**) {
                     for (auto& a : r.acciones)
                         if (a.tipo == 0 && !a.proc.empty())
                             llamadas.push_back({ a.proc, sp.name, a.archivo });
+            // y las de las opciones de los menus
+            for (auto& mm : menus)
+                for (auto& o : mm.opciones)
+                    for (auto& a : o.acciones)
+                        if (a.tipo == 0 && !a.proc.empty())
+                            llamadas.push_back({ a.proc, mm.nombre, a.archivo });
             for (auto& ac : llamadas) {
                 /* Con fichero elegido solo hay que incluirlo: el codigo es
                    tuyo y puede tener dentro los procesos que quiera. Sin el,
@@ -6039,6 +6189,154 @@ int main(int, char**) {
         // sigue el hueso con sus variables nativas.
         fputs("        FRAME;\n    END\nEND\n\n", f);
 
+        /* ================= LOS MENUS =================
+           Un PROCESS por menu. Los textos se crean una vez con write() y se
+           colorean por su id con write_set_rgba: mover la seleccion es cambiar dos
+           colores, no rehacer la pantalla. Se maneja con teclado, mando y raton
+           (con text_width/text_height para saber donde esta cada opcion). */
+        for (auto& m : menus) {
+            if (m.opciones.empty()) continue;
+            int n = (int)m.opciones.size();
+            fprintf(f, "// ===== MENU '%s' =====\n", m.nombre.c_str());
+            fprintf(f, "PROCESS %s()\n"
+                       "PRIVATE\n"
+                       "    int sel; int i; int n; int idop[%d]; int fnt;\n"
+                       "    int ant_arr; int ant_aba; int ant_ok; int arr; int aba; int ok;\n"
+                       "    int tw; int th; int mx; int my;\n"
+                       "END\n"
+                       "BEGIN\n"
+                       "    n = %d;  sel = 0;\n",
+                    m.nombre.c_str(), n > 0 ? n : 1, n);
+            if (!m.fuente.empty())
+                fprintf(f, "    fnt = fnt_load(\"Assets/%s\");\n"
+                           "    IF (fnt <= 0) fnt = 0; END   // si no carga, la del sistema\n",
+                        m.fuente.c_str());
+            else fputs("    fnt = 0;   // la fuente del sistema\n", f);
+            if (!m.fondo.empty()) {
+                fprintf(f, "    // el fondo del menu\n"
+                           "    file = 0;  graph = map_load(\"Assets/%s\");\n"
+                           "    x = 640; y = 360; z = -400;\n", m.fondo.c_str());
+            } else {
+                fputs("    z = -400;   // por encima del juego\n", f);
+            }
+            if (m.pausa)
+                fputs("    signal(ALL_PROCESS, S_FREEZE);   // el mundo se queda quieto y a la vista\n", f);
+            for (int i = 0; i < n; i++)
+                fprintf(f, "    idop[%d] = write(fnt, %d, %d, 4, \"%s\");\n",
+                        i, m.x, m.y + i * m.sep, m.opciones[i].texto.c_str());
+            fputs("\n    LOOP\n"
+                  "        // ---- moverse por las opciones ----\n", f);
+            {
+                std::string arr, aba, ok;
+                if (m.con_teclado) { arr = "key(_UP)"; aba = "key(_DOWN)"; ok = "key(_ENTER) OR key(_SPACE)"; }
+                if (m.con_mando) {
+                    auto suma = [](std::string& d, const char* q) { if (!d.empty()) d += " OR "; d += q; };
+                    suma(arr, "joy_getbutton(JOY_BUTTON_DPAD_UP) OR joy_getaxis(JOY_AXIS_LEFTY) < -16000");
+                    suma(aba, "joy_getbutton(JOY_BUTTON_DPAD_DOWN) OR joy_getaxis(JOY_AXIS_LEFTY) > 16000");
+                    suma(ok,  "joy_getbutton(JOY_BUTTON_A)");
+                }
+                if (arr.empty()) { arr = "0"; aba = "0"; ok = "0"; }
+                fprintf(f, "        arr = (%s);\n        aba = (%s);\n        ok  = (%s);\n",
+                        arr.c_str(), aba.c_str(), ok.c_str());
+            }
+            fputs("        // al PULSAR, no mientras se aguanta\n"
+                  "        IF (arr AND ant_arr == 0)  sel = sel - 1;  IF (sel < 0) sel = n - 1; END\n", f);
+            if (!m.snd_mover.empty())
+                fprintf(f, "            sound_play(%s, 0);\n", var_sonido(m.snd_mover).c_str());
+            fputs("        END\n"
+                  "        IF (aba AND ant_aba == 0)  sel = sel + 1;  IF (sel >= n) sel = 0; END\n", f);
+            if (!m.snd_mover.empty())
+                fprintf(f, "            sound_play(%s, 0);\n", var_sonido(m.snd_mover).c_str());
+            fputs("        END\n"
+                  "        ant_arr = arr;  ant_aba = aba;\n", f);
+            if (m.con_raton) {
+                fprintf(f,
+                  "        // ---- el raton: la opcion que este debajo ----\n"
+                  "        mx = mouse.x;  my = mouse.y;\n"
+                  "        FOR (i = 0; i < n; i = i + 1)\n"
+                  "            th = text_height(fnt, \"Ay\");\n"
+                  "            IF (my > %d + i * %d - th / 2 AND my < %d + i * %d + th / 2)\n"
+                  "                sel = i;\n"
+                  "                IF (mouse.left) ok = 1; END\n"
+                  "            END\n"
+                  "        END\n", m.y, m.sep, m.y, m.sep);
+            }
+            fprintf(f,
+                  "        // ---- pintar: la elegida de otro color ----\n"
+                  "        FOR (i = 0; i < n; i = i + 1)\n"
+                  "            IF (i == sel) write_set_rgba(idop[i], %d, %d, %d, %d);\n"
+                  "            ELSE          write_set_rgba(idop[i], %d, %d, %d, %d); END\n"
+                  "        END\n",
+                  m.col_sel[0], m.col_sel[1], m.col_sel[2], m.col_sel[3],
+                  m.col[0], m.col[1], m.col[2], m.col[3]);
+            fputs("        // ---- elegir ----\n"
+                  "        IF (ok AND ant_ok == 0)\n", f);
+            if (!m.snd_elegir.empty())
+                fprintf(f, "            sound_play(%s, 0);\n", var_sonido(m.snd_elegir).c_str());
+            for (int i = 0; i < n; i++) {
+                fprintf(f, "            IF (sel == %d)\n", i);
+                for (auto& a : m.opciones[i].acciones) {
+                    if (a.tipo == 0 && !a.proc.empty())
+                        fprintf(f, "                %s();\n", a.proc.c_str());
+                    else if (a.tipo == 1 && !a.var.empty()) {
+                        int v = (int)(a.valor >= 0.0f ? a.valor + 0.5f : a.valor - 0.5f);
+                        if (a.op == 0)      fprintf(f, "                %s = %d;\n", a.var.c_str(), v);
+                        else if (a.op == 1) fprintf(f, "                %s = %s + %d;\n", a.var.c_str(), a.var.c_str(), v);
+                        else                fprintf(f, "                %s = %s - %d;\n", a.var.c_str(), a.var.c_str(), v);
+                    }
+                    else if (a.tipo == 3) {
+                        std::string t = a.texto;
+                        for (auto& c : t) if (c == '"') c = '\'';
+                        fprintf(f, "                aviso_txt = \"%s\"; aviso_t = %.2f;\n", t.c_str(), a.seg);
+                    }
+                    else if (a.tipo == 4 && !a.sonido.empty())
+                        fprintf(f, "                sound_play(%s, 0);\n", var_sonido(a.sonido).c_str());
+                    else if (a.tipo == 5) {
+                        int ne = indice_escena(a.escena);
+                        if (ne >= 0) fprintf(f, "                escena_pedida = %d;   // ir a %s\n", ne, a.escena.c_str());
+                    }
+                    else if (a.tipo == 6 || a.tipo == 7) {
+                        // cerrar o salir: los dos deshacen el menu primero
+                        fputs("                FOR (i = 0; i < n; i = i + 1)  write_delete(idop[i]);  END\n", f);
+                        if (m.pausa) fputs("                signal(ALL_PROCESS, S_WAKEUP);\n", f);
+                        if (a.tipo == 7) fputs("                exit();\n", f);
+                        else             fputs("                RETURN;\n", f);
+                    }
+                }
+                fputs("            END\n", f);
+            }
+            fputs("        END\n"
+                  "        ant_ok = ok;\n"
+                  "        FRAME;\n"
+                  "    END\n"
+                  "END\n\n", f);
+        }
+
+        // Los menus que se abren con una tecla llevan su vigilante: mira la tecla y
+        // los saca, sin abrir dos veces el mismo.
+        for (auto& m : menus) {
+            if (m.cuando != 1 || m.opciones.empty()) continue;
+            std::string puls;
+            if (!m.tecla.empty()) puls = "key(" + m.tecla + ")";
+            if (!m.boton.empty() && m.con_mando) {
+                if (!puls.empty()) puls += " OR ";
+                puls += "joy_getbutton(" + m.boton + ")";
+            }
+            if (puls.empty()) continue;
+            fprintf(f, "// Saca el menu '%s' cuando lo pides.\n"
+                       "PROCESS %s_vigila()\n"
+                       "PRIVATE int ant;\nEND\n"
+                       "BEGIN\n"
+                       "    LOOP\n"
+                       "        IF ((%s) AND ant == 0 AND NOT exists(TYPE %s))  %s();  END\n"
+                       "        ant = (%s);\n"
+                       "        FRAME;\n"
+                       "    END\n"
+                       "END\n\n",
+                    m.nombre.c_str(), m.nombre.c_str(), puls.c_str(),
+                    m.nombre.c_str(), m.nombre.c_str(), puls.c_str());
+        }
+
         /* ================= CAMBIAR DE ESCENA =================
            Desmontar es matar los procesos de la escena que estaba puesta (por su
            nombre, uno a uno: let_me_alone() se llevaria por delante tu main) y
@@ -6112,8 +6410,13 @@ int main(int, char**) {
                   "    IF (joy_numjoysticks() > 0) joy_select(0); END\n", f);
             if (hay_aviso_juego) fputs("    escena_aviso();   // el cartelito de las reglas\n", f);
             fprintf(f, "    escena_cargar(%d);\n"
-                       "    escena_gestor();   // atiende los cambios de escena\n"
-                       "    RETURN;\nEND\n", inicial);
+                       "    escena_gestor();   // atiende los cambios de escena\n", inicial);
+            for (auto& m : menus) {
+                if (m.opciones.empty()) continue;
+                if (m.cuando == 0) fprintf(f, "    %s();   // menu de arranque\n", m.nombre.c_str());
+                if (m.cuando == 1) fprintf(f, "    %s_vigila();   // menu con tecla\n", m.nombre.c_str());
+            }
+            fputs("    RETURN;\nEND\n", f);
         }
         fclose(f);
         std::string cuerpo(setup_buf ? setup_buf : "", setup_sz);
@@ -6615,6 +6918,7 @@ int main(int, char**) {
             }
             if (ImGui::BeginMenu("Escena")) {
                 ImGui::MenuItem(ICON_FA_LAYER_GROUP "  Escenas del proyecto", nullptr, &show_escenas);
+                ImGui::MenuItem(ICON_FA_BARS "  Menus del juego", nullptr, &show_menus);
                 ImGui::MenuItem(ICON_FA_PERSON_RUNNING "  Sprites 3D (hojas y personajes)",
                                 nullptr, &show_spr_win);
                 ImGui::Separator();
@@ -10322,6 +10626,124 @@ int main(int, char**) {
             ImGui::SameLine();
             if (ImGui::Button("Cancelar", ImVec2(140, 0))) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
+        }
+
+        /* ---- MENUS: principal, pausa, opciones ----
+           Eliges la fuente, escribes las opciones y dices que hace cada una. Sale
+           como un PROCESS de BennuGD2 con write() y write_set_rgba, que se maneja
+           con teclado, mando o raton. */
+        if (show_menus) {
+            ImGui::SetNextWindowSize(ImVec2(560, 520), ImGuiCond_FirstUseEver);
+            ImGui::Begin("Menus del juego", &show_menus);
+            ImGui::BeginChild("lista_menus", ImVec2(150, 0), true);
+            ImGui::TextDisabled("MENUS");
+            for (int i = 0; i < (int)menus.size(); i++) {
+                ImGui::PushID(i);
+                if (ImGui::Selectable(menus[i].nombre.c_str(), menu_sel == i)) menu_sel = i;
+                ImGui::PopID();
+            }
+            if (menus.empty()) ImGui::TextDisabled("(ninguno)");
+            ImGui::Spacing();
+            if (ImGui::Button(ICON_FA_PLUS "  Nuevo", ImVec2(-1, 0))) {
+                Menu m;
+                m.nombre = "menu" + std::to_string((int)menus.size() + 1);
+                // uno recien hecho ya trae algo con lo que empezar
+                MenuOpc j; j.texto = "Jugar";   m.opciones.push_back(j);
+                MenuOpc x; x.texto = "Salir";
+                { Accion a; a.tipo = 7; x.acciones.push_back(a); }
+                m.opciones.push_back(x);
+                menus.push_back(m);
+                menu_sel = (int)menus.size() - 1;
+            }
+            ImGui::EndChild();
+            ImGui::SameLine();
+            ImGui::BeginChild("ficha_menu", ImVec2(0, 0), false);
+            if (menu_sel >= 0 && menu_sel < (int)menus.size()) {
+                Menu& m = menus[menu_sel];
+                { char nb[80]; snprintf(nb, sizeof(nb), "%s", m.nombre.c_str());
+                  ImGui::SetNextItemWidth(200);
+                  if (ImGui::InputText("Nombre (PROCESS)", nb, sizeof(nb))) m.nombre = ident_bgd(nb, "menu"); }
+                const char* cc[] = { "Al arrancar el juego", "Al pulsar una tecla o boton",
+                                     "Solo cuando lo llame una regla" };
+                ImGui::SetNextItemWidth(260);
+                ImGui::Combo("Cuando sale", &m.cuando, cc, 3);
+                if (m.cuando == 1) {
+                    ImGui::SetNextItemWidth(110); combo_tecla_ui("tecla", m.tecla);
+                    combo_boton_ui("boton", m.boton);
+                }
+                bool pa = m.pausa != 0;
+                if (ImGui::Checkbox("Congela el juego mientras esta abierto", &pa)) m.pausa = pa ? 1 : 0;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Para el menu de pausa. El mundo se queda quieto y a la vista.");
+
+                ImGui::SeparatorText("Como se ve");
+                ImGui::DragInt2("Donde empieza (x, y)", &m.x, 1.0f, 0, 4000);
+                ImGui::DragInt("Separacion entre opciones", &m.sep, 0.5f, 8, 200);
+                {   // fuente .fnt de Assets (la lista ya la tiene el HUD 2D)
+                    const char* cur = m.fuente.empty() ? "(la del sistema)" : m.fuente.c_str();
+                    ImGui::SetNextItemWidth(240);
+                    if (ImGui::BeginCombo("Fuente", cur)) {
+                        if (ImGui::Selectable("(la del sistema)", m.fuente.empty())) m.fuente.clear();
+                        for (auto& fn : hud_font_files)
+                            if (ImGui::Selectable(fn.c_str(), fn == m.fuente)) m.fuente = fn;
+                        ImGui::EndCombo();
+                    }
+                }
+                {   const char* cur = m.fondo.empty() ? "(ninguno)" : m.fondo.c_str();
+                    ImGui::SetNextItemWidth(240);
+                    if (ImGui::BeginCombo("Fondo", cur)) {
+                        if (ImGui::Selectable("(ninguno)", m.fondo.empty())) m.fondo.clear();
+                        for (auto& g : hud_gfx_files)
+                            if (ImGui::Selectable(g.c_str(), g == m.fondo)) m.fondo = g;
+                        ImGui::EndCombo();
+                    }
+                }
+                { float c1[3] = { m.col[0]/255.0f, m.col[1]/255.0f, m.col[2]/255.0f };
+                  if (ImGui::ColorEdit3("Color normal", c1))
+                      { m.col[0]=(int)(c1[0]*255); m.col[1]=(int)(c1[1]*255); m.col[2]=(int)(c1[2]*255); }
+                  float c2[3] = { m.col_sel[0]/255.0f, m.col_sel[1]/255.0f, m.col_sel[2]/255.0f };
+                  if (ImGui::ColorEdit3("Color de la elegida", c2))
+                      { m.col_sel[0]=(int)(c2[0]*255); m.col_sel[1]=(int)(c2[1]*255); m.col_sel[2]=(int)(c2[2]*255); } }
+
+                ImGui::SeparatorText("Como se maneja");
+                { bool t = m.con_teclado != 0, g = m.con_mando != 0, r = m.con_raton != 0;
+                  if (ImGui::Checkbox("Teclado", &t)) m.con_teclado = t;
+                  ImGui::SameLine();
+                  if (ImGui::Checkbox("Mando", &g)) m.con_mando = g;
+                  ImGui::SameLine();
+                  if (ImGui::Checkbox("Raton", &r)) m.con_raton = r; }
+                combo_sonido("Sonido al moverse", m.snd_mover);
+                combo_sonido("Sonido al elegir", m.snd_elegir);
+
+                ImGui::SeparatorText("Opciones");
+                int quitar_o = -1;
+                for (int q = 0; q < (int)m.opciones.size(); q++) {
+                    ImGui::PushID(500 + q);
+                    char tb[128]; snprintf(tb, sizeof(tb), "%s", m.opciones[q].texto.c_str());
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+                    if (ImGui::InputText("texto", tb, sizeof(tb))) m.opciones[q].texto = tb;
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Quitar")) quitar_o = q;
+                    ui_acciones(m.opciones[q].acciones,
+                                m.nombre + "_" + std::to_string(q + 1), 1);
+                    ImGui::Separator();
+                    ImGui::PopID();
+                }
+                if (quitar_o >= 0) m.opciones.erase(m.opciones.begin() + quitar_o);
+                if (ImGui::Button(ICON_FA_PLUS "  Anadir opcion", ImVec2(-1, 0)))
+                    m.opciones.push_back(MenuOpc());
+                ImGui::Spacing();
+                if (ImGui::Button("Borrar este menu", ImVec2(-1, 0))) {
+                    menus.erase(menus.begin() + menu_sel);
+                    menu_sel = menus.empty() ? -1 : 0;
+                }
+            } else {
+                ImGui::TextWrapped("Un menu es una lista de opciones y lo que hace cada una: "
+                                   "empezar la partida (ir a una escena), abrir otro menu, "
+                                   "cambiar una variable, llamar a tu codigo o salir del juego.");
+            }
+            ImGui::EndChild();
+            ImGui::End();
         }
 
         /* ---- Las ESCENAS del proyecto ----

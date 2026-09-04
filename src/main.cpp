@@ -3123,7 +3123,7 @@ int main(int, char**) {
         char b[4096];
         std::string acc_ini, acc_loop;
         reglas_codigo(o.reglas, base_reglas_obj(o),
-                      (o.phys >= 1 && o.phys <= 4) ? 1 : 0, 0, acc_ini, acc_loop);
+                      ((o.phys >= 1 && o.phys <= 4) || o.phys == 7) ? 1 : 0, 0, acc_ini, acc_loop);
         acc_loop += amb_codigo(o, slot_amb(o));
 
         // ---------------- OBJETO ENGANCHADO A UN HUESO (arma en la mano) ----------------
@@ -3391,7 +3391,9 @@ int main(int, char**) {
         }
 
         // ---------------- OBJETO CON FISICA ----------------
-        if (o.phys >= 1 && o.phys <= 4) {
+        // 1..4 = formas sueltas (caja, esfera, capsula, cilindro); 7 = la forma
+        // del propio modelo (envolvente convexa), que es la que no hay que ajustar.
+        if ((o.phys >= 1 && o.phys <= 4) || o.phys == 7) {
             float c = o.csize > 0.05f ? o.csize : 0.5f;
             float by0 = o.y + c;             // el cuerpo se apoya donde lo colocaste
             char hdr[1400];
@@ -3420,14 +3422,25 @@ int main(int, char**) {
             { void* mm = load_model(o.asset);
               if (mm && g3d_model_animation_count(mm) > 0 && !g3d_model_is_skinned(mm))
                   s += "    g3d_model_animate_all(modelo, 0.0, 0);   // posar (piezas en nodos)\n"; }
-            const char* mk =
-                (o.phys == 1) ? "    cuerpo = g3d_rigidbody_create(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n"
-              : (o.phys == 2) ? "    cuerpo = g3d_rigidbody_create_sphere(%.3f, %.3f, %.3f, %.3f, %.3f);\n"
-              : (o.phys == 3) ? "    cuerpo = g3d_rigidbody_create_capsule(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n"
-                              : "    cuerpo = g3d_rigidbody_create_cylinder(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n";
-            if (o.phys == 1)      snprintf(b, sizeof(b), mk, o.x, by0, o.z, c, c, c, o.mass);
-            else if (o.phys == 2) snprintf(b, sizeof(b), mk, o.x, by0, o.z, c, o.mass);
-            else                  snprintf(b, sizeof(b), mk, o.x, by0, o.z, c, c, o.mass);
+            if (o.phys == 7) {
+                /* LA FORMA DEL MODELO. Una envolvente convexa hecha con los vertices
+                   del propio modelo: se ajusta sola, sin dar tamanios a ojo. Jolt no
+                   admite malla exacta en algo que se mueve, asi que para lo que se
+                   mueve esto es lo mas ajustado que hay. */
+                snprintf(b, sizeof(b),
+                         "    // la colision es LA FORMA DEL MODELO (envolvente convexa)\n"
+                         "    cuerpo = g3d_rigidbody_create_convex_model(%.3f, %.3f, %.3f, modelo, %.3f, %.3f);\n",
+                         o.x, o.y, o.z, o.scale, o.mass);
+            } else {
+                const char* mk =
+                    (o.phys == 1) ? "    cuerpo = g3d_rigidbody_create(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n"
+                  : (o.phys == 2) ? "    cuerpo = g3d_rigidbody_create_sphere(%.3f, %.3f, %.3f, %.3f, %.3f);\n"
+                  : (o.phys == 3) ? "    cuerpo = g3d_rigidbody_create_capsule(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n"
+                                  : "    cuerpo = g3d_rigidbody_create_cylinder(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n";
+                if (o.phys == 1)      snprintf(b, sizeof(b), mk, o.x, by0, o.z, c, c, c, o.mass);
+                else if (o.phys == 2) snprintf(b, sizeof(b), mk, o.x, by0, o.z, c, o.mass);
+                else                  snprintf(b, sizeof(b), mk, o.x, by0, o.z, c, c, o.mass);
+            }
             s += b;
             snprintf(b, sizeof(b), "    g3d_rigidbody_set_bounce(cuerpo, %.3f, %.3f);   // rebote, friccion\n",
                      o.bounce, o.friction);
@@ -4580,7 +4593,9 @@ int main(int, char**) {
         // juego, porque su fisica vive en el script y el script no se rehacia nunca.
         // En cuanto lo editas a mano, la marca deja de cuadrar y ya no se toca.
         for (auto& o : objects) {
-            bool necesita = o.is_player || (o.phys >= 0 && o.phys <= 4)   // 5 = muro (sin script)
+            // 5 = muro y 6 = malla exacta no llevan script (son colisionadores
+            // estaticos, no hay nada que mover); 7 = envolvente si, que es un cuerpo.
+            bool necesita = o.is_player || (o.phys >= 0 && o.phys <= 4) || o.phys == 7
                             || !o.reglas.empty();
             if (!necesita) continue;
             std::string psp = scripts_dir + "/" + o.name + ".prg";
@@ -6001,6 +6016,17 @@ int main(int, char**) {
             // ---- muro invisible: solo un colisionador estatico, sin entidad ----
             // Es invisible en el juego, asi que no hay nada que dibujar: no se
             // spawnea modelo ni proceso, solo se registra la caja de colision.
+            /* MALLA EXACTA: la colision es la geometria del modelo, triangulo a
+               triangulo. No se mueve (Jolt no admite malla movil), asi que se
+               registra el colisionador y el objeto se dibuja como cualquier
+               decorado: nada de tamanios que ajustar. */
+            if (o.phys == 6 && !o.is_player) {
+                fprintf(f, "    // colision EXACTA de '%s' (su propia malla)\n"
+                           "    m = %s(\"Assets/%s\");\n"
+                           "    IF (m > 0) g3d_collider_add_model(m, %.3f, %.3f, %.3f, %.3f); END\n",
+                        o.name.c_str(), loader, o.asset.c_str(),
+                        o.x, o.y, o.z, o.scale);
+            }
             if (o.phys == 5 && !o.is_player) {
                 float hx = o.csize > 0.05f ? o.csize : 0.5f;
                 fprintf(f, "    g3d_collider_add_box(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f);   // muro '%s'\n",
@@ -10431,8 +10457,35 @@ int main(int, char**) {
             }
             if (ImGui::CollapsingHeader(ICON_FA_CUBES "  Fisica (Jolt)")) {
                 const char* ptypes[] = { "Ninguna (decorativo)", "Caja", "Esfera", "Capsula",
-                                         "Cilindro", "Muro invisible (colision)" };
+                                         "Cilindro", "Muro invisible (colision)",
+                                         "Malla exacta del modelo (fijo)",
+                                         "Forma del modelo (se puede mover)" };
                 ImGui::Combo("Cuerpo", &o.phys, ptypes, IM_ARRAYSIZE(ptypes));
+                /* Las dos ultimas sacan la colision del PROPIO modelo, asi que no
+                   hay tamanio que ajustar: es el problema de las cajas y esferas,
+                   que en cuanto el objeto no es cuadrado no hay numero que valga. */
+                if (o.phys == 6) {
+                    ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1), "Exacta: la colision ES el modelo");
+                    ImGui::TextWrapped("Triangulo a triangulo: paredes, suelos, escaleras, rocas, "
+                                       "un nivel entero. Nada que ajustar. Como no se mueve (Jolt no "
+                                       "admite malla movil), sirve para el decorado solido: el jugador "
+                                       "y los objetos chocan con el, pero nada lo empuja.");
+                } else if (o.phys == 7) {
+                    ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1), "La forma del modelo, y se mueve");
+                    ImGui::TextWrapped("Una envolvente convexa hecha con los vertices del modelo: se "
+                                       "ajusta sola. Es lo mas pegado que se puede tener en algo que se "
+                                       "mueve. Ojo: rellena los huecos (una silla colisiona como un "
+                                       "bloque con su silueta); si necesitas el hueco de verdad, hazlo "
+                                       "fijo con 'Malla exacta'.");
+                    bool fijo7 = (o.mass <= 0.0f);
+                    ImGui::TextUnformatted("Se mueve:");
+                    if (ImGui::RadioButton("No, es fijo (corta el paso)##m7", fijo7)) o.mass = 0.0f;
+                    if (ImGui::RadioButton("Si, se puede empujar##m7", !fijo7) && fijo7) o.mass = 1.0f;
+                    if (!fijo7)
+                        ImGui::DragFloat("Masa / peso##m7", &o.mass, 0.1f, 0.01f, 1000.0f, "%.2f kg");
+                    ImGui::DragFloat("Rebote##m7",   &o.bounce,   0.01f, 0.0f, 1.0f, "%.2f");
+                    ImGui::DragFloat("Friccion##m7", &o.friction, 0.01f, 0.0f, 2.0f, "%.2f");
+                }
                 if (o.phys >= 1 && o.phys <= 4) {         // cuerpo dinamico
                     /* Que se mueva o no es la pregunta de verdad, y estaba escondida
                        en un 0 de la masa: una roca con la masa que viene puesta (1 kg)

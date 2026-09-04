@@ -124,6 +124,21 @@ Dos cosas que conviene saber:
 - Las **variables del juego viven en el proyecto** (`.bgd2`), no en la escena: los
   puntos y la vida sobreviven al cambio de mapa.
 
+## Colisión: la forma del propio modelo
+
+Además de caja, esfera, cápsula y cilindro —donde la colisión es **un solo número** y
+nada que no sea cuadrado encaja— hay dos formas que salen del modelo y **no hay que
+ajustar**:
+
+- **Malla exacta del modelo (fijo)**: la colisión *es* la geometría, triángulo a
+  triángulo. Paredes, suelos, escaleras, rocas, un nivel entero. No se mueve (Jolt no
+  admite malla móvil), así que es el decorado sólido: chocas con él, pero nada lo empuja.
+- **Forma del modelo (se puede mover)**: una envolvente convexa hecha con los vértices
+  del modelo. Es lo más pegado que se puede tener en algo que se mueve. Rellena los
+  huecos (una silla colisiona como un bloque con su silueta); si necesitas el hueco de
+  verdad, hazlo fijo con la malla exacta.
+
+
 ## Reglas: si pasa esto, haz esto
 
 *Juego → Variables del juego* declara lo que el juego cuenta (`puntos`, `vida`,

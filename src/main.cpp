@@ -1297,6 +1297,9 @@ int main(int, char**) {
     std::string run_log_path;
     auto console_add = [&](const std::string& s) {   // anadir texto y auto-scroll
         game_out += s; console_scroll = true;
+        // DEPURACION: con EDITOR_CONSOLA_STDOUT=1 la consola sale tambien por la
+        // terminal, para ver los avisos sin abrir el panel (util sin GUI).
+        if (getenv("EDITOR_CONSOLA_STDOUT")) { fputs(s.c_str(), stdout); fflush(stdout); }
         if (game_out.size() > 400000) game_out.erase(0, game_out.size() - 300000);  // no crecer sin fin
     };
     std::string script_obj = "barril_01";  // objeto cuyo script se edita (placeholder)
@@ -6919,6 +6922,22 @@ int main(int, char**) {
         for (auto& m : menus) {
             if (m.opciones.empty()) continue;
             int n = (int)m.opciones.size();
+            /* Un menu que congela el juego y no tiene NINGUNA opcion que lo cierre
+               deja el juego parado para siempre: no es un fallo del motor, es que
+               falta ponerle salida. Mejor decirlo al generar que descubrirlo
+               jugando. */
+            if (m.pausa) {
+                bool tiene_salida = false;
+                for (auto& o : m.opciones) {
+                    if (o.clase == 2 && o.ranura_modo == 0) tiene_salida = true;   // cargar partida
+                    for (auto& a : o.acciones)
+                        if (a.tipo == 6 || a.tipo == 7 || a.tipo == 5) tiene_salida = true;
+                }
+                if (!tiene_salida)
+                    console_add("AVISO: el menu '" + m.nombre + "' congela el juego y ninguna de sus\n"
+                                "  opciones lo cierra. Ponle una con \"Cerrar el menu\" (o \"Ir a otra\n"
+                                "  escena\" / \"Salir del juego\"), o al abrirlo no se podra jugar.\n");
+            }
             fprintf(f, "// ===== MENU '%s' =====\n", m.nombre.c_str());
             fprintf(f, "PROCESS %s()\n"
                        "PRIVATE\n"
@@ -7469,8 +7488,13 @@ int main(int, char**) {
                     "    END\n", max_reglas);
             for (size_t i = 0; i < esc_pref.size(); i++)
                 fprintf(f, "    IF (n == %d) %s_montar(); END\n", (int)i, esc_pref[i].c_str());
-            fputs("    escena_actual = n;\n"
-                  "    RETURN;\nEND\n\n", f);
+            fputs("    escena_actual = n;\n", f);
+            if (!ajustes.empty())
+                fputs("    /* Montar una escena hace set_mode(1280,720), o sea EN VENTANA, y\n"
+                      "       eso deshacia tu pantalla completa cada vez que se cargaba una.\n"
+                      "       Por eso se vuelven a aplicar aqui, con la escena ya puesta. */\n"
+                      "    opciones_aplicar();\n", f);
+            fputs("    RETURN;\nEND\n\n", f);
 
             fputs("/* Vigila las peticiones de cambio de escena. No se cambia en el sitio\n"
                   "   donde se pide (una regla de un objeto) porque ese objeto es de la\n"
@@ -11963,7 +11987,12 @@ int main(int, char**) {
                 Menu m;
                 m.nombre = "menu" + std::to_string((int)menus.size() + 1);
                 // uno recien hecho ya trae algo con lo que empezar
-                MenuOpc j; j.texto = "Jugar";   m.opciones.push_back(j);
+                /* "Jugar" TIENE que cerrar el menu. Sin accion no hacia nada: con un
+                   menu de arranque que congela el juego, pulsarla no te dejaba
+                   jugar y parecia que el juego estaba colgado. */
+                MenuOpc j; j.texto = "Jugar";
+                { Accion a; a.tipo = 6; j.acciones.push_back(a); }
+                m.opciones.push_back(j);
                 MenuOpc x; x.texto = "Salir";
                 { Accion a; a.tipo = 7; x.acciones.push_back(a); }
                 m.opciones.push_back(x);

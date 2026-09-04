@@ -1114,6 +1114,7 @@ int main(int, char**) {
     bool show_gvars = false;               // ventana de variables del juego
     bool show_escenas = false;             // ventana de escenas del proyecto
     bool show_menus = false;               // ventana de menus del juego
+    bool show_dialogos = false;            // ventana de dialogos
     /* ---- MODOS DE TRABAJO ----
        El editor no ensenia todo a la vez: cada modo saca sus herramientas y sus
        paneles, y esconde lo que no toca. Es lo que hace que no se amontone. */
@@ -1239,6 +1240,7 @@ int main(int, char**) {
         std::string escena;                               // 5  (fichero .scene destino)
         // 6 = cerrar el menu, 7 = salir del juego (no llevan datos)
         std::string menu;                                 // 8  (menu que se abre)
+        std::string dialogo;                              // 9  (dialogo que se saca)
     };
     struct Regla {
         int evento = 0;    // 0 al empezar, 1 cada frame, 2 acercarse y pulsar,
@@ -1283,6 +1285,43 @@ int main(int, char**) {
     };
     std::vector<Menu> menus;
     int menu_sel = -1;
+
+    /* ================== DIALOGOS ==================
+       Un dialogo es lo que dice alguien: una lista de paginas, y cada pagina su
+       texto (con quien habla y su retrato) y, si quieres, respuestas que llevan a
+       otra pagina. El bocadillo es un grafico TUYO -- un PNG suelto o un grafico
+       de un FPG -- estirado al tamanio que le des. Son del proyecto, como los
+       menus: el mismo bocadillo vale en todas las escenas. */
+    struct DlgOpc {
+        std::string texto = "Respuesta";
+        std::vector<Accion> acciones;
+        int salto = -1;                 // -1 = cerrar; >= 0 = ir a esa pagina
+    };
+    struct DlgPag {
+        std::string quien;              // quien habla (vacio = nadie)
+        std::string texto = "...";
+        std::string retrato;            // imagen o FPG del retrato (opcional)
+        int  retrato_graf = 1;
+        std::vector<DlgOpc> opciones;   // si tiene, la pagina es una pregunta
+    };
+    struct Dialogo {
+        std::string nombre = "dialogo";
+        std::string caja;               // PNG o FPG del bocadillo ("" = sin caja)
+        int  caja_graf = 1;             // si la caja es un FPG, que grafico
+        int  cx = 640, cy = 560;        // centro del bocadillo
+        int  cw = 900, ch = 200;        // y a que tamanio se estira
+        std::string fuente;             // .fnt ("" = la del sistema)
+        int  col[4]        = { 235, 235, 235, 255 };
+        int  col_nombre[4] = { 255, 220, 120, 255 };
+        int  mx = 28, my = 24;          // margenes del texto dentro de la caja
+        int  vel = 40;                  // letras por segundo (0 = de golpe)
+        std::string snd_letra, snd_pasar;
+        std::string tecla = "_SPACE", boton = "JOY_BUTTON_A";
+        int  pausa = 1;                 // congela el juego mientras habla
+        std::vector<DlgPag> paginas;
+    };
+    std::vector<Dialogo> dialogos;
+    int dlg_sel = -1;
 
     struct GameVar { std::string nombre; int valor = 0; };
     std::vector<GameVar> gvars;
@@ -2434,9 +2473,9 @@ int main(int, char**) {
                                      "Quitar esto de la escena", "Ensenar un texto",
                                      "Sonar un sonido", "Ir a otra escena",
                                      "Cerrar el menu", "Salir del juego",
-                                     "Abrir un menu" };
+                                     "Abrir un menu", "Sacar un dialogo" };
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
-                ImGui::Combo("que", &a.tipo, tt, 9);
+                ImGui::Combo("que", &a.tipo, tt, 10);
                 ImGui::SameLine();
                 if (ImGui::SmallButton("x")) quitar = q;
                 if (a.tipo == 0) {
@@ -2454,6 +2493,16 @@ int main(int, char**) {
                     else          ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "  (esto es para un menu)");
                 } else if (a.tipo == 7) {
                     ImGui::TextDisabled("  se acaba el programa (exit)");
+                } else if (a.tipo == 9) {
+                    const char* cur = a.dialogo.empty() ? "(elige uno)" : a.dialogo.c_str();
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
+                    if (ImGui::BeginCombo("dialogo", cur)) {
+                        for (auto& dd : dialogos)
+                            if (ImGui::Selectable(dd.nombre.c_str(), dd.nombre == a.dialogo)) a.dialogo = dd.nombre;
+                        if (dialogos.empty()) ImGui::TextDisabled("(ninguno: Escena > Dialogos)");
+                        ImGui::EndCombo();
+                    }
+                    ImGui::TextDisabled("  se pone a hablar; no sale dos veces a la vez");
                 } else if (a.tipo == 8) {
                     const char* cur = a.menu.empty() ? "(elige uno)" : a.menu.c_str();
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
@@ -2974,6 +3023,10 @@ int main(int, char**) {
                         if (cuerpo) { q += tab; q += "g3d_rigidbody_destroy(cuerpo);\n"; }
                         q += tab; q += "RETURN;   // este proceso se acaba aqui\n";
                         out += q; continue;
+                    } else if (a.tipo == 9) {
+                        if (a.dialogo.empty()) continue;
+                        snprintf(l, sizeof(l), "%sIF (NOT exists(TYPE %s)) %s(); END\n",
+                                 tab, a.dialogo.c_str(), a.dialogo.c_str());
                     } else if (a.tipo == 8) {
                         if (a.menu.empty()) continue;
                         // no se abre dos veces si ya esta puesto
@@ -3689,10 +3742,10 @@ int main(int, char**) {
                         r.evento, r.radio, r.tecla.c_str(), r.boton.c_str(), r.zona,
                         r.var.c_str(), r.cmp, r.valor, r.cada, r.una_vez, r.mientras);
                 for (auto& a : r.acciones)
-                    fprintf(f, "OBJRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s\n",
+                    fprintf(f, "OBJRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s|%s\n",
                             a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
                             a.op, a.valor, a.seg, a.texto.c_str(),
-                            a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str());
+                            a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str(), a.dialogo.c_str());
             }
         }
         // ---- SPRITES 2D del mundo (hojas de sprites) ----
@@ -3736,10 +3789,10 @@ int main(int, char**) {
                             r.evento, r.radio, r.tecla.c_str(), r.boton.c_str(), r.zona,
                             r.var.c_str(), r.cmp, r.valor, r.cada, r.una_vez, r.mientras);
                     for (auto& a : r.acciones)
-                        fprintf(f, "SPRRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s\n",
+                        fprintf(f, "SPRRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s|%s\n",
                                 a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
                                 a.op, a.valor, a.seg, a.texto.c_str(),
-                                a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str());
+                                a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str(), a.dialogo.c_str());
                 }
                 for (auto& ac : sp.acciones)
                     fprintf(f, "SPRACCION %d|%d|%s|%s|%s|%s|%s|%s\n",
@@ -3902,7 +3955,7 @@ int main(int, char**) {
                         continue;
                     }
                     if (!strncmp(line, "SPRRACC ", 8) && !sp.reglas.empty()) {
-                        std::string p[12]; trozos(line + 8, p, 12);
+                        std::string p[13]; trozos(line + 8, p, 13);
                         Accion a;
                         a.tipo    = atoi(p[0].c_str());
                         a.archivo = p[1]; a.proc = p[2]; a.var = p[3];
@@ -3912,7 +3965,7 @@ int main(int, char**) {
                         a.texto   = p[7];
                         a.sonido  = p[8];
                         if (!p[9].empty()) a.vol = atoi(p[9].c_str());
-                        a.escena  = p[10]; a.menu = p[11];
+                        a.escena  = p[10]; a.menu = p[11]; a.dialogo = p[12];
                         sp.reglas.back().acciones.push_back(a);
                         continue;
                     }
@@ -4189,7 +4242,7 @@ int main(int, char**) {
                 continue;
             }
             if (!strncmp(line, "OBJRACC ", 8) && !objects.empty() && !objects.back().reglas.empty()) {
-                std::string p[12]; trozos(line + 8, p, 12);
+                std::string p[13]; trozos(line + 8, p, 13);
                 Accion a;
                 a.tipo    = atoi(p[0].c_str());
                 a.archivo = p[1]; a.proc = p[2]; a.var = p[3];
@@ -4199,7 +4252,7 @@ int main(int, char**) {
                 a.texto   = p[7];
                 a.sonido  = p[8];
                 if (!p[9].empty()) a.vol = atoi(p[9].c_str());
-                a.escena  = p[10]; a.menu = p[11];
+                a.escena  = p[10]; a.menu = p[11]; a.dialogo = p[12];
                 objects.back().reglas.back().acciones.push_back(a);
                 continue;
             }
@@ -4307,10 +4360,10 @@ int main(int, char**) {
             for (auto& o : m.opciones) {
                 fprintf(f, "MOPC %s\n", o.texto.c_str());
                 for (auto& a : o.acciones)
-                    fprintf(f, "MACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s\n",
+                    fprintf(f, "MACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s|%s\n",
                             a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
                             a.op, a.valor, a.seg, a.texto.c_str(),
-                            a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str());
+                            a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str(), a.dialogo.c_str());
             }
         }
         fclose(f);
@@ -4344,7 +4397,7 @@ int main(int, char**) {
                 o.texto = t;
                 menus.back().opciones.push_back(o);
             } else if (!strncmp(line, "MACC ", 5) && !menus.empty() && !menus.back().opciones.empty()) {
-                std::string p[12]; trozos(line + 5, p, 12);
+                std::string p[13]; trozos(line + 5, p, 13);
                 Accion a;
                 a.tipo = atoi(p[0].c_str());
                 a.archivo = p[1]; a.proc = p[2]; a.var = p[3];
@@ -4353,7 +4406,7 @@ int main(int, char**) {
                 a.seg = (float)atof(p[6].c_str());
                 a.texto = p[7]; a.sonido = p[8];
                 if (!p[9].empty()) a.vol = atoi(p[9].c_str());
-                a.escena = p[10]; a.menu = p[11];
+                a.escena = p[10]; a.menu = p[11]; a.dialogo = p[12];
                 menus.back().opciones.back().acciones.push_back(a);
             }
         }
@@ -4361,11 +4414,102 @@ int main(int, char**) {
         if (!menus.empty()) menu_sel = 0;
     };
 
+    /* Los dialogos, como los menus, en su propio fichero del proyecto. */
+    auto guardar_dialogos = [&]() {
+        std::string ruta = project_dir + "/dialogos.def";
+        if (dialogos.empty()) { std::error_code ec; fs::remove(ruta, ec); return; }
+        FILE* f = fopen(ruta.c_str(), "w");
+        if (!f) return;
+        fputs("# dialogos del proyecto (los hace el editor)\n", f);
+        for (auto& d : dialogos) {
+            fprintf(f, "DLG %s|%s|%d|%d|%d|%d|%d|%s|%d|%d|%d|%s|%s|%s|%s|%d\n",
+                    d.nombre.c_str(), d.caja.c_str(), d.caja_graf,
+                    d.cx, d.cy, d.cw, d.ch, d.fuente.c_str(),
+                    d.mx, d.my, d.vel, d.snd_letra.c_str(), d.snd_pasar.c_str(),
+                    d.tecla.c_str(), d.boton.c_str(), d.pausa);
+            fprintf(f, "DLGCOL %d %d %d %d %d %d %d %d\n",
+                    d.col[0], d.col[1], d.col[2], d.col[3],
+                    d.col_nombre[0], d.col_nombre[1], d.col_nombre[2], d.col_nombre[3]);
+            for (auto& p2 : d.paginas) {
+                fprintf(f, "DLGPAG %s|%s|%d\n", p2.quien.c_str(), p2.retrato.c_str(), p2.retrato_graf);
+                fprintf(f, "DLGTXT %s\n", p2.texto.c_str());
+                for (auto& o : p2.opciones) {
+                    fprintf(f, "DLGOPC %d|%s\n", o.salto, o.texto.c_str());
+                    for (auto& a : o.acciones)
+                        fprintf(f, "DLGACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s|%s\n",
+                                a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
+                                a.op, a.valor, a.seg, a.texto.c_str(),
+                                a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str(), a.dialogo.c_str());
+                }
+            }
+        }
+        fclose(f);
+    };
+    auto cargar_dialogos = [&]() {
+        dialogos.clear(); dlg_sel = -1;
+        FILE* f = fopen((project_dir + "/dialogos.def").c_str(), "r");
+        if (!f) return;
+        char line[2048];
+        while (fgets(line, sizeof(line), f)) {
+            auto sinsalto = [](std::string t) {
+                while (!t.empty() && (t.back() == '\n' || t.back() == '\r')) t.pop_back();
+                return t;
+            };
+            if (!strncmp(line, "DLG ", 4)) {
+                std::string p2[16]; trozos(line + 4, p2, 16);
+                Dialogo d;
+                d.nombre = p2[0]; d.caja = p2[1]; d.caja_graf = atoi(p2[2].c_str());
+                d.cx = atoi(p2[3].c_str()); d.cy = atoi(p2[4].c_str());
+                d.cw = atoi(p2[5].c_str()); d.ch = atoi(p2[6].c_str());
+                d.fuente = p2[7];
+                d.mx = atoi(p2[8].c_str()); d.my = atoi(p2[9].c_str());
+                d.vel = atoi(p2[10].c_str());
+                d.snd_letra = p2[11]; d.snd_pasar = p2[12];
+                if (!p2[13].empty()) d.tecla = p2[13];
+                if (!p2[14].empty()) d.boton = p2[14];
+                d.pausa = atoi(p2[15].c_str());
+                dialogos.push_back(d);
+            } else if (!strncmp(line, "DLGCOL ", 7) && !dialogos.empty()) {
+                Dialogo& d = dialogos.back();
+                sscanf(line, "DLGCOL %d %d %d %d %d %d %d %d",
+                       &d.col[0], &d.col[1], &d.col[2], &d.col[3],
+                       &d.col_nombre[0], &d.col_nombre[1], &d.col_nombre[2], &d.col_nombre[3]);
+            } else if (!strncmp(line, "DLGPAG ", 7) && !dialogos.empty()) {
+                std::string p2[3]; trozos(line + 7, p2, 3);
+                DlgPag pg; pg.quien = p2[0]; pg.retrato = p2[1];
+                pg.retrato_graf = p2[2].empty() ? 1 : atoi(p2[2].c_str());
+                dialogos.back().paginas.push_back(pg);
+            } else if (!strncmp(line, "DLGTXT ", 7) && !dialogos.empty() && !dialogos.back().paginas.empty()) {
+                dialogos.back().paginas.back().texto = sinsalto(line + 7);
+            } else if (!strncmp(line, "DLGOPC ", 7) && !dialogos.empty() && !dialogos.back().paginas.empty()) {
+                std::string p2[2]; trozos(line + 7, p2, 2);
+                DlgOpc o; o.salto = atoi(p2[0].c_str()); o.texto = p2[1];
+                dialogos.back().paginas.back().opciones.push_back(o);
+            } else if (!strncmp(line, "DLGACC ", 7) && !dialogos.empty() &&
+                       !dialogos.back().paginas.empty() && !dialogos.back().paginas.back().opciones.empty()) {
+                std::string p2[13]; trozos(line + 7, p2, 13);
+                Accion a;
+                a.tipo = atoi(p2[0].c_str());
+                a.archivo = p2[1]; a.proc = p2[2]; a.var = p2[3];
+                a.op = atoi(p2[4].c_str());
+                a.valor = (float)atof(p2[5].c_str());
+                a.seg = (float)atof(p2[6].c_str());
+                a.texto = p2[7]; a.sonido = p2[8];
+                if (!p2[9].empty()) a.vol = atoi(p2[9].c_str());
+                a.escena = p2[10]; a.menu = p2[11]; a.dialogo = p2[12];
+                dialogos.back().paginas.back().opciones.back().acciones.push_back(a);
+            }
+        }
+        fclose(f);
+        if (!dialogos.empty()) dlg_sel = 0;
+    };
+
     // GUARDAR PROYECTO: escena actual + manifiesto .bgd2
     auto save_project = [&]() {
         save_scene(scene_path);                 // objetos + terreno + pintado
         write_manifest();
         guardar_menus();
+        guardar_dialogos();
         status = "Proyecto guardado: " + project_name;
     };
     // crea un proyecto nuevo: carpetas + fichero .bgd2
@@ -4402,6 +4546,7 @@ int main(int, char**) {
             if (fs::exists(sp)) { scene_path = sp; load_scene(sp); }
         }
         cargar_menus();
+        cargar_dialogos();
         status = "Proyecto abierto: " + project_name;
     };
 
@@ -6371,6 +6516,255 @@ int main(int, char**) {
                     m.nombre.c_str(), m.nombre.c_str(), puls.c_str());
         }
 
+        /* ================= LOS DIALOGOS =================
+           Un PROCESS por dialogo. El bocadillo es TU grafico (un PNG o un grafico
+           de un FPG) estirado con size_x/size_y al tamanio que le diste; el texto
+           va escrito encima con write(). Las lineas se parten AQUI, midiendolas
+           con la misma fuente que usara el juego, porque write() no parte solo. */
+        {   // ¿algun dialogo usa retratos? entonces hace falta quien los dibuje
+            bool hay_retrato = false;
+            for (auto& d : dialogos) for (auto& p2 : d.paginas) if (!p2.retrato.empty()) hay_retrato = true;
+            if (hay_retrato)
+                add_proc_comun("retrato",
+                    "// La cara de quien habla. Es su propio proceso porque el del\n"
+                    "// dialogo ya gasta su grafico en el bocadillo.\n"
+                    "PROCESS escena_retrato(int arch, int graf, int px, int py)\n"
+                    "BEGIN\n"
+                    "    file = arch; graph = graf;\n"
+                    "    x = px; y = py; z = -310;   // por delante del bocadillo\n"
+                    "    LOOP FRAME; END\n"
+                    "END\n\n");
+        }
+        for (auto& d : dialogos) {
+            if (d.paginas.empty()) continue;
+            int npag = (int)d.paginas.size();
+            /* cuantas lineas cabe cada pagina y como se parte su texto */
+            int ancho_util = d.cw - 2 * d.mx;
+            if (ancho_util < 40) ancho_util = 40;
+            H2Font* fnt = d.fuente.empty() ? nullptr : hud_font(d.fuente);
+            auto ancho_de = [&](const std::string& t) {
+                if (fnt) return h2_text_width(fnt, t.c_str());
+                return (int)t.size() * 8;   // la del sistema es de 8x8: mejor pasarse
+            };
+            std::vector<std::vector<std::string>> lineas(npag);
+            int maxlin = 1;
+            for (int p2 = 0; p2 < npag; p2++) {
+                std::string resto = d.paginas[p2].texto, linea;
+                std::string palabra;
+                auto empujar = [&]() {
+                    if (!linea.empty()) { lineas[p2].push_back(linea); linea.clear(); }
+                };
+                std::istringstream ss(resto);
+                while (ss >> palabra) {
+                    std::string prueba = linea.empty() ? palabra : linea + " " + palabra;
+                    if (ancho_de(prueba) > ancho_util && !linea.empty()) empujar();
+                    linea = linea.empty() ? palabra : linea + " " + palabra;
+                }
+                empujar();
+                if (lineas[p2].empty()) lineas[p2].push_back("");
+                if ((int)lineas[p2].size() > maxlin) maxlin = (int)lineas[p2].size();
+            }
+            int alto_linea = fnt ? (fnt->maxheight + 4) : 14;
+            int maxopc = 1;
+            for (auto& p2 : d.paginas) if ((int)p2.opciones.size() > maxopc) maxopc = (int)p2.opciones.size();
+
+            fprintf(f, "// ===== DIALOGO '%s' =====\n", d.nombre.c_str());
+            fprintf(f, "PROCESS %s()\n"
+                       "PRIVATE\n"
+                       "    int pag; int i; int fnt; int idl[%d]; int idnom; int idop[%d];\n"
+                       "    int sel; int nop; int ok; int ant_ok; int arr; int aba; int ant_arr; int ant_aba;\n"
+                       "    float letras; int total; float t; string linea[%d]; string nombre;\n"
+                       "    int retrato;\n"
+                       "END\n"
+                       "BEGIN\n",
+                    d.nombre.c_str(), maxlin, maxopc, maxlin);
+            if (!d.fuente.empty())
+                fprintf(f, "    fnt = fnt_load(\"Assets/%s\");   IF (fnt <= 0) fnt = 0; END\n", d.fuente.c_str());
+            else fputs("    fnt = 0;   // la fuente del sistema\n", f);
+            fputs("    z = -300;   // el bocadillo, por encima del juego\n", f);
+            if (!d.caja.empty()) {
+                bool es_fpg = d.caja.size() > 4 &&
+                              (d.caja.substr(d.caja.size()-4) == ".fpg" ||
+                               d.caja.substr(d.caja.size()-4) == ".f16" ||
+                               d.caja.substr(d.caja.size()-4) == ".f32");
+                if (es_fpg)
+                    fprintf(f, "    // el bocadillo: grafico %d del FPG\n"
+                               "    file = fpg_load(\"Assets/%s\");  graph = %d;\n",
+                            d.caja_graf, d.caja.c_str(), d.caja_graf);
+                else
+                    fprintf(f, "    // el bocadillo: una imagen suelta\n"
+                               "    file = 0;  graph = map_load(\"Assets/%s\");\n", d.caja.c_str());
+                fprintf(f, "    x = %d; y = %d;\n"
+                           "    // se estira al tamanio que le diste en el editor\n"
+                           "    IF (graphic_info(file, graph, G_WIDTH) > 0)\n"
+                           "        size_x = 100 * %d / graphic_info(file, graph, G_WIDTH);\n"
+                           "        size_y = 100 * %d / graphic_info(file, graph, G_HEIGHT);\n"
+                           "    END\n", d.cx, d.cy, d.cw, d.ch);
+            }
+            if (d.pausa)
+                fputs("    signal(ALL_PROCESS, S_FREEZE);   // el mundo se para mientras se habla\n", f);
+            fputs("    pag = 0;\n"
+                  "    LOOP\n", f);
+            for (int p2 = 0; p2 < npag; p2++) {
+                DlgPag& pg = d.paginas[p2];
+                fprintf(f, "        IF (pag == %d)\n", p2);
+                // el retrato, si lo hay
+                if (!pg.retrato.empty()) {
+                    bool rf = pg.retrato.size() > 4 &&
+                              (pg.retrato.substr(pg.retrato.size()-4) == ".fpg" ||
+                               pg.retrato.substr(pg.retrato.size()-4) == ".f16" ||
+                               pg.retrato.substr(pg.retrato.size()-4) == ".f32");
+                    // a la izquierda del bocadillo, a su altura
+                    int rx = d.cx - d.cw / 2 - 70, ry = d.cy;
+                    if (rx < 70) rx = 70;
+                    if (rf) fprintf(f, "            retrato = escena_retrato(fpg_load(\"Assets/%s\"), %d, %d, %d);\n",
+                                    pg.retrato.c_str(), pg.retrato_graf, rx, ry);
+                    else    fprintf(f, "            retrato = escena_retrato(0, map_load(\"Assets/%s\"), %d, %d);\n",
+                                    pg.retrato.c_str(), rx, ry);
+                }
+                if (!pg.quien.empty()) {
+                    std::string q = pg.quien; for (auto& c : q) if (c == '"') c = '\'';
+                    fprintf(f, "            nombre = \"%s\";\n"
+                               "            idnom = write(fnt, %d, %d, 0, nombre);\n"
+                               "            write_set_rgba(idnom, %d, %d, %d, %d);\n",
+                            q.c_str(), d.cx - d.cw / 2 + d.mx, d.cy - d.ch / 2 + d.my - 2,
+                            d.col_nombre[0], d.col_nombre[1], d.col_nombre[2], d.col_nombre[3]);
+                }
+                // el texto, linea a linea (ya partido arriba)
+                int y0 = d.cy - d.ch / 2 + d.my + (pg.quien.empty() ? 0 : alto_linea + 4);
+                for (int L = 0; L < (int)lineas[p2].size(); L++) {
+                    std::string t = lineas[p2][L]; for (auto& c : t) if (c == '"') c = '\'';
+                    if (d.vel > 0)
+                        fprintf(f, "            linea[%d] = \"\";\n", L);
+                    else
+                        fprintf(f, "            linea[%d] = \"%s\";\n", L, t.c_str());
+                    fprintf(f, "            idl[%d] = write_var(fnt, %d, %d, 0, linea[%d]);\n"
+                               "            write_set_rgba(idl[%d], %d, %d, %d, %d);\n",
+                            L, d.cx - d.cw / 2 + d.mx, y0 + L * alto_linea, L,
+                            L, d.col[0], d.col[1], d.col[2], d.col[3]);
+                }
+                if (d.vel > 0) {
+                    /* Efecto maquina de escribir: el texto se va copiando letra a
+                       letra con substr(). Al pulsar, sale entero de golpe. */
+                    int total = 0;
+                    for (auto& l : lineas[p2]) total += (int)l.size();
+                    fprintf(f, "            letras = 0;  total = %d;\n"
+                               "            LOOP\n"
+                               "                letras = letras + %d * escena_dt;\n", total, d.vel);
+                    int acum = 0;
+                    for (int L = 0; L < (int)lineas[p2].size(); L++) {
+                        std::string t = lineas[p2][L]; for (auto& c : t) if (c == '"') c = '\'';
+                        fprintf(f, "                IF (letras > %d) linea[%d] = substr(\"%s\", 0, letras - %d);\n"
+                                   "                ELSE linea[%d] = \"\"; END\n",
+                                acum, L, t.c_str(), acum, L);
+                        acum += (int)lineas[p2][L].size();
+                    }
+                    if (!d.snd_letra.empty())
+                        fprintf(f, "                IF (letras < total) sound_play(%s, 0); END\n",
+                                var_sonido(d.snd_letra).c_str());
+                    fprintf(f, "                ok = (key(%s)", d.tecla.c_str());
+                    if (!d.boton.empty()) fprintf(f, " OR joy_getbutton(%s)", d.boton.c_str());
+                    fputs(" OR mouse.left);\n"
+                          "                IF (letras >= total) BREAK; END\n"
+                          "                IF (ok AND ant_ok == 0) letras = total; END\n"
+                          "                ant_ok = ok;\n"
+                          "                FRAME;\n"
+                          "            END\n", f);
+                    for (int L = 0; L < (int)lineas[p2].size(); L++) {
+                        std::string t = lineas[p2][L]; for (auto& c : t) if (c == '"') c = '\'';
+                        fprintf(f, "            linea[%d] = \"%s\";\n", L, t.c_str());
+                    }
+                }
+                // ---- esperar: pasar de pagina, o elegir respuesta ----
+                if (pg.opciones.empty()) {
+                    fprintf(f, "            LOOP\n"
+                               "                ok = (key(%s)", d.tecla.c_str());
+                    if (!d.boton.empty()) fprintf(f, " OR joy_getbutton(%s)", d.boton.c_str());
+                    fputs(" OR mouse.left);\n"
+                          "                IF (ok AND ant_ok == 0) ant_ok = ok; BREAK; END\n"
+                          "                ant_ok = ok;\n"
+                          "                FRAME;\n"
+                          "            END\n", f);
+                    if (!d.snd_pasar.empty())
+                        fprintf(f, "            sound_play(%s, 0);\n", var_sonido(d.snd_pasar).c_str());
+                } else {
+                    int nop = (int)pg.opciones.size();
+                    fprintf(f, "            nop = %d;  sel = 0;\n", nop);
+                    for (int q = 0; q < nop; q++) {
+                        std::string t = pg.opciones[q].texto; for (auto& c : t) if (c == '"') c = '\'';
+                        /* Las respuestas van DENTRO de la caja, debajo del texto:
+                           puestas fuera se salian de la pantalla con el bocadillo
+                           abajo del todo, que es donde suele ir. */
+                        fprintf(f, "            idop[%d] = write(fnt, %d, %d, 0, \"%s\");\n",
+                                q, d.cx - d.cw / 2 + d.mx + 20,
+                                y0 + (int)lineas[p2].size() * alto_linea + 6 + q * alto_linea,
+                                t.c_str());
+                    }
+                    fprintf(f, "            LOOP\n"
+                               "                arr = (key(_UP) OR joy_getbutton(JOY_BUTTON_DPAD_UP));\n"
+                               "                aba = (key(_DOWN) OR joy_getbutton(JOY_BUTTON_DPAD_DOWN));\n"
+                               "                IF (arr AND ant_arr == 0) sel = sel - 1; IF (sel < 0) sel = nop - 1; END END\n"
+                               "                IF (aba AND ant_aba == 0) sel = sel + 1; IF (sel >= nop) sel = 0; END END\n"
+                               "                ant_arr = arr;  ant_aba = aba;\n"
+                               "                FOR (i = 0; i < nop; i = i + 1)\n"
+                               "                    IF (i == sel) write_set_rgba(idop[i], %d, %d, %d, %d);\n"
+                               "                    ELSE          write_set_rgba(idop[i], %d, %d, %d, %d); END\n"
+                               "                END\n"
+                               "                ok = (key(%s)",
+                            d.col_nombre[0], d.col_nombre[1], d.col_nombre[2], d.col_nombre[3],
+                            d.col[0], d.col[1], d.col[2], d.col[3], d.tecla.c_str());
+                    if (!d.boton.empty()) fprintf(f, " OR joy_getbutton(%s)", d.boton.c_str());
+                    fputs(" OR mouse.left);\n"
+                          "                IF (ok AND ant_ok == 0) ant_ok = ok; BREAK; END\n"
+                          "                ant_ok = ok;\n"
+                          "                FRAME;\n"
+                          "            END\n"
+                          "            FOR (i = 0; i < nop; i = i + 1) write_delete(idop[i]); END\n", f);
+                }
+                // ---- limpiar lo escrito ----
+                for (int L = 0; L < (int)lineas[p2].size(); L++)
+                    fprintf(f, "            write_delete(idl[%d]);\n", L);
+                if (!pg.quien.empty()) fputs("            write_delete(idnom);\n", f);
+                if (!pg.retrato.empty()) fputs("            signal(retrato, S_KILL);   // se va la cara con la pagina\n", f);
+                // ---- a donde se va ----
+                if (pg.opciones.empty()) {
+                    if (p2 + 1 < npag) fprintf(f, "            pag = %d;\n", p2 + 1);
+                    else               fputs("            BREAK;\n", f);
+                } else {
+                    for (int q = 0; q < (int)pg.opciones.size(); q++) {
+                        fprintf(f, "            IF (sel == %d)\n", q);
+                        for (auto& a : pg.opciones[q].acciones) {
+                            if (a.tipo == 0 && !a.proc.empty())
+                                fprintf(f, "                %s();\n", a.proc.c_str());
+                            else if (a.tipo == 1 && !a.var.empty()) {
+                                int v = (int)(a.valor >= 0.0f ? a.valor + 0.5f : a.valor - 0.5f);
+                                if (a.op == 0)      fprintf(f, "                %s = %d;\n", a.var.c_str(), v);
+                                else if (a.op == 1) fprintf(f, "                %s = %s + %d;\n", a.var.c_str(), a.var.c_str(), v);
+                                else                fprintf(f, "                %s = %s - %d;\n", a.var.c_str(), a.var.c_str(), v);
+                            } else if (a.tipo == 4 && !a.sonido.empty())
+                                fprintf(f, "                sound_play(%s, 0);\n", var_sonido(a.sonido).c_str());
+                            else if (a.tipo == 5) {
+                                int ne = indice_escena(a.escena);
+                                if (ne >= 0) fprintf(f, "                escena_pedida = %d;\n", ne);
+                            } else if (a.tipo == 8 && !a.menu.empty())
+                                fprintf(f, "                IF (NOT exists(TYPE %s)) %s(); END\n",
+                                        a.menu.c_str(), a.menu.c_str());
+                        }
+                        if (pg.opciones[q].salto >= 0 && pg.opciones[q].salto < npag)
+                            fprintf(f, "                pag = %d;\n", pg.opciones[q].salto);
+                        else
+                            fputs("                BREAK;\n", f);
+                        fputs("            END\n", f);
+                    }
+                }
+                fputs("        END\n", f);
+            }
+            fputs("        FRAME;\n"
+                  "    END\n", f);
+            if (d.pausa) fputs("    signal(ALL_PROCESS, S_WAKEUP);\n", f);
+            fputs("END\n\n", f);
+        }
+
         /* ================= CAMBIAR DE ESCENA =================
            Desmontar es matar los procesos de la escena que estaba puesta (por su
            nombre, uno a uno: let_me_alone() se llevaria por delante tu main) y
@@ -6951,6 +7345,7 @@ int main(int, char**) {
                 ImGui::TextDisabled("PANELES");
                 ImGui::MenuItem(ICON_FA_LAYER_GROUP "  Escenas del proyecto", nullptr, &show_escenas);
                 ImGui::MenuItem(ICON_FA_BARS "  Menus del juego", nullptr, &show_menus);
+                ImGui::MenuItem(ICON_FA_COMMENT "  Dialogos", nullptr, &show_dialogos);
                 ImGui::MenuItem(ICON_FA_PERSON_RUNNING "  Sprites 3D", nullptr, &show_spr_win);
                 ImGui::MenuItem(ICON_FA_SLIDERS "  Variables del juego", nullptr, &show_gvars);
                 ImGui::Separator();
@@ -7273,6 +7668,8 @@ int main(int, char**) {
                 ImGui::Spacing();
                 if (ImGui::Button(ICON_FA_BARS "   Menus", ImVec2(-1, 0))) show_menus = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Menu principal, de pausa y de opciones");
+                if (ImGui::Button(ICON_FA_COMMENT "   Dialogos", ImVec2(-1, 0))) show_dialogos = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lo que dice la gente: bocadillos, paginas y respuestas");
             } else if (modo == M_CODIGO) {
                 grupo("CODIGO");
                 if (ImGui::Button(ICON_FA_FILE_CODE "   main.prg", ImVec2(-1, 0))) open_main_script();
@@ -10925,6 +11322,169 @@ int main(int, char**) {
                 ImGui::TextWrapped("Un menu es una lista de opciones y lo que hace cada una: "
                                    "empezar la partida (ir a una escena), abrir otro menu, "
                                    "cambiar una variable, llamar a tu codigo o salir del juego.");
+            }
+            ImGui::EndChild();
+            ImGui::End();
+        }
+
+        /* ---- DIALOGOS: lo que dice la gente ----
+           Paginas con su texto, quien habla y su retrato; y si una pagina tiene
+           respuestas, es una pregunta que puede llevar a otra pagina. El bocadillo
+           es un grafico tuyo (PNG suelto o un grafico de un FPG). */
+        if (show_dialogos) {
+            ImGui::SetNextWindowSize(ImVec2(680, 560), ImGuiCond_FirstUseEver);
+            ImGui::Begin("Dialogos del juego", &show_dialogos);
+            ImGui::BeginChild("lista_dlg", ImVec2(160, 0), true);
+            ImGui::TextDisabled("DIALOGOS");
+            for (int i = 0; i < (int)dialogos.size(); i++) {
+                ImGui::PushID(i);
+                if (ImGui::Selectable(dialogos[i].nombre.c_str(), dlg_sel == i)) dlg_sel = i;
+                ImGui::PopID();
+            }
+            if (dialogos.empty()) ImGui::TextDisabled("(ninguno)");
+            ImGui::Spacing();
+            if (ImGui::Button(ICON_FA_PLUS "  Nuevo", ImVec2(-1, 0))) {
+                Dialogo d;
+                d.nombre = "dialogo" + std::to_string((int)dialogos.size() + 1);
+                DlgPag p1; p1.texto = "Hola, viajero.";
+                d.paginas.push_back(p1);
+                dialogos.push_back(d);
+                dlg_sel = (int)dialogos.size() - 1;
+            }
+            ImGui::EndChild();
+            ImGui::SameLine();
+            ImGui::BeginChild("ficha_dlg", ImVec2(0, 0), false);
+            if (dlg_sel >= 0 && dlg_sel < (int)dialogos.size()) {
+                Dialogo& d = dialogos[dlg_sel];
+                { char nb[80]; snprintf(nb, sizeof(nb), "%s", d.nombre.c_str());
+                  ImGui::SetNextItemWidth(200);
+                  if (ImGui::InputText("Nombre (PROCESS)", nb, sizeof(nb))) d.nombre = ident_bgd(nb, "dialogo"); }
+                ImGui::TextDisabled("Para que salga: ponle a un objeto una regla con la accion");
+                ImGui::TextDisabled("\"Sacar un dialogo\" (al tocarlo, al pulsar una tecla cerca...).");
+
+                ImGui::SeparatorText("El bocadillo");
+                {   const char* cur = d.caja.empty() ? "(sin caja: solo el texto)" : d.caja.c_str();
+                    ImGui::SetNextItemWidth(300);
+                    if (ImGui::BeginCombo("Grafico", cur)) {
+                        if (ImGui::Selectable("(sin caja: solo el texto)", d.caja.empty())) d.caja.clear();
+                        for (auto& g : hud_gfx_files)
+                            if (ImGui::Selectable(g.c_str(), g == d.caja)) d.caja = g;
+                        ImGui::EndCombo();
+                    }
+                    bool es_fpg = d.caja.size() > 4 &&
+                                  (d.caja.substr(d.caja.size()-4) == ".fpg" ||
+                                   d.caja.substr(d.caja.size()-4) == ".f16" ||
+                                   d.caja.substr(d.caja.size()-4) == ".f32");
+                    if (es_fpg) {
+                        ImGui::DragInt("Que grafico del FPG", &d.caja_graf, 1.0f, 1, 999);
+                        H2Fpg* fp = hud_fpg(d.caja);
+                        if (fp) ImGui::TextDisabled("  el FPG trae %d graficos", fp->n);
+                    }
+                    ImGui::TextDisabled("Vale un PNG suelto o un FPG: el grafico se estira al tamanio de abajo.");
+                }
+                ImGui::DragInt2("Centro (x, y)", &d.cx, 1.0f, 0, 4000);
+                ImGui::DragInt2("Tamanio (ancho, alto)", &d.cw, 1.0f, 40, 4000);
+
+                ImGui::SeparatorText("El texto");
+                {   const char* cur = d.fuente.empty() ? "(la del sistema)" : d.fuente.c_str();
+                    ImGui::SetNextItemWidth(240);
+                    if (ImGui::BeginCombo("Fuente", cur)) {
+                        if (ImGui::Selectable("(la del sistema)", d.fuente.empty())) d.fuente.clear();
+                        for (auto& fn : hud_font_files)
+                            if (ImGui::Selectable(fn.c_str(), fn == d.fuente)) d.fuente = fn;
+                        ImGui::EndCombo();
+                    }
+                }
+                ImGui::DragInt2("Margenes (x, y)", &d.mx, 1.0f, 0, 300);
+                ImGui::DragInt("Letras por segundo", &d.vel, 1.0f, 0, 200);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("El texto se escribe solo, como en los juegos.\n0 = sale entero de golpe.\nPulsando se acaba de escribir de una vez.");
+                { float c1[3] = { d.col[0]/255.0f, d.col[1]/255.0f, d.col[2]/255.0f };
+                  if (ImGui::ColorEdit3("Color del texto", c1))
+                      { d.col[0]=(int)(c1[0]*255); d.col[1]=(int)(c1[1]*255); d.col[2]=(int)(c1[2]*255); }
+                  float c2[3] = { d.col_nombre[0]/255.0f, d.col_nombre[1]/255.0f, d.col_nombre[2]/255.0f };
+                  if (ImGui::ColorEdit3("Color del nombre y la respuesta elegida", c2))
+                      { d.col_nombre[0]=(int)(c2[0]*255); d.col_nombre[1]=(int)(c2[1]*255); d.col_nombre[2]=(int)(c2[2]*255); } }
+                combo_tecla_ui("Pasar con la tecla", d.tecla);
+                combo_boton_ui("o con el boton", d.boton);
+                combo_sonido("Sonido de las letras", d.snd_letra);
+                combo_sonido("Sonido al pasar", d.snd_pasar);
+                { bool pa = d.pausa != 0;
+                  if (ImGui::Checkbox("Congela el juego mientras se habla", &pa)) d.pausa = pa ? 1 : 0; }
+
+                ImGui::SeparatorText("Paginas");
+                int quitar_p = -1;
+                for (int q = 0; q < (int)d.paginas.size(); q++) {
+                    DlgPag& pg = d.paginas[q];
+                    ImGui::PushID(700 + q);
+                    char cab[128];
+                    snprintf(cab, sizeof(cab), "Pagina %d%s%s", q + 1,
+                             pg.quien.empty() ? "" : " - ", pg.quien.c_str());
+                    if (ImGui::CollapsingHeader(cab, ImGuiTreeNodeFlags_DefaultOpen)) {
+                        { char qb[80]; snprintf(qb, sizeof(qb), "%s", pg.quien.c_str());
+                          ImGui::SetNextItemWidth(200);
+                          if (ImGui::InputText("Quien habla", qb, sizeof(qb))) pg.quien = qb; }
+                        { char tb[1024]; snprintf(tb, sizeof(tb), "%s", pg.texto.c_str());
+                          if (ImGui::InputTextMultiline("Lo que dice", tb, sizeof(tb),
+                                                        ImVec2(-1, 60))) pg.texto = tb; }
+                        ImGui::TextDisabled("Se parte solo en lineas para que quepa en la caja.");
+                        {   const char* cur = pg.retrato.empty() ? "(sin retrato)" : pg.retrato.c_str();
+                            ImGui::SetNextItemWidth(240);
+                            if (ImGui::BeginCombo("Retrato", cur)) {
+                                if (ImGui::Selectable("(sin retrato)", pg.retrato.empty())) pg.retrato.clear();
+                                for (auto& g : hud_gfx_files)
+                                    if (ImGui::Selectable(g.c_str(), g == pg.retrato)) pg.retrato = g;
+                                ImGui::EndCombo();
+                            }
+                        }
+                        ImGui::TextDisabled("RESPUESTAS (si no pones ninguna, se pasa de pagina)");
+                        int quitar_o = -1;
+                        for (int r = 0; r < (int)pg.opciones.size(); r++) {
+                            DlgOpc& o = pg.opciones[r];
+                            ImGui::PushID(800 + r);
+                            { char tb[128]; snprintf(tb, sizeof(tb), "%s", o.texto.c_str());
+                              ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
+                              if (ImGui::InputText("texto", tb, sizeof(tb))) o.texto = tb; }
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Quitar")) quitar_o = r;
+                            {   // a donde lleva
+                                std::string et = (o.salto < 0) ? "cerrar el dialogo"
+                                                               : ("ir a la pagina " + std::to_string(o.salto + 1));
+                                ImGui::SetNextItemWidth(220);
+                                if (ImGui::BeginCombo("lleva a", et.c_str())) {
+                                    if (ImGui::Selectable("cerrar el dialogo", o.salto < 0)) o.salto = -1;
+                                    for (int k = 0; k < (int)d.paginas.size(); k++) {
+                                        std::string n2 = "ir a la pagina " + std::to_string(k + 1);
+                                        if (ImGui::Selectable(n2.c_str(), o.salto == k)) o.salto = k;
+                                    }
+                                    ImGui::EndCombo();
+                                }
+                            }
+                            ui_acciones(o.acciones, d.nombre + "_" + std::to_string(q + 1) +
+                                                    "_" + std::to_string(r + 1), 1);
+                            ImGui::Separator();
+                            ImGui::PopID();
+                        }
+                        if (quitar_o >= 0) pg.opciones.erase(pg.opciones.begin() + quitar_o);
+                        if (ImGui::SmallButton("+ anadir respuesta")) pg.opciones.push_back(DlgOpc());
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Quitar esta pagina")) quitar_p = q;
+                    }
+                    ImGui::PopID();
+                }
+                if (quitar_p >= 0) d.paginas.erase(d.paginas.begin() + quitar_p);
+                if (ImGui::Button(ICON_FA_PLUS "  Anadir pagina", ImVec2(-1, 0)))
+                    d.paginas.push_back(DlgPag());
+                ImGui::Spacing();
+                if (ImGui::Button("Borrar este dialogo", ImVec2(-1, 0))) {
+                    dialogos.erase(dialogos.begin() + dlg_sel);
+                    dlg_sel = dialogos.empty() ? -1 : 0;
+                }
+            } else {
+                ImGui::TextWrapped("Un dialogo es lo que dice alguien: paginas de texto con quien "
+                                   "habla y su retrato. Si una pagina lleva respuestas, es una "
+                                   "pregunta, y cada respuesta puede llevar a otra pagina, cambiar "
+                                   "una variable, sonar algo o llamar a tu codigo.");
             }
             ImGui::EndChild();
             ImGui::End();

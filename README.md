@@ -103,6 +103,26 @@ juego.
 Sale como un `PROCESS` de BennuGD2 normal: los textos se crean una vez con `write()` y
 mover la selección es cambiar dos colores con `write_set_rgba`, no rehacer la pantalla.
 
+## Diálogos
+
+**Escena → Diálogos** (o el rail, en el modo Interfaz). Un diálogo es lo que dice
+alguien: **páginas** con su texto, quién habla y su retrato. Si una página lleva
+**respuestas**, es una pregunta: cada respuesta puede llevar a otra página, cambiar una
+variable, sonar algo, abrir un menú, ir a otra escena o llamar a tu `PROCESS`.
+
+El **bocadillo es un gráfico tuyo** —un PNG suelto o un gráfico de un FPG— estirado al
+tamaño que le des con `size_x`/`size_y`. Encima, el texto con tu fuente `.fnt` (o la del
+sistema), con el nombre de quien habla en su propio color y las respuestas resaltadas.
+
+- El texto **se escribe solo**, letra a letra, a las letras por segundo que digas
+  (pulsando, sale entero de golpe). 0 = sin efecto.
+- Las líneas **se parten solas** para caber en la caja: el editor las mide con la misma
+  fuente que usará el juego, porque `write()` no parte por sí mismo.
+- **Congela el juego** mientras se habla, si quieres.
+- Para que salga: una regla con la acción **"Sacar un diálogo"** — al tocar al personaje,
+  al pulsar una tecla cerca, al entrar en una zona...
+
+
 ## Varias escenas
 
 Cada escena es su fichero en `Scenes/`. En **Escena → Escenas del proyecto** las tienes

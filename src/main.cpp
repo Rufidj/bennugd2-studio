@@ -7390,6 +7390,27 @@ int main(int, char**) {
                                 fprintf(f, "                partida_guardar(%d);\n", a.ranura);
                             else if (a.tipo == 11)
                                 fprintf(f, "                partida_cargar(%d);\n", a.ranura);
+                            else if (a.tipo == 3) {
+                                std::string t = a.texto;
+                                for (auto& c2 : t) if (c2 == '"') c2 = '\'';
+                                fprintf(f, "                aviso_txt = \"%s\"; aviso_t = %.2f;\n",
+                                        t.c_str(), a.seg);
+                            }
+                            else if (a.tipo == 7) {
+                                /* Salir del juego desde una respuesta. Faltaba: la
+                                   opcion estaba en la lista pero aqui no se
+                                   generaba nada, asi que elegirla no hacia nada. */
+                                fputs("                exit();\n", f);
+                            }
+                            else if (a.tipo == 6) {
+                                // cerrar el dialogo (lo mismo que dejarlo en "cerrar")
+                                for (int L2 = 0; L2 < (int)lineas[p2].size(); L2++)
+                                    fprintf(f, "                write_delete(idl[%d]);\n", L2);
+                                if (!pg.quien.empty()) fputs("                write_delete(idnom);\n", f);
+                                fputs("                FOR (i = 0; i < nop; i = i + 1) write_delete(idop[i]); END\n", f);
+                                if (d.pausa) fputs("                signal(ALL_PROCESS, S_WAKEUP);\n", f);
+                                fputs("                RETURN;\n", f);
+                            }
                         }
                         if (pg.opciones[q].salto >= 0 && pg.opciones[q].salto < npag)
                             fprintf(f, "                pag = %d;\n", pg.opciones[q].salto);

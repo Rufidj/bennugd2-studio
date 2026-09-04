@@ -1514,6 +1514,7 @@ int main(int, char**) {
         int  col_nombre[4] = { 255, 220, 120, 255 };
         int  mx = 28, my = 24;          // margenes del texto dentro de la caja
         int  vel = 40;                  // letras por segundo (0 = de golpe)
+        int  retrato_tam = 100;         // tamanio del retrato en % (100 = su tamanio)
         std::string snd_letra, snd_pasar;
         std::string tecla = "_SPACE", boton = "JOY_BUTTON_A";
         int  pausa = 1;                 // congela el juego mientras habla
@@ -4734,11 +4735,11 @@ int main(int, char**) {
         if (!f) return;
         fputs("# dialogos del proyecto (los hace el editor)\n", f);
         for (auto& d : dialogos) {
-            fprintf(f, "DLG %s|%s|%d|%d|%d|%d|%d|%s|%d|%d|%d|%s|%s|%s|%s|%d\n",
+            fprintf(f, "DLG %s|%s|%d|%d|%d|%d|%d|%s|%d|%d|%d|%s|%s|%s|%s|%d|%d\n",
                     d.nombre.c_str(), d.caja.c_str(), d.caja_graf,
                     d.cx, d.cy, d.cw, d.ch, d.fuente.c_str(),
                     d.mx, d.my, d.vel, d.snd_letra.c_str(), d.snd_pasar.c_str(),
-                    d.tecla.c_str(), d.boton.c_str(), d.pausa);
+                    d.tecla.c_str(), d.boton.c_str(), d.pausa, d.retrato_tam);
             fprintf(f, "DLGCOL %d %d %d %d %d %d %d %d\n",
                     d.col[0], d.col[1], d.col[2], d.col[3],
                     d.col_nombre[0], d.col_nombre[1], d.col_nombre[2], d.col_nombre[3]);
@@ -4769,7 +4770,7 @@ int main(int, char**) {
                 return t;
             };
             if (!strncmp(line, "DLG ", 4)) {
-                std::string p2[16]; trozos(line + 4, p2, 16);
+                std::string p2[17]; trozos(line + 4, p2, 17);
                 Dialogo d;
                 d.nombre = p2[0]; d.caja = p2[1]; d.caja_graf = atoi(p2[2].c_str());
                 d.cx = atoi(p2[3].c_str()); d.cy = atoi(p2[4].c_str());
@@ -4781,6 +4782,7 @@ int main(int, char**) {
                 if (!p2[13].empty()) d.tecla = p2[13];
                 if (!p2[14].empty()) d.boton = p2[14];
                 d.pausa = atoi(p2[15].c_str());
+                if (!p2[16].empty()) d.retrato_tam = atoi(p2[16].c_str());
                 dialogos.push_back(d);
             } else if (!strncmp(line, "DLGCOL ", 7) && !dialogos.empty()) {
                 Dialogo& d = dialogos.back();
@@ -7198,10 +7200,11 @@ int main(int, char**) {
                 add_proc_comun("retrato",
                     "// La cara de quien habla. Es su propio proceso porque el del\n"
                     "// dialogo ya gasta su grafico en el bocadillo.\n"
-                    "PROCESS escena_retrato(int arch, int graf, int px, int py)\n"
+                    "PROCESS escena_retrato(int arch, int graf, int px, int py, int tam)\n"
                     "BEGIN\n"
                     "    file = arch; graph = graf;\n"
                     "    x = px; y = py; z = -310;   // por delante del bocadillo\n"
+                    "    size = tam;                 // lo grande que se ve (100 = su tamanio)\n"
                     "    LOOP FRAME; END\n"
                     "END\n\n");
         }
@@ -7284,15 +7287,25 @@ int main(int, char**) {
                               (pg.retrato.substr(pg.retrato.size()-4) == ".fpg" ||
                                pg.retrato.substr(pg.retrato.size()-4) == ".f16" ||
                                pg.retrato.substr(pg.retrato.size()-4) == ".f32");
-                    // a la izquierda del bocadillo, a su altura
-                    int rx = d.cx - d.cw / 2 - 70, ry = d.cy;
-                    if (rx < 70) rx = 70;
+                    /* A la izquierda del bocadillo y a su altura. El hueco depende de
+                       lo grande que sea el retrato: con un 300% una cara de 70 pasa a
+                       210 y se metia dentro de la caja. */
+                    int anc = 70;
+                    { SheetDef* h2 = rf ? nullptr : sheet_of(pg.retrato);
+                      if (h2 && pg.retrato_cara >= 0 && pg.retrato_cara < (int)h2->frames.size())
+                          anc = h2->frames[pg.retrato_cara].w;
+                      else { H2Img* im2 = rf ? nullptr : hud_img(pg.retrato);
+                             if (im2 && im2->w > 0) anc = im2->w; } }
+                    int anc_final = anc * d.retrato_tam / 100;
+                    int rx = d.cx - d.cw / 2 - anc_final / 2 - 14, ry = d.cy;
+                    if (rx < anc_final / 2 + 8) rx = anc_final / 2 + 8;
                     SheetDef* hj = rf ? nullptr : sheet_of(pg.retrato);
                     bool una_cara = (!rf && hj && pg.retrato_cara >= 0 &&
                                      pg.retrato_cara < (int)hj->frames.size());
+                    (void)una_cara;
                     if (rf) {
-                        fprintf(f, "            retrato = escena_retrato(fpg_load(\"Assets/%s\"), %d, %d, %d);\n",
-                                ruta_asset(pg.retrato).c_str(), pg.retrato_graf, rx, ry);
+                        fprintf(f, "            retrato = escena_retrato(fpg_load(\"Assets/%s\"), %d, %d, %d, %d);\n",
+                                ruta_asset(pg.retrato).c_str(), pg.retrato_graf, rx, ry, d.retrato_tam);
                     } else if (una_cara) {
                         /* La hoja trae varias caras: se recorta LA DE ESTA PAGINA a
                            un grafico propio (map_new + map_block_copy) y se ensenia
@@ -7301,12 +7314,12 @@ int main(int, char**) {
                         fprintf(f, "            hoja = map_load(\"Assets/%s\");\n"
                                    "            cara = map_new(%d, %d);\n"
                                    "            map_block_copy(0, cara, 0, 0, 0, hoja, %d, %d, %d, %d, 0);\n"
-                                   "            retrato = escena_retrato(0, cara, %d, %d);   // cara %d de la hoja\n",
+                                   "            retrato = escena_retrato(0, cara, %d, %d, %d);   // cara %d de la hoja\n",
                                 ruta_asset(pg.retrato).c_str(), fr.w, fr.h,
-                                fr.x, fr.y, fr.w, fr.h, rx, ry, pg.retrato_cara);
+                                fr.x, fr.y, fr.w, fr.h, rx, ry, d.retrato_tam, pg.retrato_cara);
                     } else {
-                        fprintf(f, "            retrato = escena_retrato(0, map_load(\"Assets/%s\"), %d, %d);\n",
-                                ruta_asset(pg.retrato).c_str(), rx, ry);
+                        fprintf(f, "            retrato = escena_retrato(0, map_load(\"Assets/%s\"), %d, %d, %d);\n",
+                                ruta_asset(pg.retrato).c_str(), rx, ry, d.retrato_tam);
                     }
                 }
                 if (!pg.quien.empty()) {
@@ -12220,6 +12233,10 @@ int main(int, char**) {
                 }
                 ImGui::DragInt2("Margenes (x, y)", &d.mx, 1.0f, 0, 300);
                 ImGui::DragInt("Letras por segundo", &d.vel, 1.0f, 0, 200);
+                ImGui::SliderInt("Tamanio del retrato", &d.retrato_tam, 25, 500, "%d %%");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Una cara de 70 pixeles al lado de un bocadillo de 900\n"
+                                      "se ve diminuta: subelo hasta que cuadre (200-300 suele ir bien).");
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("El texto se escribe solo, como en los juegos.\n0 = sale entero de golpe.\nPulsando se acaba de escribir de una vez.");
                 { float c1[3] = { d.col[0]/255.0f, d.col[1]/255.0f, d.col[2]/255.0f };
@@ -12280,9 +12297,9 @@ int main(int, char**) {
                                    se podian elegir. */
                                 H2Img* im = hud_img(pg.retrato);
                                 if (im && im->tex && im->w > 0 && im->h > 0) {
-                                    ImGui::BeginChild("caras", ImVec2(0, 150), true,
+                                    ImGui::BeginChild("caras", ImVec2(0, 220), true,
                                                       ImGuiWindowFlags_HorizontalScrollbar);
-                                    const float alto = 58.0f;
+                                    const float alto = 92.0f;   // que se vean las caras
                                     float ancho_util = ImGui::GetContentRegionAvail().x;
                                     float usado = 0.0f;
                                     // la primera "cara" es la imagen entera
@@ -12291,7 +12308,7 @@ int main(int, char**) {
                                         bool sel = (pg.retrato_cara < 0);
                                         if (sel) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.949f, 0.686f, 0.259f, 1.0f));
                                         float w = alto * im->w / im->h;
-                                        if (w > 90.0f) w = 90.0f;
+                                        if (w > 130.0f) w = 130.0f;
                                         if (ImGui::ImageButton("##entera", (ImTextureID)(intptr_t)im->tex,
                                                                ImVec2(w, alto)))
                                             pg.retrato_cara = -1;

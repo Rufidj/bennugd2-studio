@@ -12270,27 +12270,58 @@ int main(int, char**) {
                             int nf = hj ? (int)hj->frames.size() : 0;
                             if (nf > 1) {
                                 if (pg.retrato_cara >= nf) pg.retrato_cara = nf - 1;
-                                ImGui::SetNextItemWidth(150);
-                                ImGui::DragInt("Cara", &pg.retrato_cara, 0.2f, -1, nf - 1,
-                                               pg.retrato_cara < 0 ? "la imagen entera" : "cara %d");
+                                ImGui::Text("Cara (%d en la hoja):", nf);
                                 ImGui::SameLine();
-                                ImGui::TextDisabled("(%d caras en la hoja)", nf);
-                                // vista previa de la cara elegida
+                                ImGui::TextDisabled(pg.retrato_cara < 0
+                                    ? "la imagen entera" : "elegida la %d", pg.retrato_cara);
+                                /* Una REJILLA de caras y se pincha la que quieras. Antes
+                                   habia un control de arrastrar, y con 30 caras eso no hay
+                                   quien lo use: al pulsarlo no pasaba nada y parecia que no
+                                   se podian elegir. */
                                 H2Img* im = hud_img(pg.retrato);
-                                if (im && im->tex) {
-                                    float ax0 = 0, ay0 = 0, ax1 = 1, ay1 = 1;
-                                    float pw = 96, ph = 96;
-                                    if (pg.retrato_cara >= 0 && pg.retrato_cara < nf && im->w > 0 && im->h > 0) {
-                                        SprFrame& fr = hj->frames[pg.retrato_cara];
-                                        ax0 = (float)fr.x / im->w;  ay0 = (float)fr.y / im->h;
-                                        ax1 = (float)(fr.x + fr.w) / im->w;
-                                        ay1 = (float)(fr.y + fr.h) / im->h;
-                                        if (fr.h > 0) { ph = 96.0f; pw = 96.0f * fr.w / fr.h; }
-                                    } else if (im->h > 0) {
-                                        pw = 96.0f * im->w / im->h;
+                                if (im && im->tex && im->w > 0 && im->h > 0) {
+                                    ImGui::BeginChild("caras", ImVec2(0, 150), true,
+                                                      ImGuiWindowFlags_HorizontalScrollbar);
+                                    const float alto = 58.0f;
+                                    float ancho_util = ImGui::GetContentRegionAvail().x;
+                                    float usado = 0.0f;
+                                    // la primera "cara" es la imagen entera
+                                    {
+                                        ImGui::PushID(-1);
+                                        bool sel = (pg.retrato_cara < 0);
+                                        if (sel) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.949f, 0.686f, 0.259f, 1.0f));
+                                        float w = alto * im->w / im->h;
+                                        if (w > 90.0f) w = 90.0f;
+                                        if (ImGui::ImageButton("##entera", (ImTextureID)(intptr_t)im->tex,
+                                                               ImVec2(w, alto)))
+                                            pg.retrato_cara = -1;
+                                        if (sel) ImGui::PopStyleColor();
+                                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("La imagen entera");
+                                        usado += w + 16.0f;
+                                        ImGui::PopID();
                                     }
-                                    ImGui::Image((ImTextureID)(intptr_t)im->tex, ImVec2(pw, ph),
-                                                 ImVec2(ax0, ay0), ImVec2(ax1, ay1));
+                                    for (int c3 = 0; c3 < nf; c3++) {
+                                        SprFrame& fr = hj->frames[c3];
+                                        if (fr.w <= 0 || fr.h <= 0) continue;
+                                        float w = alto * fr.w / fr.h;
+                                        if (usado + w + 16.0f < ancho_util) ImGui::SameLine();
+                                        else usado = 0.0f;
+                                        usado += w + 16.0f;
+                                        ImGui::PushID(c3);
+                                        bool sel = (pg.retrato_cara == c3);
+                                        if (sel) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.949f, 0.686f, 0.259f, 1.0f));
+                                        if (ImGui::ImageButton("##cara", (ImTextureID)(intptr_t)im->tex,
+                                                               ImVec2(w, alto),
+                                                               ImVec2((float)fr.x / im->w, (float)fr.y / im->h),
+                                                               ImVec2((float)(fr.x + fr.w) / im->w,
+                                                                      (float)(fr.y + fr.h) / im->h)))
+                                            pg.retrato_cara = c3;
+                                        if (sel) ImGui::PopStyleColor();
+                                        if (ImGui::IsItemHovered())
+                                            ImGui::SetTooltip("Cara %d  (%dx%d)", c3, fr.w, fr.h);
+                                        ImGui::PopID();
+                                    }
+                                    ImGui::EndChild();
                                 }
                             } else if (nf == 1) {
                                 ImGui::TextDisabled("  (una sola cara: sale la imagen entera)");

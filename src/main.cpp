@@ -20,16 +20,29 @@
 #include <filesystem>
 namespace fs = std::filesystem;
 
-// Lista ficheros de <dir> cuya extension esta en exts (minusculas, con punto).
+/* Lista ficheros de <dir> Y DE SUS SUBCARPETAS cuya extension esta en exts.
+   Devuelve la ruta relativa a <dir>: "barrel.glb" si esta suelto, o
+   "Models/barrel.glb" si esta clasificado. Asi el proyecto se puede ordenar en
+   carpetas sin que el editor deje de encontrar nada, y los proyectos viejos
+   (todo suelto en Assets) siguen funcionando igual. */
 static std::vector<std::string> scan_dir(const std::string& dir,
                                          std::initializer_list<const char*> exts) {
     std::vector<std::string> out;
     std::error_code ec;
-    for (auto& e : fs::directory_iterator(dir, ec)) {
-        if (!e.is_regular_file()) continue;
-        auto ext = e.path().extension().string();
+    fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
+    if (ec) return out;
+    for (; it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (ec) break;
+        std::error_code e1;
+        if (!it->is_regular_file(e1)) continue;
+        auto ext = it->path().extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-        for (auto x : exts) if (ext == x) { out.push_back(e.path().filename().string()); break; }
+        for (auto x : exts) if (ext == x) {
+            std::error_code e2;
+            std::string rel = fs::relative(it->path(), dir, e2).generic_string();
+            out.push_back(e2 ? it->path().filename().string() : rel);
+            break;
+        }
     }
     std::sort(out.begin(), out.end());
     return out;
@@ -1248,6 +1261,7 @@ int main(int, char**) {
     bool show_menus = false;               // ventana de menus del juego
     bool show_dialogos = false;            // ventana de dialogos
     bool show_guardado = false;            // ventana de guardar partida
+    bool pedir_ordenar = false;            // confirmar el orden de los assets
     /* ---- MODOS DE TRABAJO ----
        El editor no ensenia todo a la vez: cada modo saca sus herramientas y sus
        paneles, y esconde lo que no toca. Es lo que hace que no se amontone. */
@@ -1341,6 +1355,35 @@ int main(int, char**) {
 
     // ---- proyecto: navegador de Assets ----
     std::string assets_dir = project_dir + "/Assets";
+    /* ---- ENCONTRAR UN ASSET AUNQUE SE HAYA MOVIDO ----
+       Las escenas, los menus y los dialogos guardan el nombre del fichero tal
+       como estaba ("barrel.glb"). Si luego se ordena el proyecto y pasa a
+       Assets/Models/barrel.glb, la referencia vieja seguiria apuntando a un sitio
+       vacio. Esto lo resuelve: primero se prueba la ruta guardada y, si no esta,
+       se busca ese mismo nombre por las subcarpetas. Asi ordenar no rompe nada. */
+    std::map<std::string, std::string> asset_cache;   // nombre guardado -> ruta relativa real
+    auto ruta_asset = [&](const std::string& nombre) -> std::string {
+        if (nombre.empty()) return nombre;
+        std::error_code ec;
+        if (fs::exists(assets_dir + "/" + nombre, ec)) return nombre;
+        auto it = asset_cache.find(nombre);
+        if (it != asset_cache.end()) return it->second;
+        std::string base = fs::path(nombre).filename().string();
+        std::string hallado;
+        fs::recursive_directory_iterator rit(assets_dir, fs::directory_options::skip_permission_denied, ec);
+        if (!ec) for (; rit != fs::recursive_directory_iterator(); rit.increment(ec)) {
+            if (ec) break;
+            std::error_code e1;
+            if (!rit->is_regular_file(e1)) continue;
+            if (rit->path().filename().string() == base) {
+                std::error_code e2;
+                std::string rel = fs::relative(rit->path(), assets_dir, e2).generic_string();
+                if (!e2) { hallado = rel; break; }
+            }
+        }
+        if (!hallado.empty()) asset_cache[nombre] = hallado;
+        return hallado.empty() ? nombre : hallado;
+    };
     // La siembra guarda rutas relativas al proyecto (portables al juego); el
     // editor corre desde otro sitio, asi que le dice donde esta la raiz.
     g3d_scatter_set_base(project_dir.c_str());
@@ -2183,7 +2226,7 @@ int main(int, char**) {
     auto load_model = [&](const std::string& file) -> void* {
         auto it = model_cache.find(file);
         if (it != model_cache.end()) return it->second;
-        std::string path = assets_dir + "/" + file;
+        std::string path = assets_dir + "/" + ruta_asset(file);
         // por extension: .fbx -> loader FBX (ufbx), el resto glTF/GLB
         std::string ext; { auto d = file.rfind('.'); if (d != std::string::npos) ext = file.substr(d); }
         for (auto& c : ext) c = (char)tolower(c);
@@ -4330,9 +4373,17 @@ int main(int, char**) {
             float x, y, z, ry, sc;
             if (sscanf(line, "OBJECT %255s %f %f %f %f %f SCRIPT %255s",
                        asset, &x, &y, &z, &ry, &sc, name) >= 6) {
+                /* Si el modelo no aparece (lo has renombrado, movido a otro
+                   proyecto, o falta), el objeto NO se tira: se queda en la escena
+                   sin dibujo y se avisa. Antes se descartaba en silencio y, como
+                   al generar se guarda la escena, el objeto desaparecia del
+                   fichero: perdias el trabajo por un asset que faltaba. */
                 void* m = load_model(asset);
-                if (!m) continue;
-                int e = g3d_model_spawn(scene, m, x, y, z, 0.0f, 0.0f);
+                if (!m)
+                    console_add(std::string("[escena] no encuentro Assets/") + asset +
+                                " (objeto '" + name + "'). Se queda en la escena, sin dibujo:\n"
+                                "  vuelve a ponerle el modelo en el Inspector, o recuperalo en Assets.\n");
+                int e = m ? g3d_model_spawn(scene, m, x, y, z, 0.0f, 0.0f) : -1;
                 /* SOLIDO, igual que al colocarlo a mano. Faltaba justo aqui: lo
                    que colocabas en la sesion quedaba marcado, pero al reabrir la
                    escena no, y entonces el agua dejaba de verlo. Sin esta marca
@@ -4486,8 +4537,10 @@ int main(int, char**) {
         fs::create_directories(assets_dir, ec);
         fs::create_directories(scenes_dir, ec);
         fs::create_directories(scripts_dir, ec);
-        fs::create_directories(assets_dir + "/Music", ec);
-        fs::create_directories(assets_dir + "/Sounds", ec);
+        /* Las carpetas de siempre. Tenerlas creadas es media clasificacion: al
+           copiar algo, uno ve donde va sin preguntarselo. */
+        for (const char* c : { "Models", "Textures", "Sprites", "Fonts", "Music", "Sounds" })
+            fs::create_directories(assets_dir + "/" + c, ec);
         // re-escanea contenidos del proyecto
         assets = scan_assets(assets_dir);
         scan_sonoros(assets_dir, "Music",  { ".ogg", ".mp3", ".mod", ".xm", ".it", ".s3m",
@@ -4715,6 +4768,82 @@ int main(int, char**) {
         }
         fclose(f);
         if (!dialogos.empty()) dlg_sel = 0;
+    };
+
+    /* ---- ORDENAR LOS ASSETS ----
+       Mueve lo que este suelto en Assets/ a su carpeta. No hay que tocar ninguna
+       referencia: las escenas guardan el nombre del fichero y ruta_asset() lo
+       encuentra igual dentro de la subcarpeta. Las imagenes que se usan como hoja
+       de sprites van a Sprites y el resto a Textures, que el editor SI sabe para
+       que se usa cada una. */
+    auto ordenar_assets = [&]() {
+        std::error_code ec;
+        for (const char* c : { "Models", "Textures", "Sprites", "Fonts", "Music", "Sounds" })
+            fs::create_directories(assets_dir + "/" + c, ec);
+        // las imagenes que ya se usan como hoja de sprites
+        std::set<std::string> hojas;
+        for (auto& sp : sprites) if (!sp.sheet.empty())
+            hojas.insert(fs::path(sp.sheet).filename().string());
+        auto carpeta_de = [&](const std::string& fichero) -> const char* {
+            std::string e = fs::path(fichero).extension().string();
+            for (auto& c : e) c = (char)tolower(c);
+            if (e==".glb"||e==".gltf"||e==".fbx"||e==".obj"||e==".md3")   return "Models";
+            if (e==".fnt"||e==".fnx")                                     return "Fonts";
+            if (e==".mp3"||e==".mod"||e==".xm"||e==".it"||e==".s3m"||
+                e==".mid"||e==".midi"||e==".flac")                        return "Music";
+            if (e==".wav"||e==".ogg")                                     return "Sounds";
+            if (e==".png"||e==".jpg"||e==".jpeg"||e==".bmp"||e==".tga"||
+                e==".fpg"||e==".f16"||e==".f32")
+                return hojas.count(fs::path(fichero).filename().string()) ? "Sprites" : "Textures";
+            /* El .sheet son los fotogramas y las animaciones que detectaste de una
+               hoja, y el editor los busca AL LADO de su imagen: si la imagen se va
+               a Sprites y el .sheet se queda suelto, pierdes ese trabajo. */
+            if (e==".sheet")                                              return "Sprites";
+            return nullptr;   // lo que no se reconoce, se queda donde esta
+        };
+        int movidos = 0, fallos = 0;
+        // 1) lo suelto dentro de Assets/
+        std::vector<fs::path> sueltos;
+        for (auto& e : fs::directory_iterator(assets_dir, ec)) {
+            std::error_code e1;
+            if (e.is_regular_file(e1)) sueltos.push_back(e.path());
+        }
+        for (auto& f2 : sueltos) {
+            const char* dest = carpeta_de(f2.filename().string());
+            if (!dest) continue;
+            fs::path destino = fs::path(assets_dir) / dest / f2.filename();
+            std::error_code e2;
+            if (fs::exists(destino, e2)) { fallos++; continue; }   // ya hay uno igual: no se pisa
+            fs::rename(f2, destino, e2);
+            if (e2) fallos++; else movidos++;
+        }
+        // 2) las carpetas sueltas del proyecto que son de assets (un Fonts/ fuera
+        //    de Assets no lo veia el editor: por eso no salian tus fuentes)
+        for (const char* c : { "Fonts", "Models", "Textures", "Sprites", "Sounds", "Music" }) {
+            std::string fuera = project_dir + "/" + c;
+            std::error_code e1;
+            if (!fs::is_directory(fuera, e1)) continue;
+            for (auto& e : fs::directory_iterator(fuera, ec)) {
+                std::error_code e2;
+                if (!e.is_regular_file(e2)) continue;
+                fs::path destino = fs::path(assets_dir) / c / e.path().filename();
+                if (fs::exists(destino, e2)) { fallos++; continue; }
+                fs::rename(e.path(), destino, e2);
+                if (e2) fallos++; else movidos++;
+            }
+            fs::remove(fuera, ec);   // si queda vacia, fuera
+        }
+        asset_cache.clear();
+        assets = scan_assets(assets_dir);
+        hud_gfx_files  = hud_scan_gfx();
+        hud_font_files = hud_scan_fnt();
+        scan_sonoros(assets_dir, "Music",  { ".ogg", ".mp3", ".mod", ".xm", ".it", ".s3m",
+                                             ".mid", ".midi", ".flac", ".wav" }, musicas);
+        scan_sonoros(assets_dir, "Sounds", { ".wav", ".ogg", ".mp3", ".flac" }, sonidos);
+        console_add("[assets] ordenados: " + std::to_string(movidos) + " ficheros movidos" +
+                    (fallos ? (", " + std::to_string(fallos) + " sin mover (ya habia uno igual)") : "") +
+                    "\nLas escenas siguen funcionando: el editor busca cada asset por su nombre.\n");
+        status = "Assets ordenados (" + std::to_string(movidos) + " movidos)";
     };
 
     // GUARDAR PROYECTO: escena actual + manifiesto .bgd2
@@ -5526,7 +5655,7 @@ int main(int, char**) {
                         gl += (i ? "," : " ") + std::to_string(an.frames[i]);
                     gl += ";\n";
                 }
-                spr_load.push_back("    " + pre + " = map_load(\"Assets/" + sp.sheet + "\");\n");
+                spr_load.push_back("    " + pre + " = map_load(\"Assets/" + ruta_asset(sp.sheet) + "\");\n");
             }
             if (!gl.empty()) {
                 fputs("// ===== SPRITES 2D del mundo (hojas colocadas en el editor) =====\n"
@@ -6124,7 +6253,7 @@ int main(int, char**) {
                                 ": el elemento saldra en blanco (vuelve a elegirlo en el panel HUD 2D)\n");
                 res[file] = v;
                 hud_globals += "    int " + v + ";   // Assets/" + file + "\n";
-                hud_res_load.push_back("    " + v + " = " + fn + "(\"Assets/" + file + "\");\n");
+                hud_res_load.push_back("    " + v + " = " + fn + "(\"Assets/" + ruta_asset(file) + "\");\n");
                 return v;
             };
             // Nombres de proceso unicos (el nombre lo pone el usuario en el panel).
@@ -6273,7 +6402,7 @@ int main(int, char**) {
                     w_deep[0], w_deep[1], w_deep[2], w_shallow[0], w_shallow[1], w_shallow[2]);
             if (water_tex_sel >= 0 && water_tex_sel < (int)paints.size())
                 fprintf(f, "    g3d_water_set_texture(g3d_load_texture(\"Assets/%s\"));\n",
-                        paints[water_tex_sel].file.c_str());
+                        ruta_asset(paints[water_tex_sel].file).c_str());
             fputs("    g3d_water_set_enabled(1);\n", f);
             // Las olas de playa tienen que viajar al juego: si se quedan en el
             // editor, lo que se ve al jugar no es lo que se ha compuesto.
@@ -6407,7 +6536,7 @@ int main(int, char**) {
                 fprintf(f, "    // colision EXACTA de '%s' (su propia malla)\n"
                            "    m = %s(\"Assets/%s\");\n"
                            "    IF (m > 0) g3d_collider_add_model(m, %.3f, %.3f, %.3f, %.3f); END\n",
-                        o.name.c_str(), loader, o.asset.c_str(),
+                        o.name.c_str(), loader, ruta_asset(o.asset).c_str(),
                         o.x, o.y, o.z, o.scale);
             }
             if (o.phys == 5 && !o.is_player) {
@@ -6438,13 +6567,13 @@ int main(int, char**) {
                 FILE* s = fopen(sp.c_str(), "r");
                 if (s) { fclose(s);
                     fprintf(f, "    m = %s(\"Assets/%s\"); %s(m);\n",
-                            loader, o.asset.c_str(), o.name.c_str());
+                            loader, ruta_asset(o.asset).c_str(), o.name.c_str());
                 }
                 continue;
             }
 
             fprintf(f, "    m = %s(\"Assets/%s\"); e = g3d_model_spawn(scene, m, %.3f, %.3f, %.3f, 0.0, %.3f);",
-                    loader, o.asset.c_str(), o.x, o.y, o.z, o.ry * 57.29578f);
+                    loader, ruta_asset(o.asset).c_str(), o.x, o.y, o.z, o.ry * 57.29578f);
             fprintf(f, " g3d_entity_set_scale(e, %.3f, %.3f, %.3f);\n", o.scale, o.scale, o.scale);
             // Modelos sin esqueleto con piezas atadas a nodos animados: hay que
             // posarlos UNA vez o esas piezas no se colocan y no se ven (igual que
@@ -6506,8 +6635,8 @@ int main(int, char**) {
         if (!sonidos_usados.empty() || !esc_musica.empty()) {
             fputs("    // ---- sonido ----\n", f);
             for (auto& sn : sonidos_usados)
-                fprintf(f, "    %s = sound_load(\"Assets/%s\");\n",
-                        var_sonido(sn).c_str(), sn.c_str());
+                fprintf(f, "    %s = sound_load(\"Assets/%s\");\n",   // ruta real, ordenada o no
+                        var_sonido(sn).c_str(), ruta_asset(sn).c_str());
             for (int i = 0; i < n_amb; i++)
                 fprintf(f, "    amb_ch[%d] = -1;\n", i);
             for (int i = 0; i < (int)zsonidos.size(); i++)
@@ -6516,7 +6645,7 @@ int main(int, char**) {
                 { fprintf(f, "    %s_ambiente();   // ambientes de las zonas pintadas\n", pref.c_str());
                   lanzados.push_back(pref + "_ambiente"); }
             if (!esc_musica.empty()) {
-                fprintf(f, "    musica = music_load(\"Assets/%s\");\n", esc_musica.c_str());
+                fprintf(f, "    musica = music_load(\"Assets/%s\");\n", ruta_asset(esc_musica).c_str());
                 fputs("    IF (musica > 0)\n", f);
                 fprintf(f, "        music_set_volume(%d);\n", esc_mus_vol);
                 if (esc_mus_fade > 0.05f)
@@ -6765,12 +6894,12 @@ int main(int, char**) {
             if (!m.fuente.empty())
                 fprintf(f, "    fnt = fnt_load(\"Assets/%s\");\n"
                            "    IF (fnt <= 0) fnt = 0; END   // si no carga, la del sistema\n",
-                        m.fuente.c_str());
+                        ruta_asset(m.fuente).c_str());
             else fputs("    fnt = 0;   // la fuente del sistema\n", f);
             if (!m.fondo.empty()) {
                 fprintf(f, "    // el fondo del menu\n"
                            "    file = 0;  graph = map_load(\"Assets/%s\");\n"
-                           "    x = 640; y = 360; z = -400;\n", m.fondo.c_str());
+                           "    x = 640; y = 360; z = -400;\n", ruta_asset(m.fondo).c_str());
             } else {
                 fputs("    z = -400;   // por encima del juego\n", f);
             }
@@ -7048,7 +7177,7 @@ int main(int, char**) {
                        "BEGIN\n",
                     d.nombre.c_str(), maxlin, maxopc, maxlin);
             if (!d.fuente.empty())
-                fprintf(f, "    fnt = fnt_load(\"Assets/%s\");   IF (fnt <= 0) fnt = 0; END\n", d.fuente.c_str());
+                fprintf(f, "    fnt = fnt_load(\"Assets/%s\");   IF (fnt <= 0) fnt = 0; END\n", ruta_asset(d.fuente).c_str());
             else fputs("    fnt = 0;   // la fuente del sistema\n", f);
             fputs("    z = -300;   // el bocadillo, por encima del juego\n", f);
             if (!d.caja.empty()) {
@@ -7059,10 +7188,10 @@ int main(int, char**) {
                 if (es_fpg)
                     fprintf(f, "    // el bocadillo: grafico %d del FPG\n"
                                "    file = fpg_load(\"Assets/%s\");  graph = %d;\n",
-                            d.caja_graf, d.caja.c_str(), d.caja_graf);
+                            d.caja_graf, ruta_asset(d.caja).c_str(), d.caja_graf);
                 else
                     fprintf(f, "    // el bocadillo: una imagen suelta\n"
-                               "    file = 0;  graph = map_load(\"Assets/%s\");\n", d.caja.c_str());
+                               "    file = 0;  graph = map_load(\"Assets/%s\");\n", ruta_asset(d.caja).c_str());
                 fprintf(f, "    x = %d; y = %d;\n"
                            "    // se estira al tamanio que le diste en el editor\n"
                            "    IF (graphic_info(file, graph, G_WIDTH) > 0)\n"
@@ -7087,9 +7216,9 @@ int main(int, char**) {
                     int rx = d.cx - d.cw / 2 - 70, ry = d.cy;
                     if (rx < 70) rx = 70;
                     if (rf) fprintf(f, "            retrato = escena_retrato(fpg_load(\"Assets/%s\"), %d, %d, %d);\n",
-                                    pg.retrato.c_str(), pg.retrato_graf, rx, ry);
+                                    ruta_asset(pg.retrato).c_str(), pg.retrato_graf, rx, ry);
                     else    fprintf(f, "            retrato = escena_retrato(0, map_load(\"Assets/%s\"), %d, %d);\n",
-                                    pg.retrato.c_str(), rx, ry);
+                                    ruta_asset(pg.retrato).c_str(), rx, ry);
                 }
                 if (!pg.quien.empty()) {
                     std::string q = pg.quien; for (auto& c : q) if (c == '"') c = '\'';
@@ -7798,6 +7927,13 @@ int main(int, char**) {
                 if (ImGui::MenuItem(ICON_FA_FILE " Nuevo proyecto...")) {
                     projNewDlg.SetPwd(fs::path(project_dir).parent_path()); projNewDlg.Open();
                 }
+                if (ImGui::MenuItem(ICON_FA_FOLDER_TREE " Ordenar los Assets")) pedir_ordenar = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Reparte lo que este suelto en Assets/ por carpetas:\n"
+                                      "Models, Textures, Sprites, Fonts, Music y Sounds.\n"
+                                      "Las escenas siguen funcionando: el editor busca\n"
+                                      "cada asset por su nombre, este donde este.");
+                ImGui::Separator();
                 if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Abrir proyecto...")) {
                     projOpenDlg.SetPwd(fs::path(project_dir).parent_path()); projOpenDlg.Open();
                 }
@@ -12181,6 +12317,28 @@ int main(int, char**) {
                 ImGui::EndPopup();
             }
             ImGui::End();
+        }
+
+        /* Ordenar mueve ficheros del disco, asi que se pregunta antes. */
+        if (pedir_ordenar) { ImGui::OpenPopup("Ordenar los Assets"); pedir_ordenar = false; }
+        if (ImGui::BeginPopupModal("Ordenar los Assets", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted("Se van a repartir por carpetas los ficheros sueltos de Assets/:");
+            ImGui::BulletText("Models    .glb .gltf .fbx .obj .md3");
+            ImGui::BulletText("Textures  imagenes que NO son hoja de sprites");
+            ImGui::BulletText("Sprites   las imagenes que usas como hoja");
+            ImGui::BulletText("Fonts     .fnt .fnx");
+            ImGui::BulletText("Music     .mp3 .mod .xm .it .flac...");
+            ImGui::BulletText("Sounds    .wav .ogg");
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1),
+                "Tus escenas NO se rompen: el editor busca cada asset por su nombre.");
+            ImGui::TextDisabled("Lo que no reconozca se queda donde esta. Si ya hay un fichero");
+            ImGui::TextDisabled("con ese nombre en la carpeta destino, no se pisa.");
+            ImGui::Spacing();
+            if (ImGui::Button("Ordenar", ImVec2(140, 0))) { ordenar_assets(); ImGui::CloseCurrentPopup(); }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancelar", ImVec2(140, 0))) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
         }
 
         /* ---- GUARDAR PARTIDA: que entra, cuantas ranuras y como se llama ----

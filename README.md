@@ -9,6 +9,28 @@ el resto del motor (2D, UI, sonido…).
 Es una aplicación C++ independiente con **Dear ImGui** que enlaza el *core* del motor y
 renderiza contra el mismo contexto OpenGL: lo que ves en el editor es lo que corre en el juego.
 
+## Los ficheros del proyecto
+
+```
+MiJuego/
+  MiJuego.bgd2      el proyecto: escena inicial, variables, guardado
+  Scenes/           las escenas (.scene) con su relieve, pintado y zonas
+  Scripts/          tu código (.prg) y el de cada objeto
+  Assets/
+    Models/         .glb .gltf .fbx .obj .md3
+    Textures/       imágenes de terreno y materiales
+    Sprites/        hojas de sprites (y su .sheet con los fotogramas)
+    Fonts/          .fnt .fnx
+    Music/          la música
+    Sounds/         los efectos
+  menus.def  dialogos.def
+```
+
+El editor **busca en Assets y en todas sus subcarpetas**, así que da igual cómo lo
+tengas: los proyectos viejos con todo suelto siguen funcionando. Y si quieres ordenarlos,
+**Proyecto → Ordenar los Assets** reparte lo suelto por esas carpetas. No rompe nada:
+las escenas guardan el *nombre* del fichero y el editor lo encuentra esté donde esté.
+
 ## Cómo está repartido
 
 El editor no enseña todo a la vez. Arriba hay **dos filas y cada una es una cosa**: los

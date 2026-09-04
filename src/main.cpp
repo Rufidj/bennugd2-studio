@@ -1270,6 +1270,10 @@ int main(int, char**) {
     int  modo_ant = -1;                    // para rehacer la disposicion al cambiar
     bool rehacer_layout = false;           // "restablecer disposicion"
     bool poner_delante = false;            // traer al frente las pestanas del modo
+    /* Abrir un panel que ya estaba abierto PERO detras de otra pestania no hacia
+       nada visible: parecia que el boton estaba roto. Se apunta cual hay que traer
+       al frente y se hace al final del frame, cuando la ventana ya existe. */
+    std::string enfocar_panel;
     bool show_script = false;              // el editor de script se abre a pantalla completa
     bool ask_regen = false;                // pedir confirmacion para regenerar un script
     std::string regen_obj;                 // objeto cuyo script se va a regenerar
@@ -8014,12 +8018,20 @@ int main(int, char**) {
                 if (ImGui::MenuItem("Restablecer la disposicion")) rehacer_layout = true;
                 ImGui::Separator();
                 ImGui::TextDisabled("PANELES");
-                ImGui::MenuItem(ICON_FA_LAYER_GROUP "  Escenas del proyecto", nullptr, &show_escenas);
-                ImGui::MenuItem(ICON_FA_BARS "  Menus del juego", nullptr, &show_menus);
-                ImGui::MenuItem(ICON_FA_COMMENT "  Dialogos", nullptr, &show_dialogos);
-                ImGui::MenuItem(ICON_FA_PERSON_RUNNING "  Sprites 3D", nullptr, &show_spr_win);
-                ImGui::MenuItem(ICON_FA_SLIDERS "  Variables del juego", nullptr, &show_gvars);
-                ImGui::MenuItem(ICON_FA_FLOPPY_DISK "  Guardar partida", nullptr, &show_guardado);
+                /* Marcar la casilla no basta: si el panel ya estaba abierto pero
+                   detras de otra pestania, no se ve nada y parece que no responde. */
+                if (ImGui::MenuItem(ICON_FA_LAYER_GROUP "  Escenas del proyecto", nullptr, &show_escenas))
+                    { if (show_escenas) enfocar_panel = "Escenas del proyecto"; }
+                if (ImGui::MenuItem(ICON_FA_BARS "  Menus del juego", nullptr, &show_menus))
+                    { if (show_menus) enfocar_panel = "Menus del juego"; }
+                if (ImGui::MenuItem(ICON_FA_COMMENT "  Dialogos", nullptr, &show_dialogos))
+                    { if (show_dialogos) enfocar_panel = "Dialogos del juego"; }
+                if (ImGui::MenuItem(ICON_FA_PERSON_RUNNING "  Sprites 3D", nullptr, &show_spr_win))
+                    { if (show_spr_win) enfocar_panel = ICON_FA_PERSON_RUNNING "  Sprites 3D"; }
+                if (ImGui::MenuItem(ICON_FA_SLIDERS "  Variables del juego", nullptr, &show_gvars))
+                    { if (show_gvars) enfocar_panel = "Variables del juego"; }
+                if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK "  Guardar partida", nullptr, &show_guardado))
+                    { if (show_guardado) enfocar_panel = "Guardar partida"; }
                 ImGui::Separator();
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Deja los paneles de este modo como venian de fabrica.");
@@ -8249,7 +8261,7 @@ int main(int, char**) {
             /* La banda de abajo es mas alta en los modos que tienen un panel ancho
                (la hoja de sprites, la ficha de un menu): metidos en una columna
                estrecha no se pueden usar. */
-            bool banda_ancha = (modo == M_PERSONAJES || modo == M_INTERFAZ);
+            bool banda_ancha = (modo == M_PERSONAJES || modo == M_INTERFAZ || modo == M_CODIGO);
             ImGui::DockBuilderSplitNode(center, ImGuiDir_Down,
                                         banda_ancha ? 0.46f : 0.20f, &bottom, &center);
             // OJO: el nombre tiene que coincidir EXACTAMENTE con el del Begin(),
@@ -8265,8 +8277,13 @@ int main(int, char**) {
             ImGui::DockBuilderDockWindow("Escenas del proyecto", left);
             ImGui::DockBuilderDockWindow("Jerarquia", lbottom);
             ImGui::DockBuilderDockWindow("Entorno",   lbottom);
-            ImGui::DockBuilderDockWindow("Menus del juego",
-                                         modo == M_INTERFAZ ? bottom : lbottom);
+            /* Menus y Dialogos son fichas anchas (lista + ficha + acciones): en la
+               columna estrecha de la izquierda no se pueden usar, y Dialogos
+               directamente no estaba acoplado en ningun sitio -- salia flotando
+               en medio de la pantalla. Los dos van a la banda de abajo. */
+            ImGui::DockBuilderDockWindow("Menus del juego",    bottom);
+            ImGui::DockBuilderDockWindow("Dialogos del juego", bottom);
+            ImGui::DockBuilderDockWindow("Guardar partida",    lbottom);
             ImGui::DockBuilderDockWindow("Variables del juego", lbottom);
             ImGui::DockBuilderDockWindow("Inspector", right);
             ImGui::DockBuilderDockWindow(ICON_FA_FONT "  HUD 2D", right);
@@ -8275,7 +8292,7 @@ int main(int, char**) {
             ImGui::DockBuilderFinish(ds);
             // las ventanas que ese modo necesita, abiertas
             if (modo == M_PERSONAJES) show_spr_win = true;
-            if (modo == M_INTERFAZ)   show_menus   = true;
+            if (modo == M_INTERFAZ) { show_menus = true; show_dialogos = true; }
             if (modo == M_CODIGO)   { show_escenas = true; show_gvars = true; }
             poner_delante = true;   // se hace al final del frame, ya con las ventanas creadas
         }
@@ -8348,21 +8365,21 @@ int main(int, char**) {
                 grupo("PANTALLA");
                 btn(ICON_FA_FONT, T_HUD, "HUD 2D", "Graficos y textos de pantalla (panel 'HUD 2D')");
                 ImGui::Spacing();
-                if (ImGui::Button(ICON_FA_BARS "   Menus", ImVec2(-1, 0))) show_menus = true;
+                if (ImGui::Button(ICON_FA_BARS "   Menus", ImVec2(-1, 0))) { show_menus = true; enfocar_panel = "Menus del juego"; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Menu principal, de pausa y de opciones");
-                if (ImGui::Button(ICON_FA_COMMENT "   Dialogos", ImVec2(-1, 0))) show_dialogos = true;
+                if (ImGui::Button(ICON_FA_COMMENT "   Dialogos", ImVec2(-1, 0))) { show_dialogos = true; enfocar_panel = "Dialogos del juego"; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lo que dice la gente: bocadillos, paginas y respuestas");
             } else if (modo == M_CODIGO) {
                 grupo("CODIGO");
                 if (ImGui::Button(ICON_FA_FILE_CODE "   main.prg", ImVec2(-1, 0))) open_main_script();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Abrir el main.prg del juego");
-                if (ImGui::Button(ICON_FA_SLIDERS "   Variables", ImVec2(-1, 0))) show_gvars = true;
+                if (ImGui::Button(ICON_FA_SLIDERS "   Variables", ImVec2(-1, 0))) { show_gvars = true; enfocar_panel = "Variables del juego"; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Puntos, vida, llaves... salen como GLOBAL");
-                if (ImGui::Button(ICON_FA_FLOPPY_DISK "   Guardado", ImVec2(-1, 0))) show_guardado = true;
+                if (ImGui::Button(ICON_FA_FLOPPY_DISK "   Guardado", ImVec2(-1, 0))) { show_guardado = true; enfocar_panel = "Guardar partida"; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Que entra en una partida guardada y en cuantas ranuras");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Puntos, vida, llaves... salen como GLOBAL");
                 grupo("DEL PROYECTO");
-                if (ImGui::Button(ICON_FA_LAYER_GROUP "   Escenas", ImVec2(-1, 0))) show_escenas = true;
+                if (ImGui::Button(ICON_FA_LAYER_GROUP "   Escenas", ImVec2(-1, 0))) { show_escenas = true; enfocar_panel = "Escenas del proyecto"; }
                 if (ImGui::Button(ICON_FA_BARS "   Menus", ImVec2(-1, 0)))          show_menus = true;
             }
             ImGui::End();
@@ -13176,13 +13193,18 @@ int main(int, char**) {
             case M_PERSONAJES: ImGui::SetWindowFocus("Assets");
                                ImGui::SetWindowFocus("Jerarquia");
                                ImGui::SetWindowFocus(ICON_FA_PERSON_RUNNING "  Sprites 3D"); break;
-            case M_INTERFAZ:   ImGui::SetWindowFocus("Menus del juego");
+            case M_INTERFAZ:   ImGui::SetWindowFocus("Dialogos del juego");
+                               ImGui::SetWindowFocus("Menus del juego");
                                ImGui::SetWindowFocus(ICON_FA_FONT "  HUD 2D"); break;
             case M_CODIGO:     ImGui::SetWindowFocus("Escenas del proyecto");
                                ImGui::SetWindowFocus("Variables del juego");
                                ImGui::SetWindowFocus("Editor de codigo"); break;
             }
             ImGui::SetWindowFocus("Escena");   // la vista 3D, siempre en su sitio
+        }
+        if (!enfocar_panel.empty()) {
+            ImGui::SetWindowFocus(enfocar_panel.c_str());
+            enfocar_panel.clear();
         }
 
         ImGui::Render();

@@ -97,6 +97,11 @@ juego.
   posición, separación y los dos colores — el normal y el de la opción elegida.
 - **Cómo se maneja**: teclado, mando y ratón, los tres a la vez si quieres, con sonido
   al moverse y al elegir.
+- **Opciones que opcionan**: una opción puede ser *un ajuste* en vez de un botón — se
+  cambia con izquierda/derecha y enseña su valor. De fábrica: volumen de la música,
+  volumen de los sonidos y pantalla completa. Y **cualquier variable del juego**, que es
+  lo que lo hace valer para el juego que sea: dificultad, sensibilidad, vidas, idioma…
+  Se guardan solos en `opciones.cfg` y se cargan al arrancar.
 - **Congela el juego** mientras está abierto (`signal(ALL_PROCESS, S_FREEZE)`): eso es el
   menú de pausa.
 

@@ -1265,9 +1265,19 @@ int main(int, char**) {
        regla, pero disparado desde una pantalla. Vale para el menu principal, para
        la pausa y para las opciones. Los menus son del PROYECTO, no de una escena:
        el de pausa tiene que estar en todas. */
+    /* Una opcion de menu puede ser dos cosas: HACER algo al pulsarla (jugar,
+       salir, ir a una escena...) o SER UN AJUSTE que se cambia con izquierda y
+       derecha y se ve su valor al lado. Los ajustes valen para cualquier juego:
+       ademas del volumen y la pantalla, cualquiera puede ajustar UNA VARIABLE DEL
+       JUEGO -- dificultad, sensibilidad, vidas, idioma, lo que tenga sentido en el
+       tuyo. */
     struct MenuOpc {
         std::string texto = "Opcion";
         std::vector<Accion> acciones;
+        int clase = 0;            // 0 = hace algo, 1 = es un ajuste
+        int ajuste = 0;           // 0 musica, 1 sonidos, 2 pantalla completa, 3 una variable
+        std::string var;          // si ajuste == 3, cual
+        int vmin = 0, vmax = 128, paso = 8;
     };
     struct Menu {
         std::string nombre = "menu";       // nombre del PROCESS que se genera
@@ -4359,6 +4369,9 @@ int main(int, char**) {
                     m.col_sel[0], m.col_sel[1], m.col_sel[2], m.col_sel[3]);
             for (auto& o : m.opciones) {
                 fprintf(f, "MOPC %s\n", o.texto.c_str());
+                if (o.clase == 1)
+                    fprintf(f, "MAJU %d|%s|%d|%d|%d\n", o.ajuste, o.var.c_str(),
+                            o.vmin, o.vmax, o.paso);
                 for (auto& a : o.acciones)
                     fprintf(f, "MACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s|%s\n",
                             a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
@@ -4396,6 +4409,13 @@ int main(int, char**) {
                 while (!t.empty() && (t.back() == '\n' || t.back() == '\r')) t.pop_back();
                 o.texto = t;
                 menus.back().opciones.push_back(o);
+            } else if (!strncmp(line, "MAJU ", 5) && !menus.empty() && !menus.back().opciones.empty()) {
+                std::string p2[5]; trozos(line + 5, p2, 5);
+                MenuOpc& o = menus.back().opciones.back();
+                o.clase = 1;
+                o.ajuste = atoi(p2[0].c_str());
+                o.var = p2[1];
+                o.vmin = atoi(p2[2].c_str()); o.vmax = atoi(p2[3].c_str()); o.paso = atoi(p2[4].c_str());
             } else if (!strncmp(line, "MACC ", 5) && !menus.empty() && !menus.back().opciones.empty()) {
                 std::string p[13]; trozos(line + 5, p, 13);
                 Accion a;
@@ -6368,6 +6388,54 @@ int main(int, char**) {
         // sigue el hueso con sus variables nativas.
         fputs("        FRAME;\n    END\nEND\n\n", f);
 
+        /* ================= LOS AJUSTES =================
+           Un menu de opciones que no recuerda nada no sirve: los ajustes se
+           guardan en un fichero con save() y se cargan al arrancar. Se guarda UNA
+           tabla, que es como BennuGD2 guarda de una vez (save admite la variable
+           entera, tabla incluida). */
+        std::vector<const MenuOpc*> ajustes;
+        for (auto& m : menus) for (auto& o : m.opciones) if (o.clase == 1) ajustes.push_back(&o);
+        if (!ajustes.empty()) {
+            add_global("    // los ajustes del jugador (volumen, pantalla, lo que pongas)\n"
+                       "    int cfg[" + std::to_string((int)ajustes.size()) + "];\n"
+                       "    int cfg_cargado;\n");
+            std::string cargar = "// Los ajustes guardados de la ultima vez.\n"
+                                 "FUNCTION opciones_cargar()\n"
+                                 "PRIVATE int i;\nEND\n"
+                                 "BEGIN\n"
+                                 "    // valores de partida por si aun no hay fichero\n";
+            for (size_t i = 0; i < ajustes.size(); i++) {
+                const MenuOpc* o = ajustes[i];
+                int def = (o->ajuste == 0 || o->ajuste == 1) ? 96 : (o->ajuste == 2 ? 0 : o->vmin);
+                cargar += "    cfg[" + std::to_string((int)i) + "] = " + std::to_string(def) + ";\n";
+            }
+            cargar += "    load(\"opciones.cfg\", cfg);   // si no existe, se quedan los de arriba\n"
+                      "    opciones_aplicar();\n"
+                      "    cfg_cargado = 1;\n"
+                      "    RETURN;\nEND\n\n";
+            std::string aplicar = "// Pone los ajustes donde tienen efecto.\n"
+                                  "FUNCTION opciones_aplicar()\n"
+                                  "BEGIN\n";
+            for (size_t i = 0; i < ajustes.size(); i++) {
+                const MenuOpc* o = ajustes[i];
+                std::string c = "cfg[" + std::to_string((int)i) + "]";
+                if (o->ajuste == 0)      aplicar += "    music_set_volume(" + c + ");\n";
+                else if (o->ajuste == 1) aplicar += "    sound_set_volume(" + c + ");\n";
+                else if (o->ajuste == 2)
+                    aplicar += "    IF (" + c + ") set_mode(1280, 720, MODE_FULLSCREEN);\n"
+                               "    ELSE set_mode(1280, 720, MODE_WINDOW); END\n";
+                else if (!o->var.empty())
+                    aplicar += "    " + o->var + " = " + c + ";   // ajuste de tu juego\n";
+            }
+            aplicar += "    RETURN;\nEND\n\n";
+            std::string guardar = "// Se guardan al tocarlos, para que la proxima vez esten puestos.\n"
+                                  "FUNCTION opciones_guardar()\n"
+                                  "BEGIN\n"
+                                  "    save(\"opciones.cfg\", cfg);\n"
+                                  "    RETURN;\nEND\n\n";
+            add_proc_comun("opciones", aplicar + cargar + guardar);
+        }
+
         /* ================= LOS MENUS =================
            Un PROCESS por menu. Los textos se crean una vez con write() y se
            colorean por su id con write_set_rgba: mover la seleccion es cambiar dos
@@ -6379,13 +6447,14 @@ int main(int, char**) {
             fprintf(f, "// ===== MENU '%s' =====\n", m.nombre.c_str());
             fprintf(f, "PROCESS %s()\n"
                        "PRIVATE\n"
-                       "    int sel; int i; int n; int idop[%d]; int fnt;\n"
+                       "    int sel; int i; int n; int idop[%d]; int fnt; int aj[%d]; string lin[%d];\n"
+                       "    int izq; int der; int ant_izq; int ant_der; int v;\n"
                        "    int ant_arr; int ant_aba; int ant_ok; int arr; int aba; int ok;\n"
                        "    int tw; int th; int mx; int my;\n"
                        "END\n"
                        "BEGIN\n"
                        "    n = %d;  sel = 0;\n",
-                    m.nombre.c_str(), n > 0 ? n : 1, n);
+                    m.nombre.c_str(), n > 0 ? n : 1, n > 0 ? n : 1, n > 0 ? n : 1, n);
             if (!m.fuente.empty())
                 fprintf(f, "    fnt = fnt_load(\"Assets/%s\");\n"
                            "    IF (fnt <= 0) fnt = 0; END   // si no carga, la del sistema\n",
@@ -6400,9 +6469,24 @@ int main(int, char**) {
             }
             if (m.pausa)
                 fputs("    signal(ALL_PROCESS, S_FREEZE);   // el mundo se queda quieto y a la vista\n", f);
-            for (int i = 0; i < n; i++)
-                fprintf(f, "    idop[%d] = write(fnt, %d, %d, 4, \"%s\");\n",
-                        i, m.x, m.y + i * m.sep, m.opciones[i].texto.c_str());
+            /* Una opcion normal es un texto fijo; un ajuste se pinta con su valor
+               al lado y cambia con izquierda/derecha, asi que se escribe con
+               write_var sobre una cadena que el propio menu va rehaciendo. */
+            for (int i = 0; i < n; i++) {
+                const MenuOpc& o = m.opciones[i];
+                if (o.clase == 1) {
+                    int idx = 0;
+                    for (size_t k = 0; k < ajustes.size(); k++) if (ajustes[k] == &o) idx = (int)k;
+                    fprintf(f, "    lin[%d] = \"%s\";\n"
+                               "    idop[%d] = write_var(fnt, %d, %d, 4, lin[%d]);\n"
+                               "    aj[%d] = %d;   // que ajuste es (hueco de cfg)\n",
+                            i, o.texto.c_str(), i, m.x, m.y + i * m.sep, i, i, idx);
+                } else {
+                    fprintf(f, "    aj[%d] = -1;\n"
+                               "    idop[%d] = write(fnt, %d, %d, 4, \"%s\");\n",
+                            i, i, m.x, m.y + i * m.sep, o.texto.c_str());
+                }
+            }
             fputs("\n    LOOP\n"
                   "        // ---- moverse por las opciones ----\n", f);
             {
@@ -6428,6 +6512,51 @@ int main(int, char**) {
                 fprintf(f, "            sound_play(%s, 0);\n", var_sonido(m.snd_mover).c_str());
             fputs("        END\n"
                   "        ant_arr = arr;  ant_aba = aba;\n", f);
+            if (!ajustes.empty()) {
+                fputs("        // ---- cambiar el ajuste elegido ----\n"
+                      "        izq = (key(_LEFT)  OR joy_getbutton(JOY_BUTTON_DPAD_LEFT));\n"
+                      "        der = (key(_RIGHT) OR joy_getbutton(JOY_BUTTON_DPAD_RIGHT));\n"
+                      "        IF (aj[sel] >= 0)\n"
+                      "            v = 0;\n"
+                      "            IF (izq AND ant_izq == 0) v = -1; END\n"
+                      "            IF (der AND ant_der == 0) v =  1; END\n"
+                      "            IF (v <> 0)\n", f);
+                for (int i = 0; i < n; i++) {
+                    const MenuOpc& o = m.opciones[i];
+                    if (o.clase != 1) continue;
+                    int idx = 0;
+                    for (size_t k = 0; k < ajustes.size(); k++) if (ajustes[k] == &o) idx = (int)k;
+                    fprintf(f, "                IF (sel == %d)\n"
+                               "                    cfg[%d] = cfg[%d] + v * %d;\n"
+                               "                    IF (cfg[%d] < %d) cfg[%d] = %d; END\n"
+                               "                    IF (cfg[%d] > %d) cfg[%d] = %d; END\n"
+                               "                END\n",
+                            i, idx, idx, o.paso,
+                            idx, o.vmin, idx, o.vmin,
+                            idx, o.vmax, idx, o.vmax);
+                }
+                fputs("                opciones_aplicar();\n"
+                      "                opciones_guardar();   // que la proxima vez siga puesto\n", f);
+                if (!m.snd_mover.empty())
+                    fprintf(f, "                sound_play(%s, 0);\n", var_sonido(m.snd_mover).c_str());
+                fputs("            END\n"
+                      "        END\n"
+                      "        ant_izq = izq;  ant_der = der;\n", f);
+                // el texto de cada ajuste, con su valor
+                for (int i = 0; i < n; i++) {
+                    const MenuOpc& o = m.opciones[i];
+                    if (o.clase != 1) continue;
+                    int idx = 0;
+                    for (size_t k = 0; k < ajustes.size(); k++) if (ajustes[k] == &o) idx = (int)k;
+                    if (o.ajuste == 2)
+                        fprintf(f, "        IF (cfg[%d]) lin[%d] = \"%s:  SI\";\n"
+                                   "        ELSE lin[%d] = \"%s:  NO\"; END\n",
+                                idx, i, o.texto.c_str(), i, o.texto.c_str());
+                    else
+                        fprintf(f, "        lin[%d] = \"%s:  \" + cfg[%d];\n",
+                                i, o.texto.c_str(), idx);
+                }
+            }
             if (m.con_raton) {
                 fprintf(f,
                   "        // ---- el raton: la opcion que este debajo ----\n"
@@ -6836,6 +6965,8 @@ int main(int, char**) {
                   "       (-1) y hasta que no se elige, joy_getbutton() y joy_getaxis()\n"
                   "       devuelven 0 siempre -- el mando parecia no funcionar. */\n"
                   "    IF (joy_numjoysticks() > 0) joy_select(0); END\n", f);
+            if (!ajustes.empty())
+                fputs("    opciones_cargar();   // volumen, pantalla y demas, como los dejaste\n", f);
             if (hay_aviso_juego) fputs("    escena_aviso();   // el cartelito de las reglas\n", f);
             fprintf(f, "    escena_cargar(%d);\n"
                        "    escena_gestor();   // atiende los cambios de escena\n", inicial);
@@ -11300,13 +11431,33 @@ int main(int, char**) {
                 int quitar_o = -1;
                 for (int q = 0; q < (int)m.opciones.size(); q++) {
                     ImGui::PushID(500 + q);
-                    char tb[128]; snprintf(tb, sizeof(tb), "%s", m.opciones[q].texto.c_str());
+                    MenuOpc& op = m.opciones[q];
+                    char tb[128]; snprintf(tb, sizeof(tb), "%s", op.texto.c_str());
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
-                    if (ImGui::InputText("texto", tb, sizeof(tb))) m.opciones[q].texto = tb;
+                    if (ImGui::InputText("texto", tb, sizeof(tb))) op.texto = tb;
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Quitar")) quitar_o = q;
-                    ui_acciones(m.opciones[q].acciones,
-                                m.nombre + "_" + std::to_string(q + 1), 1);
+                    const char* cls[] = { "Hace algo al pulsarla", "Es un ajuste (izquierda/derecha)" };
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
+                    ImGui::Combo("que es", &op.clase, cls, 2);
+                    if (op.clase == 1) {
+                        const char* aj[] = { "Volumen de la musica", "Volumen de los sonidos",
+                                             "Pantalla completa (si/no)", "Una variable del juego" };
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
+                        if (ImGui::Combo("ajusta", &op.ajuste, aj, 4)) {
+                            if (op.ajuste <= 1) { op.vmin = 0; op.vmax = 128; op.paso = 8; }
+                            else if (op.ajuste == 2) { op.vmin = 0; op.vmax = 1; op.paso = 1; }
+                        }
+                        if (op.ajuste == 3) {
+                            combo_var("variable", op.var);
+                            ImGui::DragInt3("min / max / paso", &op.vmin, 1.0f, -99999, 99999);
+                            ImGui::TextDisabled("  Sirve para lo que quieras: dificultad, sensibilidad,");
+                            ImGui::TextDisabled("  vidas, idioma... Es una variable del juego como otra.");
+                        }
+                        ImGui::TextDisabled("  El valor se ensenia al lado y se guarda al salir del menu.");
+                    } else {
+                        ui_acciones(op.acciones, m.nombre + "_" + std::to_string(q + 1), 1);
+                    }
                     ImGui::Separator();
                     ImGui::PopID();
                 }

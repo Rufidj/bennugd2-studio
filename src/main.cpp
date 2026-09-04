@@ -1115,6 +1115,7 @@ int main(int, char**) {
     bool show_escenas = false;             // ventana de escenas del proyecto
     bool show_menus = false;               // ventana de menus del juego
     bool show_dialogos = false;            // ventana de dialogos
+    bool show_guardado = false;            // ventana de guardar partida
     /* ---- MODOS DE TRABAJO ----
        El editor no ensenia todo a la vez: cada modo saca sus herramientas y sus
        paneles, y esconde lo que no toca. Es lo que hace que no se amontone. */
@@ -1241,6 +1242,7 @@ int main(int, char**) {
         // 6 = cerrar el menu, 7 = salir del juego (no llevan datos)
         std::string menu;                                 // 8  (menu que se abre)
         std::string dialogo;                              // 9  (dialogo que se saca)
+        int ranura = 1;                                   // 10 y 11 (que partida)
     };
     struct Regla {
         int evento = 0;    // 0 al empezar, 1 cada frame, 2 acercarse y pulsar,
@@ -1274,7 +1276,9 @@ int main(int, char**) {
     struct MenuOpc {
         std::string texto = "Opcion";
         std::vector<Accion> acciones;
-        int clase = 0;            // 0 = hace algo, 1 = es un ajuste
+        int clase = 0;            // 0 = hace algo, 1 = es un ajuste, 2 = una ranura de partida
+        int ranura = 1;           // clase 2: que ranura
+        int ranura_modo = 0;      // 0 = cargar al pulsar, 1 = guardar al pulsar
         int ajuste = 0;           // 0 musica, 1 sonidos, 2 pantalla completa, 3 una variable
         std::string var;          // si ajuste == 3, cual
         int vmin = 0, vmax = 128, paso = 8;
@@ -1333,7 +1337,23 @@ int main(int, char**) {
     std::vector<Dialogo> dialogos;
     int dlg_sel = -1;
 
-    struct GameVar { std::string nombre; int valor = 0; };
+    /* Una variable del juego puede entrar o no en la partida guardada: los puntos
+       y la vida si, pero un contador temporal o un ajuste no tienen por que. */
+    struct GameVar { std::string nombre; int valor = 0; bool guardar = true; };
+
+    /* ================== GUARDAR PARTIDA ==================
+       Que se guarda, en cuantas ranuras y con que nombre lo eliges tu: el editor
+       no sabe si estas haciendo un RPG, un plataformas o un juego de coches, asi
+       que no decide por ti que es "el progreso". */
+    struct Guardado {
+        int  ranuras = 3;                 // cuantas partidas caben
+        std::string fichero = "partida";  // partida1.sav, partida2.sav...
+        bool con_vars = true;             // las variables marcadas
+        bool con_escena = true;           // en que escena estabas
+        bool con_jugador = true;          // donde estabas y hacia donde mirabas
+        bool con_reglas = true;           // las reglas ya cumplidas (puertas abiertas)
+    };
+    Guardado guardado;
     std::vector<GameVar> gvars;
     struct SObj {
         std::string name, asset; int entity; float x, y, z, ry, scale;
@@ -2483,9 +2503,10 @@ int main(int, char**) {
                                      "Quitar esto de la escena", "Ensenar un texto",
                                      "Sonar un sonido", "Ir a otra escena",
                                      "Cerrar el menu", "Salir del juego",
-                                     "Abrir un menu", "Sacar un dialogo" };
+                                     "Abrir un menu", "Sacar un dialogo",
+                                     "Guardar la partida", "Cargar la partida" };
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
-                ImGui::Combo("que", &a.tipo, tt, 10);
+                ImGui::Combo("que", &a.tipo, tt, 12);
                 ImGui::SameLine();
                 if (ImGui::SmallButton("x")) quitar = q;
                 if (a.tipo == 0) {
@@ -2503,6 +2524,12 @@ int main(int, char**) {
                     else          ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "  (esto es para un menu)");
                 } else if (a.tipo == 7) {
                     ImGui::TextDisabled("  se acaba el programa (exit)");
+                } else if (a.tipo == 10 || a.tipo == 11) {
+                    ImGui::SetNextItemWidth(120);
+                    ImGui::DragInt("en la ranura", &a.ranura, 0.2f, 1, guardado.ranuras);
+                    ImGui::TextDisabled(a.tipo == 10
+                        ? "  guarda lo que dijiste en Ventana > Guardar partida"
+                        : "  vuelve a esa partida (si esa ranura tiene algo)");
                 } else if (a.tipo == 9) {
                     const char* cur = a.dialogo.empty() ? "(elige uno)" : a.dialogo.c_str();
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
@@ -3033,6 +3060,10 @@ int main(int, char**) {
                         if (cuerpo) { q += tab; q += "g3d_rigidbody_destroy(cuerpo);\n"; }
                         q += tab; q += "RETURN;   // este proceso se acaba aqui\n";
                         out += q; continue;
+                    } else if (a.tipo == 10) {
+                        snprintf(l, sizeof(l), "%spartida_guardar(%d);\n", tab, a.ranura);
+                    } else if (a.tipo == 11) {
+                        snprintf(l, sizeof(l), "%spartida_cargar(%d);\n", tab, a.ranura);
                     } else if (a.tipo == 9) {
                         if (a.dialogo.empty()) continue;
                         snprintf(l, sizeof(l), "%sIF (NOT exists(TYPE %s)) %s(); END\n",
@@ -3277,7 +3308,18 @@ int main(int, char**) {
                 "    // Cuanto mas pesado sea el objeto menos se movera, y si no puede con\n"
                 "    // el le cortara el paso. 0 = choca pero no mueve nada.\n"
                 "    g3d_char_set_push(ch, 200.0);\n"
-                "    facing = 0.0; t = 0.0;\n";
+                "    facing = 0.0; t = 0.0;\n"
+                /* Si venimos de cargar una partida, el jugador no empieza donde
+                   esta puesto en la escena, sino donde lo dejaste. Va aqui, con la
+                   capsula ya creada, no antes: 'ch' no existiria todavia. */
+                "    IF (hay_vuelta)\n"
+                "        g3d_char_set_position(ch, volver_x, volver_y, volver_z);\n"
+                "        x = volver_x;  y = volver_y;  z = volver_z;\n";
+            // el angulo solo si la camara es girable: si no, escena_orbita no existe
+            if (cam_girable && cam_mode == 1)
+                fmt += "        escena_orbita = volver_a;\n";
+            fmt += "        hay_vuelta = 0;\n"
+                   "    END\n";
             if (fps_look)
                 fmt +=
                 "    // Mirada con el raton, modo relativo de SDL: el puntero se oculta y\n"
@@ -3752,10 +3794,10 @@ int main(int, char**) {
                         r.evento, r.radio, r.tecla.c_str(), r.boton.c_str(), r.zona,
                         r.var.c_str(), r.cmp, r.valor, r.cada, r.una_vez, r.mientras);
                 for (auto& a : r.acciones)
-                    fprintf(f, "OBJRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s|%s\n",
+                    fprintf(f, "OBJRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s|%s|%d\n",
                             a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
                             a.op, a.valor, a.seg, a.texto.c_str(),
-                            a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str(), a.dialogo.c_str());
+                            a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str(), a.dialogo.c_str(), a.ranura);
             }
         }
         // ---- SPRITES 2D del mundo (hojas de sprites) ----
@@ -3799,10 +3841,10 @@ int main(int, char**) {
                             r.evento, r.radio, r.tecla.c_str(), r.boton.c_str(), r.zona,
                             r.var.c_str(), r.cmp, r.valor, r.cada, r.una_vez, r.mientras);
                     for (auto& a : r.acciones)
-                        fprintf(f, "SPRRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s|%s\n",
+                        fprintf(f, "SPRRACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s|%s|%d\n",
                                 a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
                                 a.op, a.valor, a.seg, a.texto.c_str(),
-                                a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str(), a.dialogo.c_str());
+                                a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str(), a.dialogo.c_str(), a.ranura);
                 }
                 for (auto& ac : sp.acciones)
                     fprintf(f, "SPRACCION %d|%d|%s|%s|%s|%s|%s|%s\n",
@@ -3965,7 +4007,7 @@ int main(int, char**) {
                         continue;
                     }
                     if (!strncmp(line, "SPRRACC ", 8) && !sp.reglas.empty()) {
-                        std::string p[13]; trozos(line + 8, p, 13);
+                        std::string p[14]; trozos(line + 8, p, 14);
                         Accion a;
                         a.tipo    = atoi(p[0].c_str());
                         a.archivo = p[1]; a.proc = p[2]; a.var = p[3];
@@ -3976,6 +4018,7 @@ int main(int, char**) {
                         a.sonido  = p[8];
                         if (!p[9].empty()) a.vol = atoi(p[9].c_str());
                         a.escena  = p[10]; a.menu = p[11]; a.dialogo = p[12];
+                if (!p[13].empty()) a.ranura = atoi(p[13].c_str());
                         sp.reglas.back().acciones.push_back(a);
                         continue;
                     }
@@ -4252,7 +4295,7 @@ int main(int, char**) {
                 continue;
             }
             if (!strncmp(line, "OBJRACC ", 8) && !objects.empty() && !objects.back().reglas.empty()) {
-                std::string p[13]; trozos(line + 8, p, 13);
+                std::string p[14]; trozos(line + 8, p, 14);
                 Accion a;
                 a.tipo    = atoi(p[0].c_str());
                 a.archivo = p[1]; a.proc = p[2]; a.var = p[3];
@@ -4263,6 +4306,7 @@ int main(int, char**) {
                 a.sonido  = p[8];
                 if (!p[9].empty()) a.vol = atoi(p[9].c_str());
                 a.escena  = p[10]; a.menu = p[11]; a.dialogo = p[12];
+                if (!p[13].empty()) a.ranura = atoi(p[13].c_str());
                 objects.back().reglas.back().acciones.push_back(a);
                 continue;
             }
@@ -4342,10 +4386,15 @@ int main(int, char**) {
             std::string rel = escena_inicial;
             if (rel.empty()) rel = fs::path(scene_path).lexically_relative(project_dir).string();
             fprintf(f, "BGD2PROJECT 1\nname=%s\nscene=%s\n", project_name.c_str(), rel.c_str());
+            /* Como se guardan las partidas (cuantas ranuras y que entra). */
+            fprintf(f, "guardado=%d|%s|%d|%d|%d|%d\n", guardado.ranuras, guardado.fichero.c_str(),
+                    guardado.con_vars ? 1 : 0, guardado.con_escena ? 1 : 0,
+                    guardado.con_jugador ? 1 : 0, guardado.con_reglas ? 1 : 0);
             /* Las variables del juego son del PROYECTO y no de una escena: los
-               puntos y la vida tienen que sobrevivir al cambiar de mapa. */
+               puntos y la vida tienen que sobrevivir al cambiar de mapa. El
+               tercer numero dice si esa variable entra en la partida guardada. */
             for (auto& v : gvars)
-                fprintf(f, "var=%s|%d\n", v.nombre.c_str(), v.valor);
+                fprintf(f, "var=%s|%d|%d\n", v.nombre.c_str(), v.valor, v.guardar ? 1 : 0);
             fclose(f);
         }
     };
@@ -4372,11 +4421,13 @@ int main(int, char**) {
                 if (o.clase == 1)
                     fprintf(f, "MAJU %d|%s|%d|%d|%d\n", o.ajuste, o.var.c_str(),
                             o.vmin, o.vmax, o.paso);
+                if (o.clase == 2)
+                    fprintf(f, "MRAN %d|%d\n", o.ranura, o.ranura_modo);
                 for (auto& a : o.acciones)
-                    fprintf(f, "MACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s|%s\n",
+                    fprintf(f, "MACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s|%s|%d\n",
                             a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
                             a.op, a.valor, a.seg, a.texto.c_str(),
-                            a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str(), a.dialogo.c_str());
+                            a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str(), a.dialogo.c_str(), a.ranura);
             }
         }
         fclose(f);
@@ -4416,8 +4467,12 @@ int main(int, char**) {
                 o.ajuste = atoi(p2[0].c_str());
                 o.var = p2[1];
                 o.vmin = atoi(p2[2].c_str()); o.vmax = atoi(p2[3].c_str()); o.paso = atoi(p2[4].c_str());
+            } else if (!strncmp(line, "MRAN ", 5) && !menus.empty() && !menus.back().opciones.empty()) {
+                std::string p2[2]; trozos(line + 5, p2, 2);
+                MenuOpc& o = menus.back().opciones.back();
+                o.clase = 2; o.ranura = atoi(p2[0].c_str()); o.ranura_modo = atoi(p2[1].c_str());
             } else if (!strncmp(line, "MACC ", 5) && !menus.empty() && !menus.back().opciones.empty()) {
-                std::string p[13]; trozos(line + 5, p, 13);
+                std::string p[14]; trozos(line + 5, p, 14);
                 Accion a;
                 a.tipo = atoi(p[0].c_str());
                 a.archivo = p[1]; a.proc = p[2]; a.var = p[3];
@@ -4427,6 +4482,7 @@ int main(int, char**) {
                 a.texto = p[7]; a.sonido = p[8];
                 if (!p[9].empty()) a.vol = atoi(p[9].c_str());
                 a.escena = p[10]; a.menu = p[11]; a.dialogo = p[12];
+                if (!p[13].empty()) a.ranura = atoi(p[13].c_str());
                 menus.back().opciones.back().acciones.push_back(a);
             }
         }
@@ -4456,10 +4512,10 @@ int main(int, char**) {
                 for (auto& o : p2.opciones) {
                     fprintf(f, "DLGOPC %d|%s\n", o.salto, o.texto.c_str());
                     for (auto& a : o.acciones)
-                        fprintf(f, "DLGACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s|%s\n",
+                        fprintf(f, "DLGACC %d|%s|%s|%s|%d|%.3f|%.2f|%s|%s|%d|%s|%s|%s|%d\n",
                                 a.tipo, a.archivo.c_str(), a.proc.c_str(), a.var.c_str(),
                                 a.op, a.valor, a.seg, a.texto.c_str(),
-                                a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str(), a.dialogo.c_str());
+                                a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str(), a.dialogo.c_str(), a.ranura);
                 }
             }
         }
@@ -4507,7 +4563,7 @@ int main(int, char**) {
                 dialogos.back().paginas.back().opciones.push_back(o);
             } else if (!strncmp(line, "DLGACC ", 7) && !dialogos.empty() &&
                        !dialogos.back().paginas.empty() && !dialogos.back().paginas.back().opciones.empty()) {
-                std::string p2[13]; trozos(line + 7, p2, 13);
+                std::string p2[14]; trozos(line + 7, p2, 14);
                 Accion a;
                 a.tipo = atoi(p2[0].c_str());
                 a.archivo = p2[1]; a.proc = p2[2]; a.var = p2[3];
@@ -4517,6 +4573,7 @@ int main(int, char**) {
                 a.texto = p2[7]; a.sonido = p2[8];
                 if (!p2[9].empty()) a.vol = atoi(p2[9].c_str());
                 a.escena = p2[10]; a.menu = p2[11]; a.dialogo = p2[12];
+                if (!p2[13].empty()) a.ranura = atoi(p2[13].c_str());
                 dialogos.back().paginas.back().opciones.back().acciones.push_back(a);
             }
         }
@@ -4554,8 +4611,22 @@ int main(int, char**) {
                 char buf[512];
                 if (sscanf(line, "scene=%511[^\n]", buf) == 1) scn = buf;
                 else if (!strncmp(line, "var=", 4)) {
-                    std::string p2[2]; trozos(line + 4, p2, 2);
-                    if (!p2[0].empty()) { GameVar v; v.nombre = p2[0]; v.valor = atoi(p2[1].c_str()); gvars.push_back(v); }
+                    std::string p2[3]; trozos(line + 4, p2, 3);
+                    if (!p2[0].empty()) {
+                        GameVar v; v.nombre = p2[0]; v.valor = atoi(p2[1].c_str());
+                        v.guardar = p2[2].empty() ? true : (atoi(p2[2].c_str()) != 0);
+                        gvars.push_back(v);
+                    }
+                }
+                else if (!strncmp(line, "guardado=", 9)) {
+                    std::string p2[6]; trozos(line + 9, p2, 6);
+                    guardado.ranuras = atoi(p2[0].c_str());
+                    if (guardado.ranuras < 1) guardado.ranuras = 1;
+                    guardado.fichero = p2[1].empty() ? "partida" : p2[1];
+                    guardado.con_vars    = atoi(p2[2].c_str()) != 0;
+                    guardado.con_escena  = atoi(p2[3].c_str()) != 0;
+                    guardado.con_jugador = atoi(p2[4].c_str()) != 0;
+                    guardado.con_reglas  = atoi(p2[5].c_str()) != 0;
                 }
             }
             fclose(f);
@@ -4722,6 +4793,11 @@ int main(int, char**) {
         auto add_proc_comun = [&](const std::string& nombre, const std::string& texto) {
             if (proc_comun_set.insert(nombre).second) proc_comun.push_back(texto);
         };
+        /* Siempre declaradas, aunque el juego no tenga guardado: el proceso del
+           jugador las mira al nacer y si no existen no compila. */
+        add_global("    // de donde viene el jugador al cargar una partida (0 = empieza donde toca)\n"
+                   "    float volver_x; float volver_y; float volver_z; float volver_a;\n"
+                   "    int hay_vuelta;\n");
         add_global("int scene; int camera; int light;\n"
                    "    float escena_pitch;   // hacia donde mira en vertical (FPS)\n"
                    "    float escena_yaw;     // hacia donde mira en horizontal (FPS)\n");
@@ -6388,6 +6464,95 @@ int main(int, char**) {
         // sigue el hueso con sus variables nativas.
         fputs("        FRAME;\n    END\nEND\n\n", f);
 
+        /* ================= GUARDAR PARTIDA =================
+           Una partida es UNA tabla que se vuelca a fichero con save(), que es como
+           guarda BennuGD2 (admite la variable entera, tabla incluida). Lo que entra
+           en esa tabla lo has elegido tu, asi que aqui no se decide nada del
+           genero del juego: solo se copian los huecos que hayas marcado. */
+        std::vector<const GameVar*> vars_partida;
+        if (guardado.con_vars)
+            for (auto& v : gvars) if (v.guardar) vars_partida.push_back(&v);
+        bool hay_partida = false;
+        for (auto& o : objects) for (auto& r : o.reglas) for (auto& a : r.acciones)
+            if (a.tipo == 10 || a.tipo == 11) hay_partida = true;
+        for (auto& sp : sprites) for (auto& r : sp.reglas) for (auto& a : r.acciones)
+            if (a.tipo == 10 || a.tipo == 11) hay_partida = true;
+        for (auto& m : menus) for (auto& o : m.opciones) {
+            if (o.clase == 2) hay_partida = true;
+            for (auto& a : o.acciones) if (a.tipo == 10 || a.tipo == 11) hay_partida = true;
+        }
+        for (auto& d : dialogos) for (auto& pg : d.paginas) for (auto& o : pg.opciones)
+            for (auto& a : o.acciones) if (a.tipo == 10 || a.tipo == 11) hay_partida = true;
+        if (hay_partida) {
+            /* La tabla: 0 = usada, 1 = escena, 2..4 = donde estaba el jugador,
+               5 = hacia donde miraba, luego las variables y luego las reglas. */
+            int base_vars = 6;
+            int n_reglas = guardado.con_reglas ? max_reglas : 0;
+            int total = base_vars + (int)vars_partida.size() + n_reglas;
+            add_global("    // la partida guardada: se vuelca entera con save()\n"
+                       "    int part[" + std::to_string(total) + "];\n"
+                       "    int ranura_hay[" + std::to_string(guardado.ranuras + 1) + "];\n"
+                       "    int ranura_esc[" + std::to_string(guardado.ranuras + 1) + "];\n");
+            std::string g;
+            g  = "// ---- GUARDAR Y CARGAR LA PARTIDA ----\n";
+            g += "// Lo que entra aqui lo elegiste en el editor (Ventana > Guardar partida).\n";
+            g += "FUNCTION partida_guardar(int ranura)\n"
+                 "PRIVATE int i; string f;\nEND\n"
+                 "BEGIN\n"
+                 "    part[0] = 1;   // esta ranura ya tiene algo\n";
+            if (guardado.con_escena)  g += "    part[1] = escena_actual;\n";
+            if (guardado.con_jugador) {
+                g += "    // donde estaba el jugador (en milesimas, que la tabla es de enteros)\n"
+                     "    part[2] = jug_x * 1000;  part[3] = jug_y * 1000;  part[4] = jug_z * 1000;\n";
+                if (cam_girable && cam_mode == 1) g += "    part[5] = escena_orbita;\n";
+            }
+            for (size_t i = 0; i < vars_partida.size(); i++)
+                g += "    part[" + std::to_string(base_vars + (int)i) + "] = " + vars_partida[i]->nombre + ";\n";
+            if (n_reglas > 0)
+                g += "    FOR (i = 0; i < " + std::to_string(n_reglas) + "; i = i + 1)\n"
+                     "        part[" + std::to_string(base_vars + (int)vars_partida.size()) + " + i] = regla_hecha[i];\n"
+                     "    END\n";
+            g += "    f = \"" + guardado.fichero + "\" + ranura + \".sav\";\n"
+                 "    save(f, part);\n"
+                 "    ranura_hay[ranura] = 1;  ranura_esc[ranura] = part[1];\n"
+                 "    RETURN;\nEND\n\n";
+
+            g += "FUNCTION partida_cargar(int ranura)\n"
+                 "PRIVATE int i; string f;\nEND\n"
+                 "BEGIN\n"
+                 "    part[0] = 0;\n"
+                 "    f = \"" + guardado.fichero + "\" + ranura + \".sav\";\n"
+                 "    load(f, part);\n"
+                 "    IF (part[0] == 0) RETURN; END   // ranura vacia: no se toca nada\n";
+            for (size_t i = 0; i < vars_partida.size(); i++)
+                g += "    " + vars_partida[i]->nombre + " = part[" + std::to_string(base_vars + (int)i) + "];\n";
+            if (n_reglas > 0)
+                g += "    FOR (i = 0; i < " + std::to_string(n_reglas) + "; i = i + 1)\n"
+                     "        regla_hecha[i] = part[" + std::to_string(base_vars + (int)vars_partida.size()) + " + i];\n"
+                     "    END\n";
+            if (guardado.con_jugador)
+                g += "    // al montar la escena, el jugador se pone donde estaba\n"
+                     "    volver_x = part[2] / 1000.0;  volver_y = part[3] / 1000.0;  volver_z = part[4] / 1000.0;\n"
+                     "    volver_a = part[5];  hay_vuelta = 1;\n";
+            if (guardado.con_escena)
+                g += "    escena_pedida = part[1];   // y se va a la escena en la que estabas\n";
+            g += "    RETURN;\nEND\n\n";
+
+            g += "// Mira que hay en cada ranura, para que un menu pueda ensenarlo.\n"
+                 "FUNCTION partida_ojear()\n"
+                 "PRIVATE int r; string f;\nEND\n"
+                 "BEGIN\n"
+                 "    FOR (r = 1; r <= " + std::to_string(guardado.ranuras) + "; r = r + 1)\n"
+                 "        part[0] = 0;\n"
+                 "        f = \"" + guardado.fichero + "\" + r + \".sav\";\n"
+                 "        load(f, part);\n"
+                 "        ranura_hay[r] = part[0];  ranura_esc[r] = part[1];\n"
+                 "    END\n"
+                 "    RETURN;\nEND\n\n";
+            add_proc_comun("partida", g);
+
+        }
+
         /* ================= LOS AJUSTES =================
            Un menu de opciones que no recuerda nada no sirve: los ajustes se
            guardan en un fichero con save() y se cargan al arrancar. Se guarda UNA
@@ -6569,6 +6734,14 @@ int main(int, char**) {
                   "            END\n"
                   "        END\n", m.y, m.sep, m.y, m.sep);
             }
+            // el texto de cada ranura, con lo que hay dentro
+            for (int i = 0; i < n; i++) {
+                const MenuOpc& o = m.opciones[i];
+                if (o.clase != 2) continue;
+                fprintf(f, "        IF (ranura_hay[%d]) lin[%d] = \"%s:  escena \" + ranura_esc[%d];\n"
+                           "        ELSE lin[%d] = \"%s:  vacia\"; END\n",
+                        o.ranura, i, o.texto.c_str(), o.ranura, i, o.texto.c_str());
+            }
             fprintf(f,
                   "        // ---- pintar: la elegida de otro color ----\n"
                   "        FOR (i = 0; i < n; i = i + 1)\n"
@@ -6583,6 +6756,21 @@ int main(int, char**) {
                 fprintf(f, "            sound_play(%s, 0);\n", var_sonido(m.snd_elegir).c_str());
             for (int i = 0; i < n; i++) {
                 fprintf(f, "            IF (sel == %d)\n", i);
+                if (m.opciones[i].clase == 2) {
+                    const MenuOpc& o = m.opciones[i];
+                    if (o.ranura_modo == 1)
+                        fprintf(f, "                partida_guardar(%d);\n"
+                                   "                partida_ojear();\n", o.ranura);
+                    else
+                        fprintf(f, "                IF (ranura_hay[%d])\n"
+                                   "                    partida_cargar(%d);\n"
+                                   "                    FOR (i = 0; i < n; i = i + 1)  write_delete(idop[i]);  END\n"
+                                   "                    %s\n"
+                                   "                    RETURN;\n"
+                                   "                END\n",
+                                o.ranura, o.ranura,
+                                m.pausa ? "signal(ALL_PROCESS, S_WAKEUP);" : "");
+                }
                 for (auto& a : m.opciones[i].acciones) {
                     if (a.tipo == 0 && !a.proc.empty())
                         fprintf(f, "                %s();\n", a.proc.c_str());
@@ -7479,6 +7667,7 @@ int main(int, char**) {
                 ImGui::MenuItem(ICON_FA_COMMENT "  Dialogos", nullptr, &show_dialogos);
                 ImGui::MenuItem(ICON_FA_PERSON_RUNNING "  Sprites 3D", nullptr, &show_spr_win);
                 ImGui::MenuItem(ICON_FA_SLIDERS "  Variables del juego", nullptr, &show_gvars);
+                ImGui::MenuItem(ICON_FA_FLOPPY_DISK "  Guardar partida", nullptr, &show_guardado);
                 ImGui::Separator();
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Deja los paneles de este modo como venian de fabrica.");
@@ -7806,6 +7995,9 @@ int main(int, char**) {
                 if (ImGui::Button(ICON_FA_FILE_CODE "   main.prg", ImVec2(-1, 0))) open_main_script();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Abrir el main.prg del juego");
                 if (ImGui::Button(ICON_FA_SLIDERS "   Variables", ImVec2(-1, 0))) show_gvars = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Puntos, vida, llaves... salen como GLOBAL");
+                if (ImGui::Button(ICON_FA_FLOPPY_DISK "   Guardado", ImVec2(-1, 0))) show_guardado = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Que entra en una partida guardada y en cuantas ranuras");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Puntos, vida, llaves... salen como GLOBAL");
                 grupo("DEL PROYECTO");
                 if (ImGui::Button(ICON_FA_LAYER_GROUP "   Escenas", ImVec2(-1, 0))) show_escenas = true;
@@ -11437,9 +11629,18 @@ int main(int, char**) {
                     if (ImGui::InputText("texto", tb, sizeof(tb))) op.texto = tb;
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Quitar")) quitar_o = q;
-                    const char* cls[] = { "Hace algo al pulsarla", "Es un ajuste (izquierda/derecha)" };
+                    const char* cls[] = { "Hace algo al pulsarla", "Es un ajuste (izquierda/derecha)",
+                                          "Es una ranura de partida" };
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
-                    ImGui::Combo("que es", &op.clase, cls, 2);
+                    ImGui::Combo("que es", &op.clase, cls, 3);
+                    if (op.clase == 2) {
+                        ImGui::SetNextItemWidth(120);
+                        ImGui::DragInt("ranura", &op.ranura, 0.2f, 1, guardado.ranuras);
+                        const char* mm2[] = { "Cargar esa partida", "Guardar en esa ranura" };
+                        ImGui::SetNextItemWidth(220);
+                        ImGui::Combo("al pulsarla", &op.ranura_modo, mm2, 2);
+                        ImGui::TextDisabled("  Ensenia si esta vacia o en que escena la dejaste.");
+                    }
                     if (op.clase == 1) {
                         const char* aj[] = { "Volumen de la musica", "Volumen de los sonidos",
                                              "Pantalla completa (si/no)", "Una variable del juego" };
@@ -11777,6 +11978,51 @@ int main(int, char**) {
                 if (ImGui::Button("Cancelar", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
+            ImGui::End();
+        }
+
+        /* ---- GUARDAR PARTIDA: que entra, cuantas ranuras y como se llama ----
+           Nada de esto lo decide el editor: no sabe si tu juego es de mazmorras o
+           de carreras, asi que el "progreso" lo defines tu marcando casillas. */
+        if (show_guardado) {
+            ImGui::SetNextWindowSize(ImVec2(440, 420), ImGuiCond_FirstUseEver);
+            ImGui::Begin("Guardar partida", &show_guardado);
+            ImGui::TextWrapped("Una partida guardada es lo que TU digas que es. Marca lo que "
+                               "tiene que sobrevivir y el editor lo guarda todo junto.");
+            ImGui::Separator();
+            ImGui::DragInt("Cuantas ranuras", &guardado.ranuras, 0.1f, 1, 20);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Partida 1, 2, 3... Cada una en su fichero.");
+            { char fb[80]; snprintf(fb, sizeof(fb), "%s", guardado.fichero.c_str());
+              ImGui::SetNextItemWidth(200);
+              if (ImGui::InputText("Nombre del fichero", fb, sizeof(fb))) guardado.fichero = ident_bgd(fb, "partida");
+              ImGui::TextDisabled("  Saldran %s1.sav, %s2.sav...", guardado.fichero.c_str(), guardado.fichero.c_str()); }
+
+            ImGui::SeparatorText("Que se guarda");
+            ImGui::Checkbox("Las variables del juego (las que marques abajo)", &guardado.con_vars);
+            ImGui::Checkbox("En que escena estabas", &guardado.con_escena);
+            ImGui::Checkbox("Donde estaba el jugador y hacia donde miraba", &guardado.con_jugador);
+            ImGui::Checkbox("Las reglas ya cumplidas (la puerta abierta sigue abierta)", &guardado.con_reglas);
+
+            if (guardado.con_vars) {
+                ImGui::SeparatorText("Cuales de tus variables");
+                if (gvars.empty())
+                    ImGui::TextDisabled("(todavia no tienes ninguna: Ventana > Variables del juego)");
+                for (auto& v : gvars) {
+                    ImGui::PushID(v.nombre.c_str());
+                    ImGui::Checkbox(v.nombre.c_str(), &v.guardar);
+                    ImGui::PopID();
+                }
+                ImGui::TextDisabled("Desmarca las que no son progreso (un contador temporal, un ajuste).");
+            }
+
+            ImGui::SeparatorText("Como se guarda y se carga");
+            ImGui::TextWrapped("Con acciones, asi que sirve cualquier disparador: un punto de "
+                               "guardado que se toca, un menu con sus ranuras, al pasar de escena, "
+                               "cada N segundos para autoguardar...");
+            ImGui::BulletText("En una regla: \"Guardar la partida\" / \"Cargar la partida\".");
+            ImGui::BulletText("En un menu: una opcion de clase \"ranura de partida\",");
+            ImGui::BulletText("   que ademas ensenia si esa ranura esta vacia.");
             ImGui::End();
         }
 

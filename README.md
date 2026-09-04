@@ -108,6 +108,26 @@ juego.
 Sale como un `PROCESS` de BennuGD2 normal: los textos se crean una vez con `write()` y
 mover la selección es cambiar dos colores con `write_set_rgba`, no rehacer la pantalla.
 
+## Guardar partida
+
+**Ventana → Guardar partida**. Una partida guardada es **lo que tú digas que es**: el
+editor no sabe si haces un RPG, un plataformas o un juego de coches, así que no decide
+por ti qué es "el progreso". Marcas lo que tiene que sobrevivir:
+
+- **Las variables del juego**, una por una (los puntos sí, un contador temporal no).
+- **En qué escena** estabas.
+- **Dónde estaba el jugador** y hacia dónde miraba.
+- **Las reglas ya cumplidas**, para que la puerta que abriste siga abierta.
+
+Eliges también **cuántas ranuras** y el **nombre del fichero** (`partida1.sav`,
+`partida2.sav`…). Todo se vuelca de una vez con el `save()` de BennuGD2.
+
+Y se guarda **desde donde quieras**, porque son acciones: una regla con *"Guardar la
+partida"* (un punto de guardado que se toca, al pasar de escena, cada N segundos para
+autoguardar) o un menú con opciones de tipo **ranura**, que además enseñan si están
+vacías. El aspecto del menú de guardado es el del menú: tu fuente, tu fondo, tus colores.
+
+
 ## Diálogos
 
 **Escena → Diálogos** (o el rail, en el modo Interfaz). Un diálogo es lo que dice

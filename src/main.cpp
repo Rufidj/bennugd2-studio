@@ -6921,6 +6921,13 @@ int main(int, char**) {
                     if (ImGui::MenuItem(nm[i], nullptr, modo == i)) modo = i;
                 ImGui::Separator();
                 if (ImGui::MenuItem("Restablecer la disposicion")) rehacer_layout = true;
+                ImGui::Separator();
+                ImGui::TextDisabled("PANELES");
+                ImGui::MenuItem(ICON_FA_LAYER_GROUP "  Escenas del proyecto", nullptr, &show_escenas);
+                ImGui::MenuItem(ICON_FA_BARS "  Menus del juego", nullptr, &show_menus);
+                ImGui::MenuItem(ICON_FA_PERSON_RUNNING "  Sprites 3D", nullptr, &show_spr_win);
+                ImGui::MenuItem(ICON_FA_SLIDERS "  Variables del juego", nullptr, &show_gvars);
+                ImGui::Separator();
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Deja los paneles de este modo como venian de fabrica.");
                 ImGui::TextDisabled("Cualquier panel se puede arrancar");
@@ -6928,6 +6935,11 @@ int main(int, char**) {
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Editar")) {
+                if (ImGui::MenuItem("Vaciar la escena")) {
+                    for (auto& o : objects) g3d_entity_impl_set_position(o.entity, 0, -99999, 0);
+                    objects.clear(); obj_sel = -1;
+                }
+                ImGui::Separator();
                 if (ImGui::MenuItem("Deshacer", "Ctrl+Z", false, !undo_kind.empty())) do_undo();
                 if (ImGui::MenuItem("Rehacer", "Ctrl+Shift+Z", false, !redo_kind.empty())) do_redo();
                 ImGui::Separator();
@@ -6937,20 +6949,9 @@ int main(int, char**) {
                 if (ImGui::MenuItem("Borrar",   "Supr",   false, obj_sel >= 0)) delete_obj(obj_sel);
                 ImGui::EndMenu();
             }
-            if (ImGui::BeginMenu("Escena")) {
-                ImGui::MenuItem(ICON_FA_LAYER_GROUP "  Escenas del proyecto", nullptr, &show_escenas);
-                ImGui::MenuItem(ICON_FA_BARS "  Menus del juego", nullptr, &show_menus);
-                ImGui::MenuItem(ICON_FA_PERSON_RUNNING "  Sprites 3D (hojas y personajes)",
-                                nullptr, &show_spr_win);
-                ImGui::Separator();
-                if (ImGui::MenuItem("Vaciar escena")) {
-                    for (auto& o : objects) g3d_entity_impl_set_position(o.entity, 0, -99999, 0);
-                    objects.clear(); obj_sel = -1;
-                }
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Terreno")) {
-                ImGui::TextDisabled("TERRENO PROCEDURAL");
+
+            if (ImGui::BeginMenu("Generar")) {
+                ImGui::TextDisabled("TERRENO PROCEDURAL (las herramientas, en el rail)");
                 ImGui::SetNextItemWidth(150);
                 ImGui::SliderFloat("Relieve##m", &proc_amp, 5.0f, 60.0f, "%.0f");
                 ImGui::SetNextItemWidth(150);
@@ -7025,10 +7026,52 @@ int main(int, char**) {
                     ImGui::SetTooltip("Vuelve a dejarlo como recien creado.\nSe pierde lo que hayas escrito.");
                 ImGui::EndMenu();
             }
-            /* Las herramientas ya no van aqui en fila: viven en el rail de la
-               izquierda, agrupadas y filtradas por el modo de trabajo. Aqui arriba
-               solo quedan los MODOS, que es lo que cambia toda la pantalla. */
-            ImGui::SameLine(0, 24);
+            ImGui::EndMainMenuBar();
+        }
+        // gizmo_op segun la herramienta activa
+        if (tool == T_MOVE)   gizmo_op = ImGuizmo::TRANSLATE;
+        if (tool == T_ROTATE) gizmo_op = ImGuizmo::ROTATE;
+        if (tool == T_SCALE)  gizmo_op = ImGuizmo::SCALE;
+
+        // ---- dialogos de archivo ----
+        openDlg.Display();
+        if (openDlg.HasSelected()) { load_scene(openDlg.GetSelected().string()); openDlg.ClearSelected(); }
+        saveDlg.Display();
+        if (saveDlg.HasSelected()) {
+            std::string p = saveDlg.GetSelected().string();
+            if (p.size() < 6 || p.substr(p.size() - 6) != ".scene") p += ".scene";
+            save_scene(p); saveDlg.ClearSelected();
+        }
+        projOpenDlg.Display();
+        if (projOpenDlg.HasSelected()) { open_project(projOpenDlg.GetSelected().string()); projOpenDlg.ClearSelected(); }
+        projNewDlg.Display();
+        if (projNewDlg.HasSelected()) {
+            std::string p = projNewDlg.GetSelected().string();
+            if (p.size() < 5 || p.substr(p.size() - 5) != ".bgd2") p += ".bgd2";
+            create_project(p); projNewDlg.ClearSelected();
+        }
+
+        // ---- leer lo que va soltando el juego en ejecucion (bgdi) ----
+        if (run_log || !run_log_path.empty()) {
+            if (!run_log) run_log = fopen(run_log_path.c_str(), "r");  // aun no existia al lanzarlo
+            if (run_log) {
+                char b[1024]; size_t n;
+                while ((n = fread(b, 1, sizeof(b) - 1, run_log)) > 0) { b[n] = 0; console_add(b); }
+                clearerr(run_log);   // seguir leyendo cuando el juego escriba mas
+            }
+        }
+
+        // Dockspace a pantalla completa: los paneles se acoplan alrededor.
+        /* ---- SEGUNDA FILA: los modos de trabajo ----
+           Va aparte de la barra de menus a proposito: son dos cosas distintas y
+           juntas se confundian (habia un menu "Escena" y un modo "Escena" en la
+           misma fila). Arriba las ordenes, aqui debajo en que estas trabajando. */
+        if (ImGui::BeginViewportSideBar("##barra_modos", ImGui::GetMainViewport(), ImGuiDir_Up,
+                                        ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f,
+                                        ImGuiWindowFlags_NoSavedSettings)) {
+            {
+            /* Las herramientas no van aqui: viven en el rail de la izquierda,
+               agrupadas y filtradas por el modo. Aqui solo los MODOS y el Play. */
             {
                 struct { const char* icono; const char* nombre; const char* tip; } mm[] = {
                     { ICON_FA_CUBES,           "Escena",     "Colocar y mover objetos, jerarquia y propiedades" },
@@ -7079,42 +7122,10 @@ int main(int, char**) {
                 ImGui::SameLine(ImGui::GetWindowWidth() - 320);
                 ImGui::TextDisabled("%s", status.c_str());
             }
-            ImGui::EndMainMenuBar();
-        }
-        // gizmo_op segun la herramienta activa
-        if (tool == T_MOVE)   gizmo_op = ImGuizmo::TRANSLATE;
-        if (tool == T_ROTATE) gizmo_op = ImGuizmo::ROTATE;
-        if (tool == T_SCALE)  gizmo_op = ImGuizmo::SCALE;
-
-        // ---- dialogos de archivo ----
-        openDlg.Display();
-        if (openDlg.HasSelected()) { load_scene(openDlg.GetSelected().string()); openDlg.ClearSelected(); }
-        saveDlg.Display();
-        if (saveDlg.HasSelected()) {
-            std::string p = saveDlg.GetSelected().string();
-            if (p.size() < 6 || p.substr(p.size() - 6) != ".scene") p += ".scene";
-            save_scene(p); saveDlg.ClearSelected();
-        }
-        projOpenDlg.Display();
-        if (projOpenDlg.HasSelected()) { open_project(projOpenDlg.GetSelected().string()); projOpenDlg.ClearSelected(); }
-        projNewDlg.Display();
-        if (projNewDlg.HasSelected()) {
-            std::string p = projNewDlg.GetSelected().string();
-            if (p.size() < 5 || p.substr(p.size() - 5) != ".bgd2") p += ".bgd2";
-            create_project(p); projNewDlg.ClearSelected();
-        }
-
-        // ---- leer lo que va soltando el juego en ejecucion (bgdi) ----
-        if (run_log || !run_log_path.empty()) {
-            if (!run_log) run_log = fopen(run_log_path.c_str(), "r");  // aun no existia al lanzarlo
-            if (run_log) {
-                char b[1024]; size_t n;
-                while ((n = fread(b, 1, sizeof(b) - 1, run_log)) > 0) { b[n] = 0; console_add(b); }
-                clearerr(run_log);   // seguir leyendo cuando el juego escriba mas
             }
         }
+        ImGui::End();
 
-        // Dockspace a pantalla completa: los paneles se acoplan alrededor.
         ImGuiID ds = ImGui::DockSpaceOverViewport(ImGui::GetMainViewport());
 
         /* La disposicion se rehace al cambiar de modo: cada uno pone sus paneles

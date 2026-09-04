@@ -11,9 +11,11 @@ renderiza contra el mismo contexto OpenGL: lo que ves en el editor es lo que cor
 
 ## Cómo está repartido
 
-El editor no enseña todo a la vez: arriba eliges el **modo de trabajo** —*Escena,
-Terreno, Personajes, Interfaz, Código*— y con él cambian las herramientas del **rail**
-de la izquierda y los paneles que salen. Esculpiendo un monte no te estorban los del HUD.
+El editor no enseña todo a la vez. Arriba hay **dos filas y cada una es una cosa**: los
+menús (órdenes: Proyecto, Archivo, Ventana, Editar, Generar, Juego) y, debajo, el **modo
+de trabajo** —*Escena, Terreno, Personajes, Interfaz, Código*— que cambia las herramientas
+del **rail** de la izquierda y los paneles que salen. Esculpiendo un monte no te estorban
+los del HUD.
 
 - **Rail de herramientas**: en vertical, agrupadas por para qué sirven (ESCULPIR,
   PINTAR Y SEMBRAR, AGUA...) y con su nombre al lado.

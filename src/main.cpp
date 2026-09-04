@@ -1497,7 +1497,10 @@ int main(int, char**) {
         std::string quien;              // quien habla (vacio = nadie)
         std::string texto = "...";
         std::string retrato;            // imagen o FPG del retrato (opcional)
-        int  retrato_graf = 1;
+        int  retrato_graf = 1;          // si el retrato es un FPG, que grafico
+        /* Si el retrato es una HOJA con varias caras, cual de ellas. -1 = la
+           imagen entera (una cara por fichero, como era antes). */
+        int  retrato_cara = -1;
         std::vector<DlgOpc> opciones;   // si tiene, la pagina es una pregunta
     };
     struct Dialogo {
@@ -4731,7 +4734,8 @@ int main(int, char**) {
                     d.col[0], d.col[1], d.col[2], d.col[3],
                     d.col_nombre[0], d.col_nombre[1], d.col_nombre[2], d.col_nombre[3]);
             for (auto& p2 : d.paginas) {
-                fprintf(f, "DLGPAG %s|%s|%d\n", p2.quien.c_str(), p2.retrato.c_str(), p2.retrato_graf);
+                fprintf(f, "DLGPAG %s|%s|%d|%d\n", p2.quien.c_str(), p2.retrato.c_str(),
+                        p2.retrato_graf, p2.retrato_cara);
                 fprintf(f, "DLGTXT %s\n", p2.texto.c_str());
                 for (auto& o : p2.opciones) {
                     fprintf(f, "DLGOPC %d|%s\n", o.salto, o.texto.c_str());
@@ -4775,9 +4779,10 @@ int main(int, char**) {
                        &d.col[0], &d.col[1], &d.col[2], &d.col[3],
                        &d.col_nombre[0], &d.col_nombre[1], &d.col_nombre[2], &d.col_nombre[3]);
             } else if (!strncmp(line, "DLGPAG ", 7) && !dialogos.empty()) {
-                std::string p2[3]; trozos(line + 7, p2, 3);
+                std::string p2[4]; trozos(line + 7, p2, 4);
                 DlgPag pg; pg.quien = p2[0]; pg.retrato = p2[1];
                 pg.retrato_graf = p2[2].empty() ? 1 : atoi(p2[2].c_str());
+                pg.retrato_cara = p2[3].empty() ? -1 : atoi(p2[3].c_str());
                 dialogos.back().paginas.push_back(pg);
             } else if (!strncmp(line, "DLGTXT ", 7) && !dialogos.empty() && !dialogos.back().paginas.empty()) {
                 dialogos.back().paginas.back().texto = sinsalto(line + 7);
@@ -7230,7 +7235,7 @@ int main(int, char**) {
                        "    int pag; int i; int fnt; int idl[%d]; int idnom; int idop[%d];\n"
                        "    int sel; int nop; int ok; int ant_ok; int arr; int aba; int ant_arr; int ant_aba;\n"
                        "    float letras; int total; float t; string linea[%d]; string nombre;\n"
-                       "    int retrato;\n"
+                       "    int retrato; int hoja; int cara;\n"
                        "END\n"
                        "BEGIN\n",
                     d.nombre.c_str(), maxlin, maxopc, maxlin);
@@ -7273,10 +7278,27 @@ int main(int, char**) {
                     // a la izquierda del bocadillo, a su altura
                     int rx = d.cx - d.cw / 2 - 70, ry = d.cy;
                     if (rx < 70) rx = 70;
-                    if (rf) fprintf(f, "            retrato = escena_retrato(fpg_load(\"Assets/%s\"), %d, %d, %d);\n",
-                                    ruta_asset(pg.retrato).c_str(), pg.retrato_graf, rx, ry);
-                    else    fprintf(f, "            retrato = escena_retrato(0, map_load(\"Assets/%s\"), %d, %d);\n",
-                                    ruta_asset(pg.retrato).c_str(), rx, ry);
+                    SheetDef* hj = rf ? nullptr : sheet_of(pg.retrato);
+                    bool una_cara = (!rf && hj && pg.retrato_cara >= 0 &&
+                                     pg.retrato_cara < (int)hj->frames.size());
+                    if (rf) {
+                        fprintf(f, "            retrato = escena_retrato(fpg_load(\"Assets/%s\"), %d, %d, %d);\n",
+                                ruta_asset(pg.retrato).c_str(), pg.retrato_graf, rx, ry);
+                    } else if (una_cara) {
+                        /* La hoja trae varias caras: se recorta LA DE ESTA PAGINA a
+                           un grafico propio (map_new + map_block_copy) y se ensenia
+                           ese. Se hace al sacar la pagina, una vez. */
+                        SprFrame& fr = hj->frames[pg.retrato_cara];
+                        fprintf(f, "            hoja = map_load(\"Assets/%s\");\n"
+                                   "            cara = map_new(%d, %d);\n"
+                                   "            map_block_copy(0, cara, 0, 0, 0, hoja, %d, %d, %d, %d, 0);\n"
+                                   "            retrato = escena_retrato(0, cara, %d, %d);   // cara %d de la hoja\n",
+                                ruta_asset(pg.retrato).c_str(), fr.w, fr.h,
+                                fr.x, fr.y, fr.w, fr.h, rx, ry, pg.retrato_cara);
+                    } else {
+                        fprintf(f, "            retrato = escena_retrato(0, map_load(\"Assets/%s\"), %d, %d);\n",
+                                ruta_asset(pg.retrato).c_str(), rx, ry);
+                    }
                 }
                 if (!pg.quien.empty()) {
                     std::string q = pg.quien; for (auto& c : q) if (c == '"') c = '\'';
@@ -12225,8 +12247,47 @@ int main(int, char**) {
                             if (ImGui::BeginCombo("Retrato", cur)) {
                                 if (ImGui::Selectable("(sin retrato)", pg.retrato.empty())) pg.retrato.clear();
                                 for (auto& g : hud_gfx_files)
-                                    if (ImGui::Selectable(g.c_str(), g == pg.retrato)) pg.retrato = g;
+                                    if (ImGui::Selectable(g.c_str(), g == pg.retrato))
+                                        { pg.retrato = g; pg.retrato_cara = -1; }
                                 ImGui::EndCombo();
+                            }
+                        }
+                        /* ---- LA CARA ----
+                           Un retrato suele venir en una HOJA con varias caras (seria,
+                           riendo, enfadada). Si la imagen tiene fotogramas detectados,
+                           se elige cual sale en esta pagina y se ve al momento. */
+                        if (!pg.retrato.empty() && !hud_is_fpg(pg.retrato)) {
+                            SheetDef* hj = sheet_of(pg.retrato);
+                            int nf = hj ? (int)hj->frames.size() : 0;
+                            if (nf > 1) {
+                                if (pg.retrato_cara >= nf) pg.retrato_cara = nf - 1;
+                                ImGui::SetNextItemWidth(150);
+                                ImGui::DragInt("Cara", &pg.retrato_cara, 0.2f, -1, nf - 1,
+                                               pg.retrato_cara < 0 ? "la imagen entera" : "cara %d");
+                                ImGui::SameLine();
+                                ImGui::TextDisabled("(%d caras en la hoja)", nf);
+                                // vista previa de la cara elegida
+                                H2Img* im = hud_img(pg.retrato);
+                                if (im && im->tex) {
+                                    float ax0 = 0, ay0 = 0, ax1 = 1, ay1 = 1;
+                                    float pw = 96, ph = 96;
+                                    if (pg.retrato_cara >= 0 && pg.retrato_cara < nf && im->w > 0 && im->h > 0) {
+                                        SprFrame& fr = hj->frames[pg.retrato_cara];
+                                        ax0 = (float)fr.x / im->w;  ay0 = (float)fr.y / im->h;
+                                        ax1 = (float)(fr.x + fr.w) / im->w;
+                                        ay1 = (float)(fr.y + fr.h) / im->h;
+                                        if (fr.h > 0) { ph = 96.0f; pw = 96.0f * fr.w / fr.h; }
+                                    } else if (im->h > 0) {
+                                        pw = 96.0f * im->w / im->h;
+                                    }
+                                    ImGui::Image((ImTextureID)(intptr_t)im->tex, ImVec2(pw, ph),
+                                                 ImVec2(ax0, ay0), ImVec2(ax1, ay1));
+                                }
+                            } else if (nf == 1) {
+                                ImGui::TextDisabled("  (una sola cara: sale la imagen entera)");
+                            } else {
+                                ImGui::TextDisabled("  Si la hoja trae varias caras, abrela en Sprites 3D");
+                                ImGui::TextDisabled("  y dale a Detectar: aqui podras elegir cual sale.");
                             }
                         }
                         ImGui::TextDisabled("RESPUESTAS (si no pones ninguna, se pasa de pagina)");

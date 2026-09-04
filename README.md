@@ -159,6 +159,11 @@ alguien: **páginas** con su texto, quién habla y su retrato. Si una página ll
 **respuestas**, es una pregunta: cada respuesta puede llevar a otra página, cambiar una
 variable, sonar algo, abrir un menú, ir a otra escena o llamar a tu `PROCESS`.
 
+El **retrato puede venir en una hoja con varias caras** (seria, riendo, enfadada): si la
+imagen tiene fotogramas detectados —ábrela en Sprites 3D y dale a *Detectar*—, en cada
+página eliges **qué cara sale**, con vista previa en el editor. En el juego se recorta esa
+cara a su propio gráfico (`map_new` + `map_block_copy`), respetando la transparencia.
+
 El **bocadillo es un gráfico tuyo** —un PNG suelto o un gráfico de un FPG— estirado al
 tamaño que le des con `size_x`/`size_y`. Encima, el texto con tu fuente `.fnt` (o la del
 sistema), con el nombre de quien habla en su propio color y las respuestas resaltadas.

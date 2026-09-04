@@ -11136,16 +11136,21 @@ int main(int, char**) {
                 ImGui::SliderAngle("Rotacion Y", &o.ry);
                 ImGui::DragFloat("Escala", &o.scale, 0.01f, 0.02f, 100.0f);
             }
-            if (ImGui::CollapsingHeader(ICON_FA_CODE "  Codigo (acciones y script)")) {
+            /* Las reglas tienen su propia seccion, y abierta: estaban metidas
+               dentro de "Codigo" y ahi no las encuentra nadie -- que es lo que
+               pasa cuando quieres que una roca diga algo al tocarla. */
+            if (ImGui::CollapsingHeader(ICON_FA_CODE "  Reglas (si pasa esto, haz esto)",
+                                        ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::TextDisabled("Ejemplos: al tocarlo saca un dialogo, suma puntos,");
+                ImGui::TextDisabled("abre otra escena o llama a tu propio codigo.");
+                ui_reglas(o.reglas, o.name);
+                if (!o.reglas.empty())
+                    ImGui::TextDisabled("Salen en el script del objeto; si lo has editado a mano,\nregeneralo en 'Codigo' para que entren.");
+            }
+            if (ImGui::CollapsingHeader(ICON_FA_CODE "  Codigo (sonido y script)")) {
                 /* Codigo TUYO enganchado al objeto: eliges el .prg y de el sale la
                    lista de PROCESS/FUNCTION. Lo mismo que ya se podia hacer con un
                    personaje, pero para cualquier objeto de la escena. */
-                ImGui::SeparatorText("Reglas");
-                ImGui::TextDisabled("Si pasa esto, haz esto.");
-                ui_reglas(o.reglas, o.name);
-                if (!o.reglas.empty())
-                    ImGui::TextDisabled("Salen en el script del objeto; si lo has editado a mano,\nregeneralo abajo para que entren.");
-
                 ImGui::SeparatorText("Su sonido");
                 combo_sonido("sonido propio", o.amb_sonido);
                 if (!o.amb_sonido.empty()) {

@@ -9,6 +9,18 @@ el resto del motor (2D, UI, sonido…).
 Es una aplicación C++ independiente con **Dear ImGui** que enlaza el *core* del motor y
 renderiza contra el mismo contexto OpenGL: lo que ves en el editor es lo que corre en el juego.
 
+## Cómo está repartido
+
+El editor no enseña todo a la vez: arriba eliges el **modo de trabajo** —*Escena,
+Terreno, Personajes, Interfaz, Código*— y con él cambian las herramientas del **rail**
+de la izquierda y los paneles que salen. Esculpiendo un monte no te estorban los del HUD.
+
+- **Rail de herramientas**: en vertical, agrupadas por para qué sirven (ESCULPIR,
+  PINTAR Y SEMBRAR, AGUA...) y con su nombre al lado.
+- **Paneles acoplados** por defecto, pero **cualquiera se puede arrancar** y dejar suelto,
+  incluso fuera de la ventana del editor (otro monitor, por ejemplo).
+- **Ventana → Restablecer la disposición** deja el modo como venía de fábrica.
+
 ## Qué hace hoy (3D)
 
 - **Viewport 3D** acoplable con navegación estilo Unreal (botón derecho + WASD, rueda = zoom).

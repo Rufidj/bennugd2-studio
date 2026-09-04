@@ -1114,6 +1114,14 @@ int main(int, char**) {
     bool show_gvars = false;               // ventana de variables del juego
     bool show_escenas = false;             // ventana de escenas del proyecto
     bool show_menus = false;               // ventana de menus del juego
+    /* ---- MODOS DE TRABAJO ----
+       El editor no ensenia todo a la vez: cada modo saca sus herramientas y sus
+       paneles, y esconde lo que no toca. Es lo que hace que no se amontone. */
+    enum Modo { M_ESCENA, M_TERRENO, M_PERSONAJES, M_INTERFAZ, M_CODIGO, M_NUM };
+    int  modo = M_ESCENA;
+    int  modo_ant = -1;                    // para rehacer la disposicion al cambiar
+    bool rehacer_layout = false;           // "restablecer disposicion"
+    bool poner_delante = false;            // traer al frente las pestanas del modo
     bool show_script = false;              // el editor de script se abre a pantalla completa
     bool ask_regen = false;                // pedir confirmacion para regenerar un script
     std::string regen_obj;                 // objeto cuyo script se va a regenerar
@@ -6906,6 +6914,19 @@ int main(int, char**) {
                 if (ImGui::MenuItem("Salir")) running = false;
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("Ventana")) {
+                ImGui::TextDisabled("MODO DE TRABAJO");
+                const char* nm[] = { "Escena", "Terreno", "Personajes", "Interfaz", "Codigo" };
+                for (int i = 0; i < M_NUM; i++)
+                    if (ImGui::MenuItem(nm[i], nullptr, modo == i)) modo = i;
+                ImGui::Separator();
+                if (ImGui::MenuItem("Restablecer la disposicion")) rehacer_layout = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Deja los paneles de este modo como venian de fabrica.");
+                ImGui::TextDisabled("Cualquier panel se puede arrancar");
+                ImGui::TextDisabled("y dejar suelto, incluso fuera del editor.");
+                ImGui::EndMenu();
+            }
             if (ImGui::BeginMenu("Editar")) {
                 if (ImGui::MenuItem("Deshacer", "Ctrl+Z", false, !undo_kind.empty())) do_undo();
                 if (ImGui::MenuItem("Rehacer", "Ctrl+Shift+Z", false, !redo_kind.empty())) do_redo();
@@ -7004,50 +7025,30 @@ int main(int, char**) {
                     ImGui::SetTooltip("Vuelve a dejarlo como recien creado.\nSe pierde lo que hayas escrito.");
                 ImGui::EndMenu();
             }
-            // ---- toolbar de iconos (herramientas del editor) ----
-            auto toolBtn = [&](const char* icon, int t, const char* tip) {
-                bool on = (tool == t), pulsado = false;
-                if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.59f, 0.98f, 1.0f));
-                if (ImGui::Button(icon)) { tool = t; pulsado = true; }
-                if (on) ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-                return pulsado;   // hay herramientas que ademas abren su ventana
-            };
+            /* Las herramientas ya no van aqui en fila: viven en el rail de la
+               izquierda, agrupadas y filtradas por el modo de trabajo. Aqui arriba
+               solo quedan los MODOS, que es lo que cambia toda la pantalla. */
             ImGui::SameLine(0, 24);
-            toolBtn(ICON_FA_ARROW_POINTER,       T_SELECT, "Seleccionar");
-            toolBtn(ICON_FA_UP_DOWN_LEFT_RIGHT,  T_MOVE,   "Mover (W)");
-            toolBtn(ICON_FA_ROTATE,              T_ROTATE, "Rotar (E)");
-            toolBtn(ICON_FA_MAXIMIZE,            T_SCALE,  "Escalar (R)");
-            ImGui::SameLine(0, 12); ImGui::TextDisabled("|"); ImGui::SameLine(0, 12);
-            toolBtn(ICON_FA_CUBE,                T_PLACE,  "Colocar asset");
-            ImGui::SameLine(0, 12); ImGui::TextDisabled("|"); ImGui::SameLine(0, 12);
-            toolBtn(ICON_FA_MOUNTAIN,            T_RAISE,   "Terreno: subir (montanas)");
-            toolBtn(ICON_FA_ARROW_DOWN,          T_LOWER,   "Terreno: bajar (valles)");
-            toolBtn(ICON_FA_BROOM,               T_SMOOTH,  "Terreno: suavizar");
-            toolBtn(ICON_FA_ARROWS_DOWN_TO_LINE, T_FLATTEN, "Terreno: nivelar");
-            toolBtn(ICON_FA_PAINTBRUSH,          T_PAINT,   "Terreno: pintar textura");
-            toolBtn(ICON_FA_CIRCLE_NOTCH,        T_HOLE,    "Terreno: agujero (para bocas de cueva)");
-            toolBtn(ICON_FA_BORDER_ALL,          T_VERTEX,  "Terreno: vertice a vertice (rejilla)");
-            toolBtn(ICON_FA_SEEDLING,            T_SCATTER, "Sembrar vegetacion y rocas");
-            ImGui::SameLine(0, 12); ImGui::TextDisabled("|"); ImGui::SameLine(0, 12);
-            toolBtn(ICON_FA_DRAW_POLYGON,        T_ZONE,    "Pintar ZONAS de barrera (por donde no pasan ciertos objetos)");
-            toolBtn(ICON_FA_DROPLET,             T_LAKE,    "Lago: clic en un hoyo del terreno para llenarlo de agua");
-            toolBtn(ICON_FA_WATER,               T_RIVER,   "Rio: clic para poner puntos del cauce, doble clic para terminar");
-            toolBtn(ICON_FA_ANGLES_DOWN,         T_WATERFALL, "Cascada: clic arriba (el borde) y clic abajo (la base/poza)");
-            toolBtn(ICON_FA_FAUCET_DRIP,         T_WATERSOURCE, "Manantial: clic para poner una fuente; el agua fluye sola (rios/cascadas con fisica)");
-            ImGui::SameLine(0, 12); ImGui::TextDisabled("|"); ImGui::SameLine(0, 12);
-            toolBtn(ICON_FA_FONT,                T_HUD,     "HUD 2D: graficos y textos de pantalla (panel 'HUD 2D')");
-            // Un solo boton: coge la herramienta y saca la ventana. Estando ya en
-            // ella el clic la esconde o la vuelve a sacar, que cerrarla no deje la
-            // herramienta marcada y sin manera de volver.
             {
-                bool ya = (tool == T_SPRITE);
-                if (toolBtn(ICON_FA_PERSON_RUNNING, T_SPRITE,
-                            ya ? (show_spr_win ? "Sprites 3D: esconder la ventana de hojas"
-                                               : "Sprites 3D: sacar la ventana de hojas")
-                               : "Sprite 2D en el mundo 3D: hojas, animaciones y personajes"))
-                    show_spr_win = ya ? !show_spr_win : true;
+                struct { const char* icono; const char* nombre; const char* tip; } mm[] = {
+                    { ICON_FA_CUBES,           "Escena",     "Colocar y mover objetos, jerarquia y propiedades" },
+                    { ICON_FA_MOUNTAIN_SUN,    "Terreno",    "Esculpir, pintar, agua, zonas y vegetacion" },
+                    { ICON_FA_PERSON_RUNNING,  "Personajes", "Sprites 3D, hojas y animaciones" },
+                    { ICON_FA_FONT,            "Interfaz",   "HUD 2D y menus del juego" },
+                    { ICON_FA_CODE,            "Codigo",     "Scripts, variables y consola" },
+                };
+                for (int i = 0; i < M_NUM; i++) {
+                    bool on = (modo == i);
+                    if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.59f, 0.98f, 1.0f));
+                    else    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                    std::string et = std::string(mm[i].icono) + "  " + mm[i].nombre;
+                    if (ImGui::Button(et.c_str())) modo = i;
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", mm[i].tip);
+                    ImGui::SameLine(0, 2);
+                }
             }
+            ImGui::SameLine(0, 24);
 
             // ---- PLAY: compila el juego y lo ejecuta en su propia ventana ----
             // Es un proceso BennuGD2 normal, con todos sus hooks: fidelidad total
@@ -7116,29 +7117,136 @@ int main(int, char**) {
         // Dockspace a pantalla completa: los paneles se acoplan alrededor.
         ImGuiID ds = ImGui::DockSpaceOverViewport(ImGui::GetMainViewport());
 
-        // Layout por defecto la primera vez (Assets izq, Inspector der, Escena centro).
-        static bool dock_init = false;
-        if (!dock_init) {
-            dock_init = true;
+        /* La disposicion se rehace al cambiar de modo: cada uno pone sus paneles
+           donde le tocan y esconde los que no vienen a cuento. Mientras estas
+           dentro de un modo puedes moverlo todo a tu gusto. */
+        bool cambio_modo = (modo != modo_ant);
+        if (cambio_modo || rehacer_layout) {
+            modo_ant = modo; rehacer_layout = false;
             ImGui::DockBuilderRemoveNode(ds);
             ImGui::DockBuilderAddNode(ds, ImGuiDockNodeFlags_DockSpace);
             ImGui::DockBuilderSetNodeSize(ds, ImGui::GetMainViewport()->WorkSize);
-            ImGuiID center = ds, left, right, lbottom;
-            ImGui::DockBuilderSplitNode(center, ImGuiDir_Left,   0.17f, &left,    &center);
-            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right,  0.22f, &right,   &center);
-            ImGui::DockBuilderSplitNode(left,   ImGuiDir_Down,   0.5f,  &lbottom, &left);
-            ImGui::DockBuilderDockWindow("Assets",    left);
-            ImGui::DockBuilderDockWindow("Jerarquia", lbottom);
-            ImGui::DockBuilderDockWindow("Entorno",   lbottom);
-            ImGui::DockBuilderDockWindow("Inspector", right);
-            ImGui::DockBuilderDockWindow(ICON_FA_FONT "  HUD 2D", right);
-            ImGuiID bottom;
-            ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.26f, &bottom, &center);
-            ImGui::DockBuilderDockWindow("Escena",    center);
+            /* El reparto es siempre el mismo -- rail estrecho a la izquierda, un
+               panel de listas debajo, el inspector a la derecha, la consola abajo
+               y la escena en medio -- y lo que cambia es QUE se mete en cada sitio.
+               El inspector se lleva mas ancho que antes: se cortaban los textos. */
+            ImGuiID center = ds, rail, left, right, lbottom, bottom;
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Left,  0.105f, &rail,    &center);
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Left,  0.19f,  &left,    &center);
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.26f,  &right,   &center);
+            ImGui::DockBuilderSplitNode(left,   ImGuiDir_Down,  0.5f,   &lbottom, &left);
+            /* La banda de abajo es mas alta en los modos que tienen un panel ancho
+               (la hoja de sprites, la ficha de un menu): metidos en una columna
+               estrecha no se pueden usar. */
+            bool banda_ancha = (modo == M_PERSONAJES || modo == M_INTERFAZ);
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Down,
+                                        banda_ancha ? 0.46f : 0.20f, &bottom, &center);
             // OJO: el nombre tiene que coincidir EXACTAMENTE con el del Begin(),
             // icono incluido, o DockBuilder no encuentra la ventana y queda suelta.
+            ImGui::DockBuilderDockWindow(ICON_FA_TOOLBOX "  Herramientas", rail);
+            ImGui::DockBuilderDockWindow("Escena", center);
             ImGui::DockBuilderDockWindow(ICON_FA_TERMINAL "  Consola", bottom);
+            /* TODOS los paneles se acoplan siempre en algun sitio -- si dejas uno
+               fuera se queda flotando en mitad de la pantalla, tapando. Los que no
+               son del modo se van a una pestania de detras, y delante se pone el
+               que toca (el foco se da mas abajo, ya construido el reparto). */
+            ImGui::DockBuilderDockWindow("Assets",    left);
+            ImGui::DockBuilderDockWindow("Escenas del proyecto", left);
+            ImGui::DockBuilderDockWindow("Jerarquia", lbottom);
+            ImGui::DockBuilderDockWindow("Entorno",   lbottom);
+            ImGui::DockBuilderDockWindow("Menus del juego",
+                                         modo == M_INTERFAZ ? bottom : lbottom);
+            ImGui::DockBuilderDockWindow("Variables del juego", lbottom);
+            ImGui::DockBuilderDockWindow("Inspector", right);
+            ImGui::DockBuilderDockWindow(ICON_FA_FONT "  HUD 2D", right);
+            ImGui::DockBuilderDockWindow(ICON_FA_PERSON_RUNNING "  Sprites 3D", bottom);
+            ImGui::DockBuilderDockWindow("Editor de codigo", center);
             ImGui::DockBuilderFinish(ds);
+            // las ventanas que ese modo necesita, abiertas
+            if (modo == M_PERSONAJES) show_spr_win = true;
+            if (modo == M_INTERFAZ)   show_menus   = true;
+            if (modo == M_CODIGO)   { show_escenas = true; show_gvars = true; }
+            poner_delante = true;   // se hace al final del frame, ya con las ventanas creadas
+        }
+
+        /* ---- EL RAIL DE HERRAMIENTAS ----
+           A la izquierda, en vertical, agrupadas por para que sirven y con su
+           nombre debajo del grupo. Solo salen las del modo en el que estas: si
+           estas esculpiendo un monte no te estorban las del HUD. */
+        {
+            ImGui::Begin(ICON_FA_TOOLBOX "  Herramientas");
+            float ancho = ImGui::GetContentRegionAvail().x;
+            auto grupo = [&](const char* titulo) {
+                ImGui::Spacing();
+                ImGui::TextDisabled("%s", titulo);
+                ImGui::Separator();
+            };
+            auto btn = [&](const char* icon, int t, const char* nombre, const char* tip) {
+                bool on = (tool == t), pulsado = false;
+                if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.59f, 0.98f, 1.0f));
+                // el boton ocupa el ancho del rail: se puede estrechar y sigue valiendo
+                std::string et = ancho > 92 ? (std::string(icon) + "  " + nombre) : std::string(icon);
+                if (ImGui::Button(et.c_str(), ImVec2(-1, 0))) { tool = t; pulsado = true; }
+                if (on) ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+                return pulsado;
+            };
+            if (modo == M_ESCENA) {
+                grupo("MANEJAR");
+                btn(ICON_FA_ARROW_POINTER,      T_SELECT, "Seleccionar", "Elegir un objeto (clic en la escena)");
+                btn(ICON_FA_UP_DOWN_LEFT_RIGHT, T_MOVE,   "Mover",       "Mover (W)");
+                btn(ICON_FA_ROTATE,             T_ROTATE, "Rotar",       "Rotar (E)");
+                btn(ICON_FA_MAXIMIZE,           T_SCALE,  "Escalar",     "Escalar (R)");
+                grupo("PONER");
+                btn(ICON_FA_CUBE,               T_PLACE,  "Colocar",     "Colocar el asset elegido en el panel Assets");
+                btn(ICON_FA_DRAW_POLYGON,       T_ZONE,   "Zonas",       "Pintar zonas: barreras, ambientes y disparadores");
+            } else if (modo == M_TERRENO) {
+                grupo("ESCULPIR");
+                btn(ICON_FA_MOUNTAIN,            T_RAISE,   "Subir",     "Levantar montanas");
+                btn(ICON_FA_ARROW_DOWN,          T_LOWER,   "Bajar",     "Cavar valles");
+                btn(ICON_FA_BROOM,               T_SMOOTH,  "Suavizar",  "Quitar los picos");
+                btn(ICON_FA_ARROWS_DOWN_TO_LINE, T_FLATTEN, "Nivelar",   "Dejarlo plano a una altura");
+                btn(ICON_FA_BORDER_ALL,          T_VERTEX,  "Rejilla",   "Vertice a vertice, para afinar");
+                btn(ICON_FA_CIRCLE_NOTCH,        T_HOLE,    "Agujero",   "Perforar (bocas de cueva)");
+                grupo("PINTAR Y SEMBRAR");
+                btn(ICON_FA_PAINTBRUSH,          T_PAINT,   "Textura",   "Pintar la textura del suelo");
+                btn(ICON_FA_SEEDLING,            T_SCATTER, "Vegetacion","Sembrar arboles, hierba y rocas");
+                grupo("AGUA");
+                btn(ICON_FA_DROPLET,             T_LAKE,        "Lago",      "Clic en un hoyo del terreno para llenarlo");
+                btn(ICON_FA_WATER,               T_RIVER,       "Rio",       "Clic para el cauce, doble clic para acabar");
+                btn(ICON_FA_ANGLES_DOWN,         T_WATERFALL,   "Cascada",   "Clic arriba (el borde) y clic abajo (la poza)");
+                btn(ICON_FA_FAUCET_DRIP,         T_WATERSOURCE, "Manantial", "Una fuente: el agua fluye sola");
+            } else if (modo == M_PERSONAJES) {
+                grupo("PERSONAJES");
+                {
+                    bool ya = (tool == T_SPRITE);
+                    if (btn(ICON_FA_PERSON_RUNNING, T_SPRITE, "Sprites 3D",
+                            ya ? (show_spr_win ? "Esconder la ventana de hojas"
+                                               : "Sacar la ventana de hojas")
+                               : "Sprite 2D dentro del mundo 3D: hojas, animaciones y personajes"))
+                        show_spr_win = ya ? !show_spr_win : true;
+                }
+                grupo("COLOCARLOS");
+                btn(ICON_FA_ARROW_POINTER,      T_SELECT, "Seleccionar", "Elegir un personaje");
+                btn(ICON_FA_UP_DOWN_LEFT_RIGHT, T_MOVE,   "Mover",       "Mover (W)");
+                btn(ICON_FA_ROTATE,             T_ROTATE, "Rotar",       "Rotar (E)");
+            } else if (modo == M_INTERFAZ) {
+                grupo("PANTALLA");
+                btn(ICON_FA_FONT, T_HUD, "HUD 2D", "Graficos y textos de pantalla (panel 'HUD 2D')");
+                ImGui::Spacing();
+                if (ImGui::Button(ICON_FA_BARS "   Menus", ImVec2(-1, 0))) show_menus = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Menu principal, de pausa y de opciones");
+            } else if (modo == M_CODIGO) {
+                grupo("CODIGO");
+                if (ImGui::Button(ICON_FA_FILE_CODE "   main.prg", ImVec2(-1, 0))) open_main_script();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Abrir el main.prg del juego");
+                if (ImGui::Button(ICON_FA_SLIDERS "   Variables", ImVec2(-1, 0))) show_gvars = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Puntos, vida, llaves... salen como GLOBAL");
+                grupo("DEL PROYECTO");
+                if (ImGui::Button(ICON_FA_LAYER_GROUP "   Escenas", ImVec2(-1, 0))) show_escenas = true;
+                if (ImGui::Button(ICON_FA_BARS "   Menus", ImVec2(-1, 0)))          show_menus = true;
+            }
+            ImGui::End();
         }
 
         // --- Panel: Escena (viewport 3D dibujado a textura) ---
@@ -8399,6 +8507,7 @@ int main(int, char**) {
 
         // --- Panel: Assets (modelos del proyecto: <proyecto>/Assets) ---
         ImGui::Begin("Assets");
+        ImGui::PushTextWrapPos(0.0f);   // que el texto se parta y no se corte
         ImGui::TextDisabled("Proyecto/Assets  (%d)", (int)assets.size());
         if (ImGui::SmallButton("Refrescar")) { assets = scan_assets(assets_dir); asset_sel = -1; }
         ImGui::Separator();
@@ -8425,10 +8534,12 @@ int main(int, char**) {
                 open_anim_preview(assets[i]);             // visor de animaciones
         }
         ImGui::EndChild();
+        ImGui::PopTextWrapPos();
         ImGui::End();
 
         // --- Panel: HUD 2D (graficos y textos de BennuGD2 sobre la escena) ---
         ImGui::Begin(ICON_FA_FONT "  HUD 2D");
+        ImGui::PushTextWrapPos(0.0f);   // que el texto se parta y no se corte
         ImGui::TextDisabled("Graficos y textos de pantalla (1280x720).");
         ImGui::TextDisabled("Se generan como PROCESS con sus locales.");
         ImGui::Checkbox("Ver el HUD en el viewport", &hud_show);
@@ -8675,6 +8786,7 @@ int main(int, char**) {
             ImGui::SameLine();
             if (ImGui::SmallButton("Abajo dcha.")) { h.x = HUD_W - 20; h.y = HUD_H - 20; }
         }
+        ImGui::PopTextWrapPos();
         ImGui::End();
 
         // --- VENTANA de sprites 3D (hojas de sprites, estilo HD-2D) ---
@@ -8682,9 +8794,10 @@ int main(int, char**) {
         // la derecha, la hoja se veia por una rendija y no habia quien trabajara.
         // Izquierda: la hoja y su recorte. Derecha: animaciones y los colocados.
         if (show_spr_win) {
-        // Al abrirla se centra y se le da tamano de trabajo. Con FirstUseEver se
-        // quedaba donde dijera el imgui.ini viejo (medio fuera de la pantalla).
-        {
+        /* En el modo Personajes esta ventana es un panel mas y va acoplada abajo.
+           Fuera de ese modo se abre suelta y centrada -- pero OJO: fijarle la
+           posicion la DESACOPLA, asi que solo se toca cuando va suelta. */
+        if (modo != M_PERSONAJES) {
             ImGuiViewport* vp2 = ImGui::GetMainViewport();
             ImGui::SetNextWindowPos(ImVec2(vp2->WorkPos.x + vp2->WorkSize.x * 0.5f,
                                            vp2->WorkPos.y + vp2->WorkSize.y * 0.5f),
@@ -8694,9 +8807,10 @@ int main(int, char**) {
             if (tam.y < 440.0f) tam.y = 440.0f;
             ImGui::SetNextWindowSize(tam, ImGuiCond_Appearing);
         }
-        ImGui::SetNextWindowSizeConstraints(ImVec2(680, 440), ImVec2(FLT_MAX, FLT_MAX));
-        ImGui::Begin(ICON_FA_PERSON_RUNNING "  Sprites 3D", &show_spr_win,
-                     ImGuiWindowFlags_NoDocking);
+        // el tamano minimo solo manda cuando va suelta
+        if (modo != M_PERSONAJES)
+            ImGui::SetNextWindowSizeConstraints(ImVec2(680, 440), ImVec2(FLT_MAX, FLT_MAX));
+        ImGui::Begin(ICON_FA_PERSON_RUNNING "  Sprites 3D", &show_spr_win);
         bool spr_dos_columnas = ImGui::BeginTable("spr_cols", 2,
                                     ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV);
         if (spr_dos_columnas) {
@@ -9512,6 +9626,7 @@ int main(int, char**) {
 
         // --- Panel: Entorno (agua / mar / lago) ---
         ImGui::Begin("Entorno");
+        ImGui::PushTextWrapPos(0.0f);   // que el texto se parta y no se corte
         ImGui::TextDisabled("Terreno y agua auto: menu 'Terreno' (arriba).");
 
         /* ---- SONIDO de la escena ----
@@ -9721,10 +9836,12 @@ int main(int, char**) {
         }
         }   // fin CollapsingHeader Camara principal
 
+        ImGui::PopTextWrapPos();
         ImGui::End();
 
         // --- Panel: Jerarquia (objetos de la escena) ---
         ImGui::Begin("Jerarquia");
+        ImGui::PushTextWrapPos(0.0f);   // que el texto se parta y no se corte
         ImGui::TextDisabled("Objetos: %d", (int)objects.size());
         ImGui::Separator();
         // Con personajes en la escena, la lista de objetos se queda con la mitad:
@@ -9819,11 +9936,13 @@ int main(int, char**) {
                 if (spr_follow >= (int)sprites.size()) spr_follow = -1;
             }
         }
+        ImGui::PopTextWrapPos();
         ImGui::End();
 
         // --- Panel: Inspector (del objeto seleccionado / pincel de terreno) ---
         bool borrar_sel = false;   // se borra al cerrar el panel: dentro invalidaria `o`
         ImGui::Begin("Inspector");
+        ImGui::PushTextWrapPos(0.0f);   // que el texto se parta y no se corte
         if (tool == T_HOLE) {
             ImGui::SeparatorText("Agujero de terreno");
             ImGui::SliderFloat("Radio", &brush_r, 3.0f, 60.0f, "%.0f");
@@ -10566,6 +10685,7 @@ int main(int, char**) {
             g3d_renderer_set_shadow_resolution((unsigned)shadow_res);
         }
         ImGui::TextDisabled("Mas alta = bordes mas nitidos, algo mas de video.");
+        ImGui::PopTextWrapPos();
         ImGui::End();
         if (borrar_sel) delete_obj(obj_sel);
 
@@ -11606,6 +11726,28 @@ int main(int, char**) {
             ImGui::End();
         }
 
+        /* Ya creadas todas las ventanas del frame, se trae al frente la pestania
+           que manda en cada modo. Antes de crearlas no se puede: SetWindowFocus
+           necesita que la ventana exista. */
+        if (poner_delante) {
+            poner_delante = false;
+            switch (modo) {
+            case M_ESCENA:     ImGui::SetWindowFocus("Assets");
+                               ImGui::SetWindowFocus("Jerarquia"); break;
+            case M_TERRENO:    ImGui::SetWindowFocus("Assets");
+                               ImGui::SetWindowFocus("Entorno");   break;
+            case M_PERSONAJES: ImGui::SetWindowFocus("Assets");
+                               ImGui::SetWindowFocus("Jerarquia");
+                               ImGui::SetWindowFocus(ICON_FA_PERSON_RUNNING "  Sprites 3D"); break;
+            case M_INTERFAZ:   ImGui::SetWindowFocus("Menus del juego");
+                               ImGui::SetWindowFocus(ICON_FA_FONT "  HUD 2D"); break;
+            case M_CODIGO:     ImGui::SetWindowFocus("Escenas del proyecto");
+                               ImGui::SetWindowFocus("Variables del juego");
+                               ImGui::SetWindowFocus("Editor de codigo"); break;
+            }
+            ImGui::SetWindowFocus("Escena");   // la vista 3D, siempre en su sitio
+        }
+
         ImGui::Render();
 
         // aplicar transformaciones de los objetos colocados (en Play manda el emulador)
@@ -11741,6 +11883,15 @@ int main(int, char**) {
         glClearColor(0.06f, 0.07f, 0.09f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        // Los paneles que hayas sacado fuera del editor son ventanas del sistema:
+        // se pintan aqui, y despues hay que devolver el contexto GL a la principal.
+        if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+            SDL_Window*   back_w = SDL_GL_GetCurrentWindow();
+            SDL_GLContext back_c = SDL_GL_GetCurrentContext();
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
+            SDL_GL_MakeCurrent(back_w, back_c);
+        }
 
         SDL_GL_SwapWindow(window);
     }

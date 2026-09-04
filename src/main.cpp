@@ -2796,7 +2796,8 @@ int main(int, char**) {
                 ImGui::SetNextItemWidth(150);
                 ImGui::DragFloat("a que distancia cuenta", &r.radio, 0.1f, 0.3f, 40.0f, "%.1f");
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Se mide del centro del jugador al centro de esto.\nPara una moneda, 1 o 2 va bien.");
+                    ImGui::SetTooltip("Se mide desde el BORDE de este objeto, no desde su centro,\n"
+                                      "asi que 2 o 3 vale igual para una moneda que para una casa.");
             } else if (r.evento == 4) {
                 const char* zz[] = { "Capa 0", "Capa 1", "Capa 2", "Capa 3" };
                 ImGui::SetNextItemWidth(150);
@@ -3223,8 +3224,12 @@ int main(int, char**) {
        `arranque` es lo que va antes del LOOP del proceso y `dentro` lo que va en
        el. `cuerpo` dice si el proceso tiene un cuerpo rigido (para deshacerlo al
        destruir) y `es_sprite` si lo que se destruye es un sprite y no una entidad. */
+    /* 'radio_extra' es el medio-tamanio del objeto: la distancia de "tocar" se mide
+       desde su BORDE y no desde su centro. Sin esto, una casa de 13 unidades de
+       ancho con el radio de 3 que viene puesto no se dispara nunca -- para estar a
+       3 del centro habria que meterse dentro, y la casa es solida. */
     auto reglas_codigo = [&](const std::vector<Regla>& rs, int base, int cuerpo, int es_sprite,
-                             std::string& arranque, std::string& dentro) {
+                             std::string& arranque, std::string& dentro, float radio_extra = 0.0f) {
         arranque.clear(); dentro.clear();
         for (int k = 0; k < (int)rs.size(); k++) {
             const Regla& r = rs[k];
@@ -3334,13 +3339,16 @@ int main(int, char**) {
                 if (!r.tecla.empty()) puls = "key(" + r.tecla + ")";
                 if (!r.boton.empty()) { if (!puls.empty()) puls += " OR "; puls += "joy_getbutton(" + r.boton + ")"; }
                 if (puls.empty()) continue;
-                snprintf(c2, sizeof(c2),
+                { float rr = r.radio + radio_extra;
+                  snprintf(c2, sizeof(c2),
                     "(%s) AND (jug_x - x) * (jug_x - x) + (jug_z - z) * (jug_z - z) < %.3f",
-                    puls.c_str(), r.radio * r.radio);
+                    puls.c_str(), rr * rr); }
                 cond = c2;
             } else if (r.evento == 3) {          // el jugador lo toca
-                snprintf(c2, sizeof(c2),
-                    "(jug_x - x) * (jug_x - x) + (jug_z - z) * (jug_z - z) < %.3f", r.radio * r.radio);
+                /* radio + medio tamanio del objeto = "a esta distancia de su borde" */
+                { float rr = r.radio + radio_extra;
+                  snprintf(c2, sizeof(c2),
+                    "(jug_x - x) * (jug_x - x) + (jug_z - z) * (jug_z - z) < %.3f", rr * rr); }
                 cond = c2;
             } else if (r.evento == 4) {          // el jugador entra en la zona
                 snprintf(c2, sizeof(c2), "g3d_zone_blocked(jug_x, jug_z, %d)", r.zona);
@@ -3410,7 +3418,8 @@ int main(int, char**) {
         char b[4096];
         std::string acc_ini, acc_loop;
         reglas_codigo(o.reglas, base_reglas_obj(o),
-                      ((o.phys >= 1 && o.phys <= 4) || o.phys == 7) ? 1 : 0, 0, acc_ini, acc_loop);
+                      ((o.phys >= 1 && o.phys <= 4) || o.phys == 7) ? 1 : 0, 0, acc_ini, acc_loop,
+                      o.csize > 0.05f ? o.csize : 0.0f);
         acc_loop += amb_codigo(o, slot_amb(o));
 
         // ---------------- OBJETO ENGANCHADO A UN HUESO (arma en la mano) ----------------

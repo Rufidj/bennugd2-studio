@@ -1049,31 +1049,150 @@ int main(int, char**) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    ImGui::StyleColorsDark();
+    /* Cualquier panel se puede arrancar y dejar suelto FUERA de la ventana del
+       editor (en otro monitor, por ejemplo). Acoplado sigue siendo lo normal.
+       Sin esta linea los paneles flotan, pero atrapados dentro del marco. */
+    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 
-    // fuente base + iconos Font Awesome fusionados (para la toolbar profesional)
-    io.Fonts->AddFontDefault();
+    /* ---- EL ASPECTO ----
+       El tema de serie de ImGui es el de una ventana de depuracion: todo pegado,
+       gris plano y esquinas vivas. Aqui se le da aire (padding y separacion),
+       esquinas redondeadas y una paleta con UN color de acento, para que se lea
+       como una herramienta y no como un panel de pruebas. */
+    ImGui::StyleColorsDark();
+    {
+        ImGuiStyle& st = ImGui::GetStyle();
+        // --- espacio: cambia la sensacion mas que el color ---
+        st.WindowPadding     = ImVec2(12, 10);
+        st.FramePadding      = ImVec2(10, 6);
+        st.ItemSpacing       = ImVec2(10, 8);
+        st.ItemInnerSpacing  = ImVec2(8, 6);
+        st.CellPadding       = ImVec2(8, 5);
+        st.IndentSpacing     = 20.0f;
+        st.ScrollbarSize     = 13.0f;
+        st.GrabMinSize       = 11.0f;
+        // --- bordes y esquinas ---
+        st.WindowBorderSize  = 1.0f;
+        st.FrameBorderSize   = 0.0f;
+        st.PopupBorderSize   = 1.0f;
+        st.FrameRounding     = 5.0f;
+        st.GrabRounding      = 5.0f;
+        st.PopupRounding     = 6.0f;
+        st.ScrollbarRounding = 6.0f;
+        st.TabRounding       = 5.0f;
+        st.ChildRounding     = 6.0f;
+        // Un panel suelto es una ventana del sistema: sin esquinas redondeadas ni
+        // transparencia, o se ve el corte contra el escritorio.
+        st.WindowRounding    = 0.0f;
+        st.Colors[ImGuiCol_WindowBg].w = 1.0f;
+        // --- alineaciones ---
+        st.WindowTitleAlign  = ImVec2(0.02f, 0.5f);
+        st.ButtonTextAlign   = ImVec2(0.5f, 0.5f);
+        st.SeparatorTextBorderSize = 1.0f;
+        st.SeparatorTextPadding    = ImVec2(16, 6);
+
+        /* La paleta: grises muy oscuros con un punto de azul (asi no parece
+           apagada) y UN acento -- ambar -- para lo elegido y lo activo. Con dos
+           acentos no destaca ninguno. */
+        ImVec4* c = st.Colors;
+        const ImVec4 fondo      = ImVec4(0.086f, 0.094f, 0.110f, 1.00f);
+        const ImVec4 panel      = ImVec4(0.125f, 0.137f, 0.161f, 1.00f);
+        const ImVec4 panel_alto = ImVec4(0.169f, 0.184f, 0.212f, 1.00f);
+        const ImVec4 borde      = ImVec4(0.226f, 0.243f, 0.278f, 1.00f);
+        const ImVec4 texto      = ImVec4(0.878f, 0.894f, 0.925f, 1.00f);
+        const ImVec4 texto_ten  = ImVec4(0.514f, 0.545f, 0.600f, 1.00f);
+        const ImVec4 acento     = ImVec4(0.949f, 0.686f, 0.259f, 1.00f);
+        const ImVec4 acento_ap  = ImVec4(0.949f, 0.686f, 0.259f, 0.28f);
+
+        c[ImGuiCol_Text]                 = texto;
+        c[ImGuiCol_TextDisabled]         = texto_ten;
+        c[ImGuiCol_WindowBg]             = fondo;
+        c[ImGuiCol_ChildBg]              = ImVec4(0, 0, 0, 0);
+        c[ImGuiCol_PopupBg]              = panel;
+        c[ImGuiCol_Border]               = borde;
+        c[ImGuiCol_BorderShadow]         = ImVec4(0, 0, 0, 0);
+        c[ImGuiCol_FrameBg]              = panel;
+        c[ImGuiCol_FrameBgHovered]       = panel_alto;
+        c[ImGuiCol_FrameBgActive]        = ImVec4(0.208f, 0.227f, 0.263f, 1.00f);
+        c[ImGuiCol_TitleBg]              = fondo;
+        c[ImGuiCol_TitleBgActive]        = panel;
+        c[ImGuiCol_TitleBgCollapsed]     = fondo;
+        c[ImGuiCol_MenuBarBg]            = ImVec4(0.106f, 0.114f, 0.133f, 1.00f);
+        c[ImGuiCol_ScrollbarBg]          = ImVec4(0, 0, 0, 0);
+        c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.239f, 0.259f, 0.298f, 1.00f);
+        c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.310f, 0.333f, 0.380f, 1.00f);
+        c[ImGuiCol_ScrollbarGrabActive]  = acento;
+        c[ImGuiCol_CheckMark]            = acento;
+        c[ImGuiCol_SliderGrab]           = ImVec4(0.400f, 0.435f, 0.490f, 1.00f);
+        c[ImGuiCol_SliderGrabActive]     = acento;
+        c[ImGuiCol_Button]               = panel_alto;
+        c[ImGuiCol_ButtonHovered]        = ImVec4(0.239f, 0.263f, 0.306f, 1.00f);
+        c[ImGuiCol_ButtonActive]         = acento_ap;
+        c[ImGuiCol_Header]               = panel_alto;
+        c[ImGuiCol_HeaderHovered]        = ImVec4(0.239f, 0.263f, 0.306f, 1.00f);
+        c[ImGuiCol_HeaderActive]         = acento_ap;
+        c[ImGuiCol_Separator]            = borde;
+        c[ImGuiCol_SeparatorHovered]     = acento_ap;
+        c[ImGuiCol_SeparatorActive]      = acento;
+        c[ImGuiCol_ResizeGrip]           = ImVec4(0, 0, 0, 0);
+        c[ImGuiCol_ResizeGripHovered]    = acento_ap;
+        c[ImGuiCol_ResizeGripActive]     = acento;
+        c[ImGuiCol_Tab]                  = fondo;
+        c[ImGuiCol_TabHovered]           = panel_alto;
+        c[ImGuiCol_TabActive]            = panel;
+        c[ImGuiCol_TabUnfocused]         = fondo;
+        c[ImGuiCol_TabUnfocusedActive]   = panel;
+        c[ImGuiCol_DockingPreview]       = acento_ap;
+        c[ImGuiCol_DockingEmptyBg]       = fondo;
+        c[ImGuiCol_TextSelectedBg]       = acento_ap;
+        c[ImGuiCol_NavHighlight]         = acento;
+        c[ImGuiCol_TableHeaderBg]        = panel;
+        c[ImGuiCol_TableBorderStrong]    = borde;
+        c[ImGuiCol_TableBorderLight]     = ImVec4(0.180f, 0.196f, 0.227f, 1.00f);
+        c[ImGuiCol_PlotHistogram]        = acento;
+    }
+
+    /* ---- LA FUENTE ----
+       La de ImGui por defecto es un mapa de bits de 13 px pensado para depurar, y
+       es lo que le daba al editor esa cara de consola. Se carga una tipografia de
+       verdad (Noto Sans, licencia OFL, va en fonts/) y encima se fusionan los
+       iconos. Si no aparece, se cae con dignidad a la de siempre. */
+    auto buscar_fuente = [&](const char* fichero) {
+        std::vector<std::string> cands;
+        if (char* base = SDL_GetBasePath()) {
+            cands.push_back(std::string(base) + "fonts/" + fichero);
+            cands.push_back(std::string(base) + "../fonts/" + fichero);
+            SDL_free(base);
+        }
+        cands.push_back(std::string(FONT_DIR "/") + fichero);
+        cands.push_back(std::string("fonts/") + fichero);
+        for (auto& c : cands) { FILE* t = fopen(c.c_str(), "rb"); if (t) { fclose(t); return c; } }
+        return std::string();
+    };
+    const float TAM_TEXTO = 16.0f;
+    ImFont* fuente_titulo = nullptr;
+    {
+        ImFontConfig cfg;
+        cfg.OversampleH = 2; cfg.OversampleV = 2; cfg.PixelSnapH = false;
+        std::string reg = buscar_fuente("NotoSans-Regular.ttf");
+        if (!reg.empty()) io.Fonts->AddFontFromFileTTF(reg.c_str(), TAM_TEXTO, &cfg);
+        else              io.Fonts->AddFontDefault();
+    }
     static const ImWchar fa_range[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
     ImFontConfig fa_cfg; fa_cfg.MergeMode = true; fa_cfg.PixelSnapH = true;
-    fa_cfg.GlyphMinAdvanceX = 16.0f;
+    fa_cfg.GlyphMinAdvanceX = 17.0f;
+    fa_cfg.GlyphOffset = ImVec2(0.0f, 2.0f);   // los iconos, a la linea del texto
     // La fuente de iconos se busca PRIMERO junto al ejecutable y luego en la ruta
     // de compilacion. FONT_DIR se fija al configurar con CMake, asi que apunta al
     // arbol de fuentes de quien compilo: si el binario se mueve, se instala o se
     // reparte, esa ruta ya no existe. Y si no se encuentra, ImGui aborta sin
     // decir que fichero le falta, que es lo peor posible para quien lo estrena.
     {
-        std::vector<std::string> cands;
-        if (char* base = SDL_GetBasePath()) {
-            cands.push_back(std::string(base) + "fonts/" FONT_ICON_FILE_NAME_FAS);
-            cands.push_back(std::string(base) + "../fonts/" FONT_ICON_FILE_NAME_FAS);
-            SDL_free(base);
-        }
-        cands.push_back(FONT_DIR "/" FONT_ICON_FILE_NAME_FAS);
-        cands.push_back("fonts/" FONT_ICON_FILE_NAME_FAS);
-        std::string hallada;
-        for (auto& c : cands) { FILE* t = fopen(c.c_str(), "rb"); if (t) { fclose(t); hallada = c; break; } }
+        std::string hallada = buscar_fuente(FONT_ICON_FILE_NAME_FAS);
+        std::vector<std::string> cands = { std::string("junto al ejecutable, en fonts/"),
+                                           std::string(FONT_DIR "/" FONT_ICON_FILE_NAME_FAS) };
         if (!hallada.empty()) {
-            io.Fonts->AddFontFromFileTTF(hallada.c_str(), 15.0f, &fa_cfg, fa_range);
+            io.Fonts->AddFontFromFileTTF(hallada.c_str(), TAM_TEXTO - 2.0f, &fa_cfg, fa_range);
         } else {
             // Sin iconos se puede trabajar: se avisa y se sigue, en vez de morir.
             fprintf(stderr,
@@ -1086,6 +1205,19 @@ int main(int, char**) {
                 "ejecuta el editor desde la carpeta del proyecto.\n");
         }
     }
+
+    {   // la negrita, para titulos de seccion y lo que tenga que destacar
+        std::string bold = buscar_fuente("NotoSans-Bold.ttf");
+        if (!bold.empty()) {
+            ImFontConfig cfg;
+            cfg.OversampleH = 2; cfg.OversampleV = 2; cfg.PixelSnapH = false;
+            fuente_titulo = io.Fonts->AddFontFromFileTTF(bold.c_str(), TAM_TEXTO, &cfg);
+            ImFontConfig fa2 = fa_cfg;
+            std::string ic = buscar_fuente(FONT_ICON_FILE_NAME_FAS);
+            if (!ic.empty()) io.Fonts->AddFontFromFileTTF(ic.c_str(), TAM_TEXTO - 2.0f, &fa2, fa_range);
+        }
+    }
+    (void)fuente_titulo;
 
     ImGui_ImplSDL2_InitForOpenGL(window, gl);
     ImGui_ImplOpenGL3_Init("#version 150");
@@ -7851,11 +7983,18 @@ int main(int, char**) {
                 };
                 for (int i = 0; i < M_NUM; i++) {
                     bool on = (modo == i);
-                    if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.59f, 0.98f, 1.0f));
-                    else    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                    /* El modo activo va en ambar con el texto oscuro encima: se lee
+                       de un vistazo cual esta puesto. Ojo con el equilibrio de
+                       push/pop, que aqui se ponen dos colores y solo cuando toca. */
+                    if (on) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.949f, 0.686f, 0.259f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Text,   ImVec4(0.09f, 0.10f, 0.12f, 1.0f));
+                    } else {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                    }
                     std::string et = std::string(mm[i].icono) + "  " + mm[i].nombre;
                     if (ImGui::Button(et.c_str())) modo = i;
-                    ImGui::PopStyleColor();
+                    ImGui::PopStyleColor(on ? 2 : 1);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", mm[i].tip);
                     ImGui::SameLine(0, 2);
                 }
@@ -7963,11 +8102,14 @@ int main(int, char**) {
             };
             auto btn = [&](const char* icon, int t, const char* nombre, const char* tip) {
                 bool on = (tool == t), pulsado = false;
-                if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.59f, 0.98f, 1.0f));
+                if (on) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.949f, 0.686f, 0.259f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text,   ImVec4(0.09f, 0.10f, 0.12f, 1.0f));
+                }
                 // el boton ocupa el ancho del rail: se puede estrechar y sigue valiendo
                 std::string et = ancho > 92 ? (std::string(icon) + "  " + nombre) : std::string(icon);
                 if (ImGui::Button(et.c_str(), ImVec2(-1, 0))) { tool = t; pulsado = true; }
-                if (on) ImGui::PopStyleColor();
+                if (on) ImGui::PopStyleColor(2);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
                 return pulsado;
             };

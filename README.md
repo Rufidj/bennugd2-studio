@@ -22,6 +22,8 @@ los del HUD.
 - **Paneles acoplados** por defecto, pero **cualquiera se puede arrancar** y dejar suelto,
   incluso fuera de la ventana del editor (otro monitor, por ejemplo).
 - **Ventana → Restablecer la disposición** deja el modo como venía de fábrica.
+- La tipografía es **Noto Sans** (licencia OFL, va en `fonts/`), no la de mapa de bits
+  que trae ImGui de serie: era lo que le daba cara de ventana de depuración.
 
 ## Qué hace hoy (3D)
 

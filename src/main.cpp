@@ -1653,7 +1653,10 @@ int main(int, char**) {
         return e == ".fpg" || e == ".f16" || e == ".f32";
     };
     auto sheet_path_of = [&](const std::string& img) {
-        return assets_dir + "/" + img.substr(0, img.rfind('.')) + ".sheet";
+        // el .sheet va pegado a su imagen: si la hoja esta en Sprites/, el .sheet
+        // tambien, y si la referencia guardada era el nombre suelto, se resuelve
+        std::string r = ruta_asset(img);
+        return assets_dir + "/" + r.substr(0, r.rfind('.')) + ".sheet";
     };
     auto sheet_save = [&]() {
         if (sheet.image.empty()) return;
@@ -1712,8 +1715,9 @@ int main(int, char**) {
         if (sheet_quitar_fondo) {
             std::string base = img.substr(0, img.rfind('.'));
             if (base.size() < 9 || base.substr(base.size() - 9) != "_sinfondo") {
-                std::string nuevo = base + "_sinfondo.png";
-                int r2 = h2_make_transparent((assets_dir + "/" + img).c_str(),
+                std::string real  = ruta_asset(img);
+                std::string nuevo = real.substr(0, real.rfind('.')) + "_sinfondo.png";
+                int r2 = h2_make_transparent((assets_dir + "/" + real).c_str(),
                                              (assets_dir + "/" + nuevo).c_str());
                 if (r2 == 1) { img = nuevo; sheet_refrescar = true; }
             }
@@ -1722,7 +1726,7 @@ int main(int, char**) {
         sheet_sel.clear(); sheet_anim_sel = -1;
         std::vector<H2Rect> r(4096);
         int sw = 0, sh = 0;
-        int n = h2_detect_frames((assets_dir + "/" + img).c_str(), r.data(), (int)r.size(),
+        int n = h2_detect_frames((assets_dir + "/" + ruta_asset(img)).c_str(), r.data(), (int)r.size(),
                                  &sw, &sh, sheet_limpiar ? 1 : 0);
         sheet.w = sw; sheet.h = sh;
         for (int i = 0; i < n; i++)
@@ -1866,13 +1870,15 @@ int main(int, char**) {
         // anclas salen del propio FPG -- su punto de control 0, que en un FPG de
         // personajes suele estar en los pies.
         if (hud_is_fpg(img)) {
-            std::string base2 = img.substr(0, img.rfind('.'));
+            // el PNG que sale del FPG se queda en la carpeta del FPG
+            std::string real2 = ruta_asset(img);
+            std::string base2 = real2.substr(0, real2.rfind('.'));
             std::string png = base2 + "_hoja.png";
             std::string rpng = assets_dir + "/" + png;
             std::vector<H2Rect> r(1024);
             int sw = 0, sh = 0, n = 0;
             if (!fs::exists(rpng))
-                n = h2_fpg_to_sheet((assets_dir + "/" + img).c_str(), rpng.c_str(),
+                n = h2_fpg_to_sheet((assets_dir + "/" + real2).c_str(), rpng.c_str(),
                                     r.data(), (int)r.size(), &sw, &sh);
             if (n > 0) {
                 sheet = SheetDef(); sheet.image = png; sheet.w = sw; sheet.h = sh;
@@ -1894,7 +1900,7 @@ int main(int, char**) {
         bool ya_sin = (base.size() >= 9 && base.substr(base.size() - 9) == "_sinfondo");
         if (!ya_sin) {
             std::string sinf = base + "_sinfondo.png";
-            if (fs::exists(assets_dir + "/" + sinf) && sheet_load_file(sinf)) return "guardada";
+            if (fs::exists(assets_dir + "/" + ruta_asset(sinf)) && sheet_load_file(sinf)) return "guardada";
         }
         if (sheet_load_file(img)) return "guardada";
         sheet_detect(img);
@@ -1946,7 +1952,7 @@ int main(int, char**) {
         auto it = hud_imgs.find(file);
         if (it == hud_imgs.end()) {
             H2Img im = {};
-            h2_load_image((assets_dir + "/" + file).c_str(), &im);
+            h2_load_image((assets_dir + "/" + ruta_asset(file)).c_str(), &im);
             it = hud_imgs.emplace(file, im).first;
         }
         return it->second.tex ? &it->second : nullptr;
@@ -1955,7 +1961,7 @@ int main(int, char**) {
         auto it = hud_fpgs.find(file);
         if (it == hud_fpgs.end()) {
             H2Fpg fp = {};
-            h2_load_fpg((assets_dir + "/" + file).c_str(), &fp);
+            h2_load_fpg((assets_dir + "/" + ruta_asset(file)).c_str(), &fp);
             it = hud_fpgs.emplace(file, fp).first;
         }
         return it->second.n ? &it->second : nullptr;
@@ -1964,7 +1970,7 @@ int main(int, char**) {
         auto it = hud_fonts.find(file);
         if (it == hud_fonts.end()) {
             H2Font ft = {};
-            h2_load_fnt((assets_dir + "/" + file).c_str(), &ft);
+            h2_load_fnt((assets_dir + "/" + ruta_asset(file)).c_str(), &ft);
             it = hud_fonts.emplace(file, ft).first;
         }
         return it->second.tex ? &it->second : nullptr;
@@ -4516,6 +4522,18 @@ int main(int, char**) {
            cargar una escena todavia NO hay campo -- asi que los manantiales
            guardados no se creaban nunca y el agua no aparecia. */
         if (!wsources.empty()) watersim_sync(true);
+        /* Las referencias guardadas pueden ser del tiempo en que todo estaba
+           suelto ("hoja.png") y el fichero estar ya en Sprites/. Aqui se pasan a
+           la ruta real, para que los desplegables la enseñen elegida y para que al
+           guardar quede escrita la ruta ordenada. */
+        for (auto& o : objects) o.asset = ruta_asset(o.asset);
+        for (auto& sp : sprites) if (!sp.sheet.empty()) sp.sheet = ruta_asset(sp.sheet);
+        for (auto& h : hud) {
+            if (!h.asset.empty()) h.asset = ruta_asset(h.asset);
+            if (!h.font.empty())  h.font  = ruta_asset(h.font);
+        }
+        if (!esc_musica.empty()) esc_musica = ruta_asset(esc_musica);
+        for (auto& z : zsonidos) if (!z.sonido.empty()) z.sonido = ruta_asset(z.sonido);
         status = "Escena cargada (" + std::to_string(objects.size()) + " objetos)";
     };
 
@@ -4530,6 +4548,10 @@ int main(int, char**) {
            mismo nombre en los dos colaban, y los que solo estaban en el nuevo no
            se cargaban -- sembrabas y no aparecia nada, sin un mensaje. */
         g3d_scatter_set_base(project_dir.c_str());
+        /* La cache de "donde esta cada asset" es de ESTE proyecto: sin vaciarla,
+           al abrir otro seguiria dando rutas del anterior. Es el mismo fallo que
+           tuvo el sembrado con su directorio base. */
+        asset_cache.clear();
         scenes_dir  = dir + "/Scenes";
         scripts_dir = dir + "/Scripts";
         tex_dir     = assets_dir;
@@ -4676,6 +4698,12 @@ int main(int, char**) {
             }
         }
         fclose(f);
+        for (auto& m : menus) {
+            if (!m.fuente.empty()) m.fuente = ruta_asset(m.fuente);
+            if (!m.fondo.empty())  m.fondo  = ruta_asset(m.fondo);
+            if (!m.snd_mover.empty())  m.snd_mover  = ruta_asset(m.snd_mover);
+            if (!m.snd_elegir.empty()) m.snd_elegir = ruta_asset(m.snd_elegir);
+        }
         if (!menus.empty()) menu_sel = 0;
     };
 
@@ -4767,6 +4795,13 @@ int main(int, char**) {
             }
         }
         fclose(f);
+        for (auto& d : dialogos) {
+            if (!d.caja.empty())   d.caja   = ruta_asset(d.caja);
+            if (!d.fuente.empty()) d.fuente = ruta_asset(d.fuente);
+            if (!d.snd_letra.empty()) d.snd_letra = ruta_asset(d.snd_letra);
+            if (!d.snd_pasar.empty()) d.snd_pasar = ruta_asset(d.snd_pasar);
+            for (auto& pg : d.paginas) if (!pg.retrato.empty()) pg.retrato = ruta_asset(pg.retrato);
+        }
         if (!dialogos.empty()) dlg_sel = 0;
     };
 

@@ -1816,6 +1816,7 @@ int main(int, char**) {
         int una_vez = 1;          // 1 = suena entera al pulsar; 0 = mientras la aguantes
         std::string llama;        // PROCESS o FUNCTION tuyo que se llama al dispararla
         std::string archivo;      // el .prg de Scripts donde vive (vacio: lo crea el editor)
+        std::string dialogo;      // o un dialogo, para que salga con su bocadillo
     };
     struct SprObj {
         std::string name;          // nombre del PROCESS generado
@@ -1871,6 +1872,7 @@ int main(int, char**) {
         float inter_radio = 3.0f;
         std::string inter_tecla = "_E", inter_boton = "JOY_BUTTON_A";
         std::string inter_anim, inter_llama, inter_arch;
+        std::string inter_dialogo;  // el dialogo que suelta al hablarle (con su bocadillo)
         std::vector<Regla> reglas;      // "si pasa esto, haz esto" (lo mismo que un objeto)
         int   inter_mirar = 1;      // se gira hacia el jugador al acercarse
         // ---- comportamiento: que hace cuando nadie le toca ----
@@ -3830,10 +3832,11 @@ int main(int, char**) {
                 fprintf(f, "SPRFPS %d %d %d\n", sp.fps, sp.iluminado, sp.ajuste_px);
                 fprintf(f, "SPRCOMP %d %.3f %.3f %.3f %.3f\n",
                         sp.comport, sp.com_vel, sp.com_radio, sp.com_bx, sp.com_bz);
-                fprintf(f, "SPRNPC %d|%.3f|%d|%.3f|%d|%s|%s|%s|%s|%s\n",
+                fprintf(f, "SPRNPC %d|%.3f|%d|%.3f|%d|%s|%s|%s|%s|%s|%s\n",
                         sp.solido, sp.sol_radio, sp.inter_on, sp.inter_radio, sp.inter_mirar,
                         sp.inter_tecla.c_str(), sp.inter_boton.c_str(),
-                        sp.inter_anim.c_str(), sp.inter_llama.c_str(), sp.inter_arch.c_str());
+                        sp.inter_anim.c_str(), sp.inter_llama.c_str(), sp.inter_arch.c_str(),
+                        sp.inter_dialogo.c_str());
                 fprintf(f, "SPRPAD %d|%s|%s\n", sp.usar_mando,
                         sp.b_jump.c_str(), sp.b_run.c_str());
                 for (auto& r : sp.reglas) {
@@ -3847,9 +3850,10 @@ int main(int, char**) {
                                 a.sonido.c_str(), a.vol, a.escena.c_str(), a.menu.c_str(), a.dialogo.c_str(), a.ranura);
                 }
                 for (auto& ac : sp.acciones)
-                    fprintf(f, "SPRACCION %d|%d|%s|%s|%s|%s|%s|%s\n",
+                    fprintf(f, "SPRACCION %d|%d|%s|%s|%s|%s|%s|%s|%s\n",
                             ac.una_vez, ac.espejo, ac.nombre.c_str(), ac.tecla.c_str(),
-                            ac.boton.c_str(), ac.anim.c_str(), ac.llama.c_str(), ac.archivo.c_str());
+                            ac.boton.c_str(), ac.anim.c_str(), ac.llama.c_str(), ac.archivo.c_str(),
+                            ac.dialogo.c_str());
             }
         }
         // ---- HUD 2D ----
@@ -3969,8 +3973,8 @@ int main(int, char**) {
                         }
                     }
                     if (!strncmp(line, "SPRNPC ", 7)) {
-                        std::string p9[10];
-                        if (trocear(line + 7, p9, 10) >= 5) {
+                        std::string p9[11];
+                        if (trocear(line + 7, p9, 11) >= 5) {
                             sp.solido      = atoi(p9[0].c_str());
                             sp.sol_radio   = (float)atof(p9[1].c_str());
                             sp.inter_on    = atoi(p9[2].c_str());
@@ -3978,7 +3982,7 @@ int main(int, char**) {
                             sp.inter_mirar = atoi(p9[4].c_str());
                             sp.inter_tecla = p9[5]; sp.inter_boton = p9[6];
                             sp.inter_anim  = p9[7]; sp.inter_llama = p9[8];
-                            sp.inter_arch  = p9[9];
+                            sp.inter_arch  = p9[9]; sp.inter_dialogo = p9[10];
                         }
                         continue;
                     }
@@ -4023,14 +4027,14 @@ int main(int, char**) {
                         continue;
                     }
                     if (!strncmp(line, "SPRACCION ", 10)) {
-                        std::string p7[8];
-                        if (trocear(line + 10, p7, 8) >= 6) {
+                        std::string p7[9];
+                        if (trocear(line + 10, p7, 9) >= 6) {
                             SprAccion ac;
                             ac.una_vez = atoi(p7[0].c_str());
                             ac.espejo  = atoi(p7[1].c_str());
                             ac.nombre  = p7[2]; ac.tecla = p7[3];
                             ac.boton   = p7[4]; ac.anim  = p7[5]; ac.llama = p7[6];
-                            ac.archivo = p7[7];
+                            ac.archivo = p7[7]; ac.dialogo = p7[8];
                             sp.acciones.push_back(ac);
                         }
                         continue;
@@ -5688,6 +5692,9 @@ int main(int, char**) {
                             fprintf(f, "                acc = %d;", q + 1);
                             if (ac.una_vez)
                                 fprintf(f, " acc_t = %d; paso = 0; tic = 0;", dur);
+                            if (!ac.dialogo.empty())
+                                fprintf(f, " IF (NOT exists(TYPE %s)) %s(); END",
+                                        ac.dialogo.c_str(), ac.dialogo.c_str());
                             if (!ac.llama.empty())
                                 fprintf(f, " %s();", gen_ident(ac.llama, "f").c_str());
                             fputs("\n            END\n", f);
@@ -5900,6 +5907,9 @@ int main(int, char**) {
                             fputs("        IF (cerca) angle = atan2(-dx, -dz); END   // se gira hacia ti\n", f);
                         fprintf(f,
                           "        IF (cerca AND (%s) AND ant_i == 0)\n", cond.c_str());
+                        if (!sp.inter_dialogo.empty())
+                            fprintf(f, "            IF (NOT exists(TYPE %s)) %s(); END   // lo que dice\n",
+                                    sp.inter_dialogo.c_str(), sp.inter_dialogo.c_str());
                         if (!sp.inter_llama.empty())
                             fprintf(f, "            %s();\n", gen_ident(sp.inter_llama, "f").c_str());
                         if (!sp.inter_anim.empty()) {
@@ -6791,6 +6801,16 @@ int main(int, char**) {
                         int ne = indice_escena(a.escena);
                         if (ne >= 0) fprintf(f, "                escena_pedida = %d;   // ir a %s\n", ne, a.escena.c_str());
                     }
+                    else if (a.tipo == 8 && !a.menu.empty())
+                        fprintf(f, "                IF (NOT exists(TYPE %s)) %s(); END\n",
+                                a.menu.c_str(), a.menu.c_str());
+                    else if (a.tipo == 9 && !a.dialogo.empty())
+                        fprintf(f, "                IF (NOT exists(TYPE %s)) %s(); END\n",
+                                a.dialogo.c_str(), a.dialogo.c_str());
+                    else if (a.tipo == 10)
+                        fprintf(f, "                partida_guardar(%d);\n", a.ranura);
+                    else if (a.tipo == 11)
+                        fprintf(f, "                partida_cargar(%d);\n", a.ranura);
                     else if (a.tipo == 6 || a.tipo == 7) {
                         // cerrar o salir: los dos deshacen el menu primero
                         fputs("                FOR (i = 0; i < n; i = i + 1)  write_delete(idop[i]);  END\n", f);
@@ -7066,6 +7086,14 @@ int main(int, char**) {
                             } else if (a.tipo == 8 && !a.menu.empty())
                                 fprintf(f, "                IF (NOT exists(TYPE %s)) %s(); END\n",
                                         a.menu.c_str(), a.menu.c_str());
+                            else if (a.tipo == 9 && !a.dialogo.empty())
+                                // un dialogo puede llevar a otro: se cierra este y arranca el otro
+                                fprintf(f, "                IF (NOT exists(TYPE %s)) %s(); END\n",
+                                        a.dialogo.c_str(), a.dialogo.c_str());
+                            else if (a.tipo == 10)
+                                fprintf(f, "                partida_guardar(%d);\n", a.ranura);
+                            else if (a.tipo == 11)
+                                fprintf(f, "                partida_cargar(%d);\n", a.ranura);
                         }
                         if (pg.opciones[q].salto >= 0 && pg.opciones[q].salto < npag)
                             fprintf(f, "                pag = %d;\n", pg.opciones[q].salto);
@@ -10251,6 +10279,17 @@ int main(int, char**) {
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("Marcado: se reproduce del tiron y no se corta (ataques).\n"
                                               "Sin marcar: suena mientras aguantes la tecla o el boton.");
+                        {   // que suelte un dialogo, para lo de "hablar" sin escribir codigo
+                            const char* cur = ac.dialogo.empty() ? "(ninguno)" : ac.dialogo.c_str();
+                            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
+                            if (ImGui::BeginCombo("Dialogo que saca", cur)) {
+                                if (ImGui::Selectable("(ninguno)", ac.dialogo.empty())) ac.dialogo.clear();
+                                for (auto& dd : dialogos)
+                                    if (ImGui::Selectable(dd.nombre.c_str(), dd.nombre == ac.dialogo))
+                                        ac.dialogo = dd.nombre;
+                                ImGui::EndCombo();
+                            }
+                        }
                         selector_codigo("codaccion", ac.archivo, ac.llama, ac.nombre);
                         ImGui::PopID();
                     }
@@ -10325,6 +10364,22 @@ int main(int, char**) {
                     combo_tecla("Tecla", o.inter_tecla);
                     combo_boton("Boton del mando", o.inter_boton);
                     combo_anim_de("Animacion al hacerlo", o.inter_anim);
+                    /* Lo normal al hablar con alguien es que DIGA algo, con su
+                       bocadillo. Antes esto solo sabia llamar a codigo tuyo, y el
+                       texto pelado de las reglas sale sin caja. */
+                    {   const char* cur = o.inter_dialogo.empty() ? "(ninguno)" : o.inter_dialogo.c_str();
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
+                        if (ImGui::BeginCombo("Dialogo que suelta", cur)) {
+                            if (ImGui::Selectable("(ninguno)", o.inter_dialogo.empty())) o.inter_dialogo.clear();
+                            for (auto& dd : dialogos)
+                                if (ImGui::Selectable(dd.nombre.c_str(), dd.nombre == o.inter_dialogo))
+                                    o.inter_dialogo = dd.nombre;
+                            ImGui::EndCombo();
+                        }
+                        if (dialogos.empty())
+                            ImGui::TextDisabled("  (aun no hay dialogos: Ventana > Dialogos)");
+                    }
+                    ImGui::TextDisabled("Y ademas, si quieres, tu propio codigo:");
                     selector_codigo("codinter", o.inter_arch, o.inter_llama, o.name + "_hablar");
                     bool mir = o.inter_mirar != 0;
                     if (ImGui::Checkbox("Se gira hacia el jugador al acercarse", &mir)) o.inter_mirar = mir;

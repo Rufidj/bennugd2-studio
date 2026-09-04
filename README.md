@@ -144,8 +144,13 @@ sistema), con el nombre de quien habla en su propio color y las respuestas resal
 - Las líneas **se parten solas** para caber en la caja: el editor las mide con la misma
   fuente que usará el juego, porque `write()` no parte por sí mismo.
 - **Congela el juego** mientras se habla, si quieres.
-- Para que salga: una regla con la acción **"Sacar un diálogo"** — al tocar al personaje,
-  al pulsar una tecla cerca, al entrar en una zona...
+- Para que salga, **desde donde quieras**: una regla con la acción *"Sacar un diálogo"*
+  (al tocar algo, al pulsar cerca, al entrar en una zona), la **interacción de un
+  personaje** (acércate y pulsa: eliges directamente el diálogo que suelta), una **acción
+  de tecla** suya, una **opción de menú**, o la **respuesta de otro diálogo** — así se
+  encadenan.
+- Es la manera de que un texto salga **con su bocadillo**: la acción "Enseñar un texto"
+  escribe una línea pelada arriba de la pantalla, sin caja.
 
 
 ## Varias escenas

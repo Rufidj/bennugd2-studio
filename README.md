@@ -203,6 +203,40 @@ Dos cosas que conviene saber:
 - Las **variables del juego viven en el proyecto** (`.bgd2`), no en la escena: los
   puntos y la vida sobreviven al cambio de mapa.
 
+## Telas: banderas, cortinas, toldos
+
+Herramienta **Tela** (modo Escena): clic en la escena y ahí cuelga. Se ve **ondear
+mientras la editas**, que es la única forma de saber si una bandera queda bien.
+
+- **Cómo cuelga**: del borde de arriba (cortina), de las dos esquinas (guirnalda) o del
+  borde izquierdo (bandera). Su tamaño, sus trozos (más = cae mejor, cuesta más) y **su
+  propia textura**.
+- **El viento**: fuerza y dirección.
+- **La aparta lo que pase**: el jugador, y cualquier objeto con *"Aparta las telas al
+  pasar"* marcado. El empujón es una **cápsula** de la altura del objeto, no una esfera,
+  para que lo que sobresale no atraviese la tela. Y con *"…y la tela lo frena"* una lona
+  pesada cuesta de atravesar.
+
+En el juego sale como un `PROCESS` con sus locales, igual que la vegetación:
+
+```prg
+PROCESS pueblo_bandera()
+BEGIN
+    ctype = C_3D; csubtype = C3D_CLOTH;
+    x = 3.0;  y = 5.5;  z = 0.0;            // de donde cuelga
+    entity = g3d_cloth_create(3.0, 2.0, 16, 12, x, y, z);
+    g3d_cloth_pin(entity, 2);               // sujeta por la izquierda
+    target_x = 1.0; target_z = 0.3;         // hacia donde sopla
+    wind = 1.2;                             // y con qué fuerza
+    LOOP
+        FRAME;
+    END
+END
+```
+
+Cambia `wind` desde tu código y tienes una racha o una tormenta, sin llamar a nada.
+
+
 ## Colisión: la forma del propio modelo
 
 Además de caja, esfera, cápsula y cilindro —donde la colisión es **un solo número** y

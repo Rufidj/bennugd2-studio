@@ -259,6 +259,18 @@ extern "C" {
     void  g3d_editor_set_aspect(float a);
     void *g3d_editor_make_terrain(int scene_id, int grid, float worldsize, float tiling, const char *texpath);
     int   g3d_editor_terrain_pick(float sx, float sy, float w, float h, void *mesh, float *out);
+    /* ---- telas (banderas, cortinas, toldos) ---- */
+    int   g3d_cloth_create(float width, float height, int nx, int ny, float px, float py, float pz);
+    void  g3d_cloth_pin(int cloth, int mode);
+    void  g3d_cloth_set_wind(int cloth, float x, float y, float z, float strength);
+    void  g3d_cloth_set_collider(int cloth, float x, float y, float z, float radius);
+    void  g3d_cloth_clear_collider(int cloth);
+    void  g3d_cloth_set_texture(int cloth, unsigned int gl_handle);
+    void  g3d_cloth_update(int cloth, float dt);
+    int   g3d_cloth_push(float x, float y, float z, float radius);
+    int   g3d_cloth_push_capsule(float ax, float ay, float az,
+                                 float bx, float by, float bz, float radius);
+    void  g3d_cloth_shutdown(void);
     void  g3d_editor_terrain_raise(void *mesh, float x, float z, float r, float amt);
     void  g3d_editor_terrain_smooth(void *mesh, float x, float z, float r, float amt);
     void  g3d_editor_terrain_flatten(void *mesh, float x, float z, float r, float amt);
@@ -605,6 +617,27 @@ int main(int, char**) {
                    WaterfallFX wf;                          // efectos de sus cascadas
                    std::vector<float> terrain_before; };   // pts = pares x,z
     std::vector<River> rivers;
+
+    /* ================== TELAS ==================
+       Una bandera, una cortina, un toldo: una rejilla de particulas que el viento
+       mueve y el personaje aparta al pasar. En el juego es un PROCESS con sus
+       locales -- 'wind' la fuerza y target_x/y/z hacia donde sopla -- como la
+       vegetacion; aqui se coloca con el raton y se ve ondear mientras editas. */
+    struct Tela {
+        std::string nombre = "tela";
+        float x = 0, y = 4, z = 0;      // de donde cuelga (esquina superior izquierda)
+        float ancho = 3.0f, alto = 2.0f;
+        int   nx = 14, ny = 10;         // particulas: mas = mejor caida, mas coste
+        int   sujecion = 0;             // 0 borde de arriba, 1 las dos esquinas, 2 borde izquierdo (bandera)
+        float viento = 1.0f;            // fuerza
+        float vx = 1.0f, vy = 0.0f, vz = 0.3f;   // hacia donde sopla
+        std::string textura;            // imagen de Assets (opcional)
+        int   empuja = 1;               // el jugador la aparta al pasar
+        float radio = 0.9f;             // de que grosor es ese empujon
+        int   id = -1;                  // la tela viva en el editor (para verla ondear)
+    };
+    std::vector<Tela> telas;
+    int tela_sel = -1;
     std::vector<float> river_draft;   // rio que se esta trazando (pares x,z)
     // ---- cascadas (elemento propio: borde arriba -> base abajo) ----
     struct Waterfall { float top[3]; float base[3]; float width; float arc; WaterfallFX fx; };
@@ -1306,7 +1339,7 @@ int main(int, char**) {
     // ---- herramienta activa (toolbar con iconos) ----
     enum Tool { T_SELECT, T_MOVE, T_ROTATE, T_SCALE, T_PLACE, T_RAISE, T_LOWER, T_SMOOTH, T_FLATTEN, T_PAINT,
                 T_HOLE, T_ZONE, T_LAKE, T_RIVER, T_WATERFALL, T_WATERSOURCE, T_VERTEX,
-                T_SCATTER, T_HUD, T_SPRITE };
+                T_SCATTER, T_HUD, T_SPRITE, T_CLOTH };
     bool hole_fill = false;   // T_HOLE: false=perforar, true=rellenar
     int tool = T_SELECT;
     int  zone_layer = 0;      // T_ZONE: capa (0..3) que se pinta
@@ -1548,6 +1581,10 @@ int main(int, char**) {
         float mass = 1.0f;
         float bounce = 0.2f;      // restitucion 0..1
         float friction = 0.5f;
+        /* Aparta las telas al pasar (un barril rodando por una cortina). Se
+           apunta en el proceso del objeto con una llamada por frame. */
+        int   mueve_telas = 0;
+        float telas_frenan = 0.0f;   // 0 = la atraviesa como si nada; >0 = le cuesta
         int   buoyant = 0;        // flota en el agua
         float density = 0.5f;     // 0..1 cuanto se hunde (0.5 = medio sumergido)
         float csize = 1.0f;       // tamano/radio de colision
@@ -3713,7 +3750,7 @@ int main(int, char**) {
                 "// del cuerpo rigido y se escriben en x, y, z. A partir de aqui es TUYO.\n"
                 "PROCESS %s(int modelo)\n"
                 "PRIVATE\n"
-                "    int cuerpo; int moja; float bx; float by; float bz; float mov; float wl;\n"
+                "    int cuerpo; int moja; int entela; float bx; float by; float bz; float mov; float wl;\n"
                 "    float prevx; float prevy; float prevz; float dt; float ript;\n"
                 "END\n"
                 "BEGIN\n"
@@ -3755,6 +3792,34 @@ int main(int, char**) {
             s += b;
             s += acc_ini;
             s += "\n    LOOP\n";
+            if (o.mueve_telas) {
+                char et[600];
+                float alto = csize_del_modelo(o) * 2.0f;   // lo que mide de alto
+                if (alto < 0.4f) alto = 1.2f;
+                float radio = (o.csize > 0.05f ? o.csize : 0.6f) * 0.9f;
+                if (o.telas_frenan > 0.001f)
+                    /* g3d_cloth_push devuelve cuanta tela esta apartando: con eso se
+                       sabe que ESTA dentro de una y se le resta empuje, asi una lona
+                       pesada cuesta de atravesar. Frenar no es bloquear: una tela no
+                       para un barril, lo estorba. */
+                    /* CAPSULA, no esfera: de los pies a la cabeza del objeto. Con una
+                       esfera, lo que sobresalia de ella atravesaba la tela. */
+                    snprintf(et, sizeof(et),
+                        "        // aparta las telas al pasar, y la tela le estorba\n"
+                        "        entela = g3d_cloth_push_capsule(x, y, z, x, y + %.3f, z, %.3f);\n"
+                        "        IF (entela > 0 AND cuerpo >= 0)\n"
+                        "            g3d_rigidbody_apply_impulse(cuerpo,\n"
+                        "                (prevx - x) * %.2f, 0.0, (prevz - z) * %.2f);\n"
+                        "        END\n",
+                        alto, radio, o.telas_frenan * 10.0f, o.telas_frenan * 10.0f);
+                else
+                    snprintf(et, sizeof(et),
+                        "        // aparta las telas al pasar: capsula de su altura, para que\n"
+                        "        // la tela se apoye en todo el cuerpo y no lo atraviese\n"
+                        "        g3d_cloth_push_capsule(x, y, z, x, y + %.3f, z, %.3f);\n",
+                        alto, radio);
+                s += et;
+            }
 
             // Agua: el objeto flota y salpica en el agua que tenga DEBAJO, sea el
             // mar, un lago o un rio. Cada frame se consulta el nivel de agua en su
@@ -3922,6 +3987,11 @@ int main(int, char**) {
         FILE* f = fopen(path.c_str(), "w");
         if (!f) { status = "ERROR guardando escena"; return; }
         fputs("# escena del editor BennuGD2\n", f);
+        for (auto& t : telas)
+            fprintf(f, "TELA %.4f %.4f %.4f %.3f %.3f %d %d %d %.3f %.3f %.3f %.3f %d %.3f|%s|%s\n",
+                    t.x, t.y, t.z, t.ancho, t.alto, t.nx, t.ny, t.sujecion,
+                    t.viento, t.vx, t.vy, t.vz, t.empuja, t.radio,
+                    t.nombre.c_str(), t.textura.c_str());
         // (las variables del juego van en el .bgd2 del proyecto, no aqui)
         // ---- sonido de la escena ----
         if (!esc_musica.empty())
@@ -3972,6 +4042,8 @@ int main(int, char**) {
                     w.fx.tex, w.fx.speed, w.fx.foam, w.fx.color[0], w.fx.color[1], w.fx.color[2], w.arc);
         }
         for (auto& o : objects) {
+            /* 'MUEVETELAS' va aparte y al final: asi las escenas viejas se leen
+               igual y las nuevas no rompen a un editor anterior. */
             fprintf(f, "OBJECT %s %.4f %.4f %.4f %.4f %.4f SCRIPT %s PHYS %d %.3f %.3f %.3f %d %.3f %.3f",
                     o.asset.c_str(), o.x, o.y, o.z, o.ry, o.scale, o.name.c_str(),
                     o.phys, o.mass, o.bounce, o.friction, o.buoyant, o.density, o.csize);
@@ -3987,6 +4059,7 @@ int main(int, char**) {
                 fprintf(f, " ATTACH %d %.3f %.3f %.3f %.3f %.3f %s",
                         o.attach_to, o.att_off[0], o.att_off[1], o.att_off[2],
                         o.att_scale, o.att_yaw, o.attach_bone.c_str());
+if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             fputs("\n", f);
             if (!o.amb_sonido.empty())
                 fprintf(f, "OBJAMB %.3f|%d|%s\n", o.amb_radio, o.amb_vol, o.amb_sonido.c_str());
@@ -4100,6 +4173,7 @@ int main(int, char**) {
         for (auto& sp : sprites) if (sp.entity >= 0) g3d_sprite_destroy(sp.entity);
         sprites.clear(); spr_sel = -1; spr_follow = -1;
         esc_musica.clear(); zsonidos.clear();
+        telas.clear(); tela_sel = -1;   // las telas vivas se recrean al cargar
         lakes.clear(); rivers.clear(); river_draft.clear(); waterfalls.clear();
         wsources.clear();   // los de la escena anterior no son de esta
         // terreno primero: las cuevas/objetos se apoyan en su altura
@@ -4439,6 +4513,7 @@ int main(int, char**) {
                         if (n >= 10) { o.char_radius=cr; o.char_height=chh; }
                     }
                 }
+                if (strstr(line, " MUEVETELAS 1")) o.mueve_telas = 1;
                 const char* zl = strstr(line, " ZONELAYER ");
                 if (zl) { int z; if (sscanf(zl, " ZONELAYER %d", &z) == 1) o.zone_layer = z; }
                 const char* at = strstr(line, " ATTACH ");
@@ -4524,6 +4599,23 @@ int main(int, char**) {
                 continue;
             }
             // Las variables del juego (puntos, vida...): van con la escena.
+            if (!strncmp(line, "TELA ", 5)) {
+                Tela t;
+                char resto[512] = {0};
+                if (sscanf(line, "TELA %f %f %f %f %f %d %d %d %f %f %f %f %d %f|%511[^\n]",
+                           &t.x, &t.y, &t.z, &t.ancho, &t.alto, &t.nx, &t.ny, &t.sujecion,
+                           &t.viento, &t.vx, &t.vy, &t.vz, &t.empuja, &t.radio, resto) >= 14) {
+                    std::string r(resto);
+                    auto bar = r.find('|');
+                    if (bar == std::string::npos) t.nombre = r;
+                    else { t.nombre = r.substr(0, bar); t.textura = r.substr(bar + 1); }
+                    while (!t.nombre.empty() && (t.nombre.back()=='\n' || t.nombre.back()=='\r')) t.nombre.pop_back();
+                    while (!t.textura.empty() && (t.textura.back()=='\n' || t.textura.back()=='\r')) t.textura.pop_back();
+                    if (t.nombre.empty()) t.nombre = "tela" + std::to_string((int)telas.size() + 1);
+                    telas.push_back(t);
+                }
+                continue;
+            }
             /* Las escenas de antes guardaban aqui las variables del juego. Ahora
                son del proyecto, asi que se recogen pero sin repetir: la escena solo
                aporta las que falten. */
@@ -5530,6 +5622,46 @@ int main(int, char**) {
                   pref.c_str(),
                   w_amp, w_len, w_speed, water_foam, surf_height, splash_amount,
                   ws_evap, ws_flow, surf_dir);
+        }
+
+        /* ---- cada TELA, como proceso BennuGD2 ----
+           Igual que la vegetacion o el agua: el proceso ES la tela y sus locales
+           mandan. 'wind' es la fuerza del viento y target_x/y/z hacia donde sopla,
+           asi que una racha o una tormenta se hacen tocando esas variables desde
+           tu propio codigo, sin llamar a nada. */
+        for (auto& t : telas) {
+            std::string pn = ident_bgd(t.nombre, "tela");
+            fprintf(f, "// TELA '%s'\n"
+                       "PROCESS %s_%s()\n"
+                       "BEGIN\n"
+                       "    ctype = C_3D; csubtype = C3D_CLOTH;\n"
+                       "    x = %.3f;  y = %.3f;  z = %.3f;   // de donde cuelga\n"
+                       "    entity = g3d_cloth_create(%.3f, %.3f, %d, %d, x, y, z);\n"
+                       "    IF (entity < 0) RETURN; END\n"
+                       "    g3d_cloth_pin(entity, %d);   // %s\n",
+                    t.nombre.c_str(), pref.c_str(), pn.c_str(),
+                    t.x, t.y, t.z, t.ancho, t.alto, t.nx, t.ny, t.sujecion,
+                    t.sujecion == 0 ? "colgada del borde de arriba"
+                                    : (t.sujecion == 1 ? "sujeta por las dos esquinas"
+                                                       : "sujeta por la izquierda (bandera)"));
+            if (!t.textura.empty())
+                fprintf(f, "    g3d_cloth_set_texture(entity, g3d_load_texture(\"Assets/%s\"));\n",
+                        ruta_asset(t.textura).c_str());
+            fprintf(f, "    // el viento: cambialo en marcha y la tela responde\n"
+                       "    target_x = %.3f; target_y = %.3f; target_z = %.3f;\n"
+                       "    wind = %.3f;\n"
+                       "    LOOP\n", t.vx, t.vy, t.vz, t.viento);
+            if (t.empuja)
+                fprintf(f, "        // el jugador la aparta al pasar, de los pies a la cabeza\n"
+                           "        g3d_cloth_push_capsule(jug_x, jug_y, jug_z,\n"
+                           "                               jug_x, jug_y + 1.7, jug_z, %.3f);\n"
+                           "        // (y cualquier objeto marcado \"aparta las telas\" tambien,\n"
+                           "        //  con g3d_cloth_push desde su propio proceso)\n",
+                        t.radio);
+            fputs("        FRAME;\n"
+                  "    END\n"
+                  "END\n\n", f);
+            lanzados.push_back(pref + "_" + pn);
         }
 
         // ---- cada especie sembrada, como proceso BennuGD2 ----
@@ -6575,6 +6707,11 @@ int main(int, char**) {
                 { fprintf(f, "    %s_veg_%s();\n", pref.c_str(), pn.c_str());
                   lanzados.push_back(pref + "_veg_" + pn); }
             }
+        // las telas de esta escena
+        for (auto& t : telas) {
+            std::string pn = ident_bgd(t.nombre, "tela");
+            fprintf(f, "    %s_%s();\n", pref.c_str(), pn.c_str());
+        }
         fputs("    escena_dt = 1.0 / 60.0;\n", f);
         int pj = 0;   // indice de cuerpo fisico (literal)
         for (size_t i = 0; i < objects.size(); i++) {
@@ -8355,6 +8492,7 @@ int main(int, char**) {
             ImGui::DockBuilderDockWindow("Variables del juego", lbottom);
             ImGui::DockBuilderDockWindow("Inspector", right);
             ImGui::DockBuilderDockWindow(ICON_FA_FONT "  HUD 2D", right);
+            ImGui::DockBuilderDockWindow(ICON_FA_FLAG "  Telas", right);
             ImGui::DockBuilderDockWindow(ICON_FA_PERSON_RUNNING "  Sprites 3D", bottom);
             ImGui::DockBuilderDockWindow("Editor de codigo", center);
             ImGui::DockBuilderFinish(ds);
@@ -8399,6 +8537,8 @@ int main(int, char**) {
                 grupo("PONER");
                 btn(ICON_FA_CUBE,               T_PLACE,  "Colocar",     "Colocar el asset elegido en el panel Assets");
                 btn(ICON_FA_DRAW_POLYGON,       T_ZONE,   "Zonas",       "Pintar zonas: barreras, ambientes y disparadores");
+                if (btn(ICON_FA_FLAG,           T_CLOTH,  "Tela",        "Bandera, cortina o toldo: se mueve con el viento y el jugador la aparta"))
+                    enfocar_panel = ICON_FA_FLAG "  Telas";
             } else if (modo == M_TERRENO) {
                 grupo("ESCULPIR");
                 btn(ICON_FA_MOUNTAIN,            T_RAISE,   "Subir",     "Levantar montanas");
@@ -8451,6 +8591,34 @@ int main(int, char**) {
                 if (ImGui::Button(ICON_FA_BARS "   Menus", ImVec2(-1, 0)))          show_menus = true;
             }
             ImGui::End();
+        }
+
+        /* ---- LAS TELAS, ONDEANDO EN EL EDITOR ----
+           Se crean de verdad en la escena del editor y se avanzan cada frame, asi
+           que se ven moverse mientras las colocas: es la unica forma de saber si
+           una bandera queda bien. */
+        {
+            static uint32_t tela_t0 = SDL_GetTicks();
+            uint32_t ahora = SDL_GetTicks();
+            float dt = (ahora - tela_t0) / 1000.0f;
+            tela_t0 = ahora;
+            if (dt > 0.05f) dt = 0.05f;
+            for (auto& t : telas) {
+                if (t.id < 0) {
+                    t.id = g3d_cloth_create(t.ancho, t.alto, t.nx, t.ny, t.x, t.y, t.z);
+                    if (t.id >= 0) {
+                        g3d_cloth_pin(t.id, t.sujecion);
+                        if (!t.textura.empty()) {
+                            H2Img* im = hud_img(t.textura);
+                            if (im && im->tex) g3d_cloth_set_texture(t.id, im->tex);
+                        }
+                    }
+                }
+                if (t.id >= 0) {
+                    g3d_cloth_set_wind(t.id, t.vx, t.vy, t.vz, t.viento);
+                    g3d_cloth_update(t.id, dt);
+                }
+            }
         }
 
         // --- Panel: Escena (viewport 3D dibujado a textura) ---
@@ -9430,6 +9598,20 @@ int main(int, char**) {
                 } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     river_draft.push_back(hit[0]);
                     river_draft.push_back(hit[2]);
+                }
+            } else if (tool == T_CLOTH && terrain &&
+                       g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
+                /* Se cuelga a la altura de una persona por encima del suelo, que es
+                   donde se pone una bandera o una cortina; luego se ajusta en su
+                   ficha. Se ve ondear al momento. */
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    Tela t;
+                    t.nombre = "tela" + std::to_string((int)telas.size() + 1);
+                    t.x = hit[0];  t.z = hit[2];
+                    t.y = g3d_editor_terrain_height(terrain, hit[0], hit[2]) + t.alto + 1.5f;
+                    telas.push_back(t);
+                    tela_sel = (int)telas.size() - 1;
+                    status = "Tela '" + t.nombre + "' colocada";
                 }
             } else if (tool == T_LAKE && terrain &&
                        g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
@@ -11697,6 +11879,18 @@ int main(int, char**) {
                     if (!fijo)
                         ImGui::DragFloat("Masa / peso", &o.mass, 0.1f, 0.01f, 1000.0f, "%.2f kg");
                     ImGui::DragFloat("Tamano colision", &o.csize, 0.05f, 0.1f, 50.0f, "%.2f");
+                    { bool mt = o.mueve_telas != 0;
+                      if (ImGui::Checkbox("Aparta las telas al pasar", &mt)) o.mueve_telas = mt ? 1 : 0;
+                      if (ImGui::IsItemHovered())
+                          ImGui::SetTooltip("Una cortina o una bandera se apartan cuando este objeto\n"
+                                            "pasa por ellas. Vale para cualquier cosa que se mueva."); }
+                    if (o.mueve_telas) {
+                        ImGui::DragFloat("...y la tela lo frena", &o.telas_frenan, 0.02f, 0.0f, 3.0f, "%.2f");
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("0 = la atraviesa como si nada (una cortina ligera).\n"
+                                              "Subelo y le cuesta pasar, como una lona pesada.\n"
+                                              "Frenar no es bloquear: una tela no para un barril.");
+                    }
                     if (ImGui::Button("Ajustar al modelo", ImVec2(-1, 0)))
                         o.csize = csize_del_modelo(o);
                     if (ImGui::IsItemHovered())
@@ -12009,6 +12203,70 @@ int main(int, char**) {
             ImGui::SameLine();
             if (ImGui::Button("Cancelar", ImVec2(140, 0))) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
+        }
+
+        /* ---- LA FICHA DE UNA TELA ---- */
+        if (tool == T_CLOTH) {
+            ImGui::Begin(ICON_FA_FLAG "  Telas");
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextWrapped("Banderas, cortinas, toldos. Clic en la escena para poner una. "
+                               "En el juego sale como un PROCESS con sus locales: 'wind' es la "
+                               "fuerza del viento y target_x/y/z hacia donde sopla, asi que una "
+                               "racha se hace tocando esas variables desde tu codigo.");
+            ImGui::Separator();
+            for (int i = 0; i < (int)telas.size(); i++) {
+                ImGui::PushID(i);
+                if (ImGui::Selectable(telas[i].nombre.c_str(), tela_sel == i)) tela_sel = i;
+                ImGui::PopID();
+            }
+            if (telas.empty()) ImGui::TextDisabled("(ninguna: haz clic en la escena)");
+            if (tela_sel >= 0 && tela_sel < (int)telas.size()) {
+                Tela& t = telas[tela_sel];
+                bool rehacer = false;
+                ImGui::SeparatorText("La tela");
+                { char nb[80]; snprintf(nb, sizeof(nb), "%s", t.nombre.c_str());
+                  ImGui::SetNextItemWidth(180);
+                  if (ImGui::InputText("Nombre (PROCESS)", nb, sizeof(nb))) t.nombre = ident_bgd(nb, "tela"); }
+                if (ImGui::DragFloat3("Donde cuelga", &t.x, 0.1f)) rehacer = true;
+                if (ImGui::DragFloat("Ancho", &t.ancho, 0.05f, 0.2f, 60.0f, "%.2f")) rehacer = true;
+                if (ImGui::DragFloat("Alto",  &t.alto,  0.05f, 0.2f, 60.0f, "%.2f")) rehacer = true;
+                if (ImGui::DragInt("Trozos a lo ancho", &t.nx, 0.2f, 3, 60)) rehacer = true;
+                if (ImGui::DragInt("Trozos a lo alto",  &t.ny, 0.2f, 3, 60)) rehacer = true;
+                ImGui::TextDisabled("Mas trozos = cae mejor, pero cuesta mas.");
+                { const char* sj[] = { "Del borde de arriba (cortina)",
+                                       "De las dos esquinas (guirnalda)",
+                                       "Del borde izquierdo (bandera)" };
+                  if (ImGui::Combo("Sujeta", &t.sujecion, sj, 3)) rehacer = true; }
+                {   const char* cur = t.textura.empty() ? "(sin textura)" : t.textura.c_str();
+                    ImGui::SetNextItemWidth(240);
+                    if (ImGui::BeginCombo("Textura", cur)) {
+                        if (ImGui::Selectable("(sin textura)", t.textura.empty())) { t.textura.clear(); rehacer = true; }
+                        for (auto& g : hud_gfx_files)
+                            if (ImGui::Selectable(g.c_str(), g == t.textura)) { t.textura = g; rehacer = true; }
+                        ImGui::EndCombo();
+                    }
+                }
+                ImGui::SeparatorText("El viento");
+                ImGui::DragFloat("Fuerza", &t.viento, 0.02f, 0.0f, 12.0f, "%.2f");
+                ImGui::DragFloat3("Hacia donde", &t.vx, 0.02f, -1.0f, 1.0f, "%.2f");
+                ImGui::TextDisabled("Se ve ondear aqui mismo mientras la ajustas.");
+                ImGui::SeparatorText("El jugador");
+                { bool e = t.empuja != 0;
+                  if (ImGui::Checkbox("La aparta al pasar", &e)) t.empuja = e ? 1 : 0; }
+                if (t.empuja) ImGui::DragFloat("Grosor del empujon", &t.radio, 0.05f, 0.1f, 5.0f, "%.2f");
+                ImGui::Spacing();
+                if (ImGui::Button("Quitar esta tela", ImVec2(-1, 0))) {
+                    telas.erase(telas.begin() + tela_sel);
+                    tela_sel = telas.empty() ? -1 : 0;
+                } else if (rehacer) {
+                    /* Cambiar el tamanio o la sujecion pide una tela nueva: la vieja
+                       se queda con su rejilla. Se marca para recrearla en el frame
+                       siguiente, que es cuando se ve el cambio. */
+                    t.id = -1;
+                }
+            }
+            ImGui::PopTextWrapPos();
+            ImGui::End();
         }
 
         /* ---- MENUS: principal, pausa, opciones ----

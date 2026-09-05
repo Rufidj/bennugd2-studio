@@ -243,9 +243,11 @@ Herramienta **Cuerda** (modo Escena): **clic donde empieza y clic donde acaba** 
 mueves el ratón ves por dónde iría. Cuelga con su propia física: tendederos, cables,
 lianas, puentes.
 
-- **Cuánto cuelga** (0 = tirante como un cable, 0.2 = un tendedero), grosor, tramos y su
-  textura. Ojo: una cuerda cae **mucho** más de lo que parece — con 40 de vano y 15% de
-  holgura, la panza baja 9 unidades. El editor lo calcula por ti.
+- **Cuánto cuelga**: de fábrica **0, o sea tirante**, que es como se tiende una cuerda.
+  Súbelo para un tendedero con panza. Ojo: con holgura cae **mucho** más de lo que parece
+  — con 40 de vano y 15%, la panza baja 9 unidades. El editor lo calcula por ti.
+- Tirante se queda **recta**, y **se comba donde le cuelgues algo** (una sábana la vence
+  un poco); si lo quitas, vuelve a tensarse.
 - Mientras la dibujas ves **la curva que va a quedar**, en verde si cabe y en **rojo si
   tocaría el suelo** (y entonces no te deja ponerla). Los extremos suben solos lo justo
   para que quepa.

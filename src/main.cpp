@@ -280,6 +280,7 @@ extern "C" {
     int   g3d_rope_point(int rope, int punto, float *x, float *y, float *z);
     int   g3d_rope_points(int rope);
     void  g3d_rope_update(int rope, float dt);
+    void  g3d_rope_load(int rope, int punto, float peso);
     void  g3d_rope_destroy(int rope);
     void  g3d_cloth_shutdown(void);
     void  g3d_editor_terrain_raise(void *mesh, float x, float z, float r, float amt);
@@ -664,7 +665,10 @@ int main(int, char**) {
         float bx = 4, by = 4, bz = 0;   // a donde
         int   segmentos = 20;
         float grosor = 0.06f;
-        float holgura = 0.15f;          // cuanto mas larga que la distancia: cuanto cuelga
+        /* 0 = TIRANTE, que es como se tiende una cuerda. Si le das holgura, cuelga;
+           y aunque este tirante, lo que se le cuelgue la hara ceder un poco, que es
+           lo que hace la fisica de verdad. */
+        float holgura = 0.0f;
         int   fijo_a = 1, fijo_b = 1;   // extremos clavados
         float viento = 0.4f;
         float vx = 1.0f, vy = 0.0f, vz = 0.2f;
@@ -5766,10 +5770,13 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                            "                               g3d_rope_x(id_%s, %d + k),\n"
                            "                               g3d_rope_y(id_%s, %d + k),\n"
                            "                               g3d_rope_z(id_%s, %d + k));\n"
+                           "            // y su peso: la cuerda se comba donde cuelga\n"
+                           "            g3d_rope_load(id_%s, %d + k, %.3f);\n"
                            "        END\n",
                         cuerdas[t.colgada].nombre.c_str(), t.nx,
                         cn.c_str(), t.colgada_desde, cn.c_str(), t.colgada_desde,
-                        cn.c_str(), t.colgada_desde);
+                        cn.c_str(), t.colgada_desde,
+                        cn.c_str(), t.colgada_desde, t.alto * 0.6f);
             }
             if (t.empuja)
                 fprintf(f, "        // el jugador la aparta al pasar, de los pies a la cabeza\n"
@@ -8775,8 +8782,11 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                             int pi = t.colgada_desde + i;
                             if (pi < 0 || pi >= np) continue;
                             float rx, ry, rz;
-                            if (g3d_rope_point(rid, pi, &rx, &ry, &rz))
+                            if (g3d_rope_point(rid, pi, &rx, &ry, &rz)) {
                                 g3d_cloth_pin_move(t.id, i, 0, rx, ry, rz);
+                                /* y la tela PESA: la cuerda se comba donde cuelga */
+                                g3d_rope_load(rid, pi, t.alto * 0.6f);
+                            }
                         }
                     }
                     g3d_cloth_update(t.id, dt);
@@ -9784,7 +9794,11 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                        altura calculada antes; si se realimenta, la cuerda se va
                        subiendo sola cada frame y el verde acaba mintiendo. */
                     float base = (cuerda_a_suelo > suelo ? cuerda_a_suelo : suelo);
-                    alto = base + 1.2f + caida;
+                    /* Tirante se queda a la altura de siempre (3, para pasar por
+                       debajo); con holgura sube lo que haga falta para que la panza
+                       no barra el suelo. */
+                    float minimo = 1.2f + caida;
+                    alto = base + (minimo > 3.0f ? minimo : 3.0f);
                     bool recortado = false;
                     if (alto > base + 24.0f) { alto = base + 24.0f; recortado = true; }
 
@@ -12580,7 +12594,9 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                             "Toca el suelo (%.1f): sube los extremos o baja la holgura.", suelo);
                 }
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("0 = tirante como un cable.\n0.2 = un tendedero.\n1 = una cadena floja.");
+                    ImGui::SetTooltip("0 = TIRANTE, como se tiende una cuerda (lo normal).\n"
+                                      "0.2 = un tendedero con panza.\n1 = una cadena floja.\n"
+                                      "Aun tirante cede un poco con lo que le cuelgues.");
                 if (ImGui::DragFloat("Grosor", &c.grosor, 0.005f, 0.01f, 1.0f, "%.3f")) rehacer = true;
                 if (ImGui::DragInt("Tramos", &c.segmentos, 0.3f, 2, 200)) rehacer = true;
                 ImGui::TextDisabled("Mas tramos = curva mas fina, cuesta un poco mas.");

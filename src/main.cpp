@@ -675,6 +675,9 @@ int main(int, char**) {
     int cuerda_sel = -1;
     int cuerda_paso = 0;                // 0 = esperando el primer clic, 1 = el segundo
     float cuerda_a[3] = { 0, 0, 0 };
+    bool  cuerda_ok = true;      // el sitio de ahora vale (verde) o no (rojo)
+    float cuerda_alto = 3.0f;    // a que altura acabaron los extremos
+    float cuerda_a_suelo = 0.0f; // el suelo bajo el primer extremo
     std::vector<float> river_draft;   // rio que se esta trazando (pares x,z)
     // ---- cascadas (elemento propio: borde arriba -> base abajo) ----
     struct Waterfall { float top[3]; float base[3]; float width; float arc; WaterfallFX fx; };
@@ -9761,31 +9764,90 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 }
             } else if (tool == T_ROPE && terrain &&
                        g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
-                /* Se dibuja con dos clics: donde empieza y donde acaba. Entre medias
-                   se ensenia por donde iria, que es lo que hace que "dibujar" una
-                   cuerda se sienta como dibujar. */
-                float alto = g3d_editor_terrain_height(terrain, hit[0], hit[2]) + 3.0f;
+                /* Dos clics: donde empieza y donde acaba. Entre medias se dibuja LA
+                   CURVA que va a quedar (no una linea recta), en verde si cabe y en
+                   rojo si tocaria el suelo -- que es lo que pasaba antes sin avisar:
+                   la cuerda se descolgaba hasta el terreno y desaparecia. */
+                float suelo = g3d_editor_terrain_height(terrain, hit[0], hit[2]);
+                float hol = (cuerda_sel >= 0 && cuerda_sel < (int)cuerdas.size())
+                            ? cuerdas[cuerda_sel].holgura : 0.15f;
+                float alto = suelo + 3.0f;
                 if (cuerda_paso == 1) {
+                    /* Cuanto cuelga: medido con el motor, caida = vano * raiz(3*holgura/8).
+                       Con 40 de vano y 15% de holgura son mas de 9 unidades: por eso
+                       hay que subir los extremos o no cabe. */
+                    float dx = hit[0] - cuerda_a[0], dz = hit[2] - cuerda_a[2];
+                    float vano = sqrtf(dx * dx + dz * dz);
+                    float caida = vano * sqrtf(3.0f * hol / 8.0f);
+                    /* Los extremos suben lo justo para que la panza no toque el suelo.
+                       OJO: la cuenta parte del SUELO de los dos extremos, no de la
+                       altura calculada antes; si se realimenta, la cuerda se va
+                       subiendo sola cada frame y el verde acaba mintiendo. */
+                    float base = (cuerda_a_suelo > suelo ? cuerda_a_suelo : suelo);
+                    alto = base + 1.2f + caida;
+                    bool recortado = false;
+                    if (alto > base + 24.0f) { alto = base + 24.0f; recortado = true; }
+
                     ImDrawList* dl = ImGui::GetWindowDrawList();
-                    float p0[2], p1[2];
-                    if (g3d_editor_world_to_screen(cuerda_a[0], cuerda_a[1], cuerda_a[2],
-                                                   (float)vp.w, (float)vp.h, p0) &&
-                        g3d_editor_world_to_screen(hit[0], alto, hit[2],
-                                                   (float)vp.w, (float)vp.h, p1))
-                        dl->AddLine(ImVec2(img_min.x + p0[0], img_min.y + p0[1]),
-                                    ImVec2(img_min.x + p1[0], img_min.y + p1[1]),
-                                    IM_COL32(242, 175, 66, 220), 2.5f);
+                    const int N = 24;
+                    bool cabe = true;
+                    ImVec2 pts[N + 1];
+                    int nvis = 0;
+                    for (int i2 = 0; i2 <= N; i2++) {
+                        float t = (float)i2 / N;
+                        float wx = cuerda_a[0] + (hit[0] - cuerda_a[0]) * t;
+                        float wz = cuerda_a[2] + (hit[2] - cuerda_a[2]) * t;
+                        float wy = alto - 4.0f * caida * t * (1.0f - t);   // la panza
+                        (void)recortado;
+                        float sue = g3d_editor_terrain_height(terrain, wx, wz);
+                        if (wy < sue + 0.4f) cabe = false;
+                        float pp[2];
+                        if (g3d_editor_world_to_screen(wx, wy, wz, (float)vp.w, (float)vp.h, pp))
+                            pts[nvis++] = ImVec2(img_min.x + pp[0], img_min.y + pp[1]);
+                    }
+                    ImU32 col = cabe ? IM_COL32(90, 220, 120, 235) : IM_COL32(235, 80, 70, 235);
+                    if (nvis > 1) dl->AddPolyline(pts, nvis, col, 0, 3.0f);
+                    /* los dos anclajes, para ver donde se ata */
+                    float pa[2], pb[2];
+                    if (g3d_editor_world_to_screen(cuerda_a[0], alto, cuerda_a[2],
+                                                   (float)vp.w, (float)vp.h, pa))
+                        dl->AddCircleFilled(ImVec2(img_min.x + pa[0], img_min.y + pa[1]), 6.0f, col);
+                    if (nvis > 1)
+                        dl->AddCircleFilled(pts[nvis - 1], 6.0f, col);
+                    char msg[220];
+                    if (cabe)
+                        snprintf(msg, sizeof(msg), "Cuerda: vano %.0f, cuelga %.1f; los extremos a %.1f de alto",
+                                 vano, caida, alto - base);
+                    else
+                        snprintf(msg, sizeof(msg), "Aqui no cabe: con %.0f de vano cuelga %.1f y toca el suelo"
+                                                   " (acorta, o baja 'cuanto cuelga')", vano, caida);
+                    status = msg;
+                    cuerda_ok = cabe;
+                    cuerda_alto = alto;
+                } else {
+                    /* el primer extremo: un punto verde donde se va a atar */
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    float pp[2];
+                    if (g3d_editor_world_to_screen(hit[0], alto, hit[2], (float)vp.w, (float)vp.h, pp))
+                        dl->AddCircleFilled(ImVec2(img_min.x + pp[0], img_min.y + pp[1]), 6.0f,
+                                            IM_COL32(90, 220, 120, 235));
+                    cuerda_ok = true;
                 }
                 if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     if (cuerda_paso == 0) {
                         cuerda_a[0] = hit[0]; cuerda_a[1] = alto; cuerda_a[2] = hit[2];
+                        cuerda_a_suelo = suelo;   // el suelo de este extremo, para la cuenta
                         cuerda_paso = 1;
                         status = "Cuerda: ahora el otro extremo";
+                    } else if (!cuerda_ok) {
+                        /* no se deja poner una cuerda que va a acabar por el suelo */
+                        status = "No se puede poner ahi: la cuerda tocaria el suelo";
                     } else {
                         Cuerda c;
                         c.nombre = "cuerda" + std::to_string((int)cuerdas.size() + 1);
-                        c.ax = cuerda_a[0]; c.ay = cuerda_a[1]; c.az = cuerda_a[2];
-                        c.bx = hit[0];      c.by = alto;        c.bz = hit[2];
+                        c.holgura = hol;
+                        c.ax = cuerda_a[0]; c.ay = cuerda_alto; c.az = cuerda_a[2];
+                        c.bx = hit[0];      c.by = cuerda_alto; c.bz = hit[2];
                         cuerdas.push_back(c);
                         cuerda_sel = (int)cuerdas.size() - 1;
                         cuerda_paso = 0;
@@ -12504,6 +12566,19 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 if (ImGui::DragFloat3("Empieza en", &c.ax, 0.1f)) rehacer = true;
                 if (ImGui::DragFloat3("Acaba en",   &c.bx, 0.1f)) rehacer = true;
                 if (ImGui::DragFloat("Cuanto cuelga", &c.holgura, 0.01f, 0.0f, 2.0f, "%.2f")) rehacer = true;
+                {   /* Cuanto va a colgar de verdad y si eso la mete bajo tierra. La
+                       cuenta esta medida con el motor: caida = vano * raiz(3*h/8). */
+                    float dx = c.bx - c.ax, dz = c.bz - c.az;
+                    float vano = sqrtf(dx * dx + dz * dz);
+                    float caida = vano * sqrtf(3.0f * c.holgura / 8.0f);
+                    float ymin = (c.ay < c.by ? c.ay : c.by) - caida;
+                    float suelo = terrain ? g3d_editor_terrain_height(terrain,
+                                       (c.ax + c.bx) * 0.5f, (c.az + c.bz) * 0.5f) : 0.0f;
+                    ImGui::TextDisabled("Vano %.1f -> cuelga %.1f (la panza queda a %.1f)", vano, caida, ymin);
+                    if (ymin < suelo + 0.3f)
+                        ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1),
+                            "Toca el suelo (%.1f): sube los extremos o baja la holgura.", suelo);
+                }
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("0 = tirante como un cable.\n0.2 = un tendedero.\n1 = una cadena floja.");
                 if (ImGui::DragFloat("Grosor", &c.grosor, 0.005f, 0.01f, 1.0f, "%.3f")) rehacer = true;

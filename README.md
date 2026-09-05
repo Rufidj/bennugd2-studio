@@ -244,7 +244,11 @@ mueves el ratón ves por dónde iría. Cuelga con su propia física: tendederos,
 lianas, puentes.
 
 - **Cuánto cuelga** (0 = tirante como un cable, 0.2 = un tendedero), grosor, tramos y su
-  textura.
+  textura. Ojo: una cuerda cae **mucho** más de lo que parece — con 40 de vano y 15% de
+  holgura, la panza baja 9 unidades. El editor lo calcula por ti.
+- Mientras la dibujas ves **la curva que va a quedar**, en verde si cabe y en **rojo si
+  tocaría el suelo** (y entonces no te deja ponerla). Los extremos suben solos lo justo
+  para que quepa.
 - **Cada extremo se puede soltar**: entonces cae y se balancea.
 - La aparta lo que pase, igual que las telas.
 - **Se le cuelgan telas**: en la ficha de la tela eliges de qué cuerda cuelga y desde qué

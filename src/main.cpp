@@ -682,6 +682,10 @@ int main(int, char**) {
     bool  cuerda_ok = true;      // el sitio de ahora vale (verde) o no (rojo)
     float cuerda_alto = 3.0f;    // a que altura acabaron los extremos
     float cuerda_a_suelo = 0.0f; // el suelo bajo el primer extremo
+    /* Con cuanta holgura nacera la proxima cuerda. 0 = tirante, que es lo normal;
+       la guia que se dibuja usa este mismo valor, para que lo que ves sea lo que
+       vas a tender. */
+    float cuerda_holgura_nueva = 0.0f;
     std::vector<float> river_draft;   // rio que se esta trazando (pares x,z)
     // ---- cascadas (elemento propio: borde arriba -> base abajo) ----
     struct Waterfall { float top[3]; float base[3]; float width; float arc; WaterfallFX fx; };
@@ -9779,8 +9783,11 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                    rojo si tocaria el suelo -- que es lo que pasaba antes sin avisar:
                    la cuerda se descolgaba hasta el terreno y desaparecia. */
                 float suelo = g3d_editor_terrain_height(terrain, hit[0], hit[2]);
-                float hol = (cuerda_sel >= 0 && cuerda_sel < (int)cuerdas.size())
-                            ? cuerdas[cuerda_sel].holgura : 0.15f;
+                /* La holgura de la cuerda que se va a tender AHORA. Antes se cogia
+                   la de la cuerda seleccionada, y si no habia ninguna, un 0.15 que
+                   se me quedo del valor viejo: la guia salia con panza aunque las
+                   cuerdas nuevas nacen tirantes. */
+                float hol = cuerda_holgura_nueva;
                 float alto = suelo + 3.0f;
                 if (cuerda_paso == 1) {
                     /* Cuanto cuelga: medido con el motor, caida = vano * raiz(3*holgura/8).
@@ -9859,7 +9866,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                     } else {
                         Cuerda c;
                         c.nombre = "cuerda" + std::to_string((int)cuerdas.size() + 1);
-                        c.holgura = hol;
+                        c.holgura = cuerda_holgura_nueva;
                         c.ax = cuerda_a[0]; c.ay = cuerda_alto; c.az = cuerda_a[2];
                         c.bx = hit[0];      c.by = cuerda_alto; c.bz = hit[2];
                         cuerdas.push_back(c);
@@ -12563,6 +12570,11 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                                "colgar telas (en la ficha de la tela).");
             if (cuerda_paso == 1) ImGui::TextColored(ImVec4(0.95f, 0.69f, 0.26f, 1),
                                                      "Marca ahora el otro extremo.");
+            ImGui::SetNextItemWidth(160);
+            ImGui::DragFloat("Cuanto colgara la nueva", &cuerda_holgura_nueva, 0.01f, 0.0f, 2.0f, "%.2f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("0 = tirante (lo normal). La guia que ves al dibujarla\n"
+                                  "usa este mismo valor, asi que lo que dibujas es lo que sale.");
             ImGui::Separator();
             for (int i = 0; i < (int)cuerdas.size(); i++) {
                 ImGui::PushID(i);

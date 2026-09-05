@@ -664,7 +664,7 @@ int main(int, char**) {
         float ax = 0, ay = 4, az = 0;   // de donde
         float bx = 4, by = 4, bz = 0;   // a donde
         int   segmentos = 20;
-        float grosor = 0.06f;
+        float grosor = 0.10f;   // 6 cm es realista pero en pantalla es un pelo
         /* 0 = TIRANTE, que es como se tiende una cuerda. Si le das holgura, cuelga;
            y aunque este tirante, lo que se le cuelgue la hara ceder un poco, que es
            lo que hace la fisica de verdad. */
@@ -9885,9 +9885,38 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                     t.nombre = "tela" + std::to_string((int)telas.size() + 1);
                     t.x = hit[0];  t.z = hit[2];
                     t.y = g3d_editor_terrain_height(terrain, hit[0], hit[2]) + t.alto + 1.5f;
+                    /* Si hay una cuerda justo encima, la tela se cuelga de ella sola:
+                       es lo que uno espera al poner una sabana bajo un tendedero, y
+                       si no, la tela se queda colgando del aire. */
+                    int mejor_c = -1, mejor_p = 0; float mejor_d = 3.0f;
+                    for (int ci = 0; ci < (int)cuerdas.size(); ci++) {
+                        if (cuerdas[ci].id < 0) continue;
+                        int np = g3d_rope_points(cuerdas[ci].id);
+                        for (int pi = 0; pi < np; pi++) {
+                            float rx, ry, rz;
+                            if (!g3d_rope_point(cuerdas[ci].id, pi, &rx, &ry, &rz)) continue;
+                            float dx = rx - hit[0], dz = rz - hit[2];
+                            float d = sqrtf(dx * dx + dz * dz);
+                            if (d < mejor_d) { mejor_d = d; mejor_c = ci; mejor_p = pi; }
+                        }
+                    }
+                    if (mejor_c >= 0) {
+                        int np = g3d_rope_points(cuerdas[mejor_c].id);
+                        int desde = mejor_p - t.nx / 2;
+                        if (desde < 0) desde = 0;
+                        if (desde + t.nx > np) desde = np - t.nx;
+                        if (desde < 0) desde = 0;
+                        t.colgada = mejor_c; t.colgada_desde = desde;
+                        float rx, ry, rz;
+                        if (g3d_rope_point(cuerdas[mejor_c].id, desde, &rx, &ry, &rz)) {
+                            t.x = rx; t.y = ry; t.z = rz;
+                        }
+                        status = "Tela '" + t.nombre + "' colgada de '" + cuerdas[mejor_c].nombre + "'";
+                    } else {
+                        status = "Tela '" + t.nombre + "' colocada (no cuelga de ninguna cuerda)";
+                    }
                     telas.push_back(t);
                     tela_sel = (int)telas.size() - 1;
-                    status = "Tela '" + t.nombre + "' colocada";
                 }
             } else if (tool == T_LAKE && terrain &&
                        g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
@@ -12536,6 +12565,9 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                             if (ImGui::Selectable(cuerdas[i].nombre.c_str(), t.colgada == i)) t.colgada = i;
                         ImGui::EndCombo();
                     }
+                    if (t.colgada < 0)
+                        ImGui::TextDisabled("Cuelga del aire por su borde: para una bandera en un muro\n"
+                                            "vale, pero para una sabana pon antes una cuerda.");
                     if (t.colgada >= 0) {
                         ImGui::DragInt("Desde que punto", &t.colgada_desde, 0.2f, 0, 200);
                         ImGui::TextDisabled("Su borde de arriba se ata a los puntos de la cuerda");

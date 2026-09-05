@@ -253,8 +253,8 @@ lianas, puentes.
   para que quepa.
 - **Cada extremo se puede soltar**: entonces cae y se balancea.
 - La aparta lo que pase, igual que las telas.
-- **Se le cuelgan telas**: en la ficha de la tela eliges de qué cuerda cuelga y desde qué
-  punto. Su borde de arriba sigue la cuerda, así que si la cuerda se mueve, la tela va con
+- **Se le cuelgan telas**: si pones una tela justo debajo de una cuerda, **se cuelga de
+  ella sola**; y en la ficha de la tela puedes elegir de qué cuerda y desde qué punto. Su borde de arriba sigue la cuerda, así que si la cuerda se mueve, la tela va con
   ella.
 
 Se dibuja como un tubo, no como una línea, para que se vea desde cualquier ángulo y le

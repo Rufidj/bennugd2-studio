@@ -270,6 +270,17 @@ extern "C" {
     int   g3d_cloth_push(float x, float y, float z, float radius);
     int   g3d_cloth_push_capsule(float ax, float ay, float az,
                                  float bx, float by, float bz, float radius);
+    void  g3d_cloth_pin_move(int cloth, int i, int j, float x, float y, float z);
+    /* ---- cuerdas ---- */
+    int   g3d_rope_create(float ax, float ay, float az, float bx, float by, float bz,
+                          int segmentos, float grosor, float holgura);
+    void  g3d_rope_pin(int rope, int extremo, int fijo);
+    void  g3d_rope_set_wind(int rope, float x, float y, float z, float strength);
+    void  g3d_rope_set_texture(int rope, unsigned int gl_handle);
+    int   g3d_rope_point(int rope, int punto, float *x, float *y, float *z);
+    int   g3d_rope_points(int rope);
+    void  g3d_rope_update(int rope, float dt);
+    void  g3d_rope_destroy(int rope);
     void  g3d_cloth_shutdown(void);
     void  g3d_editor_terrain_raise(void *mesh, float x, float z, float r, float amt);
     void  g3d_editor_terrain_smooth(void *mesh, float x, float z, float r, float amt);
@@ -635,9 +646,35 @@ int main(int, char**) {
         int   empuja = 1;               // el jugador la aparta al pasar
         float radio = 0.9f;             // de que grosor es ese empujon
         int   id = -1;                  // la tela viva en el editor (para verla ondear)
+        /* Colgada de una cuerda: su borde de arriba sigue los puntos de esa cuerda,
+           desde 'colgada_desde'. -1 = no cuelga de ninguna. */
+        int   colgada = -1;
+        int   colgada_desde = 0;
     };
     std::vector<Tela> telas;
     int tela_sel = -1;
+
+    /* ================== CUERDAS ==================
+       Se dibujan de un punto a otro y cuelgan con su propia fisica: tendederos,
+       cables, lianas, puentes. Y sirven para colgar telas: la tela sigue los
+       puntos de la cuerda, asi que si la cuerda se mueve, la tela va con ella. */
+    struct Cuerda {
+        std::string nombre = "cuerda";
+        float ax = 0, ay = 4, az = 0;   // de donde
+        float bx = 4, by = 4, bz = 0;   // a donde
+        int   segmentos = 20;
+        float grosor = 0.06f;
+        float holgura = 0.15f;          // cuanto mas larga que la distancia: cuanto cuelga
+        int   fijo_a = 1, fijo_b = 1;   // extremos clavados
+        float viento = 0.4f;
+        float vx = 1.0f, vy = 0.0f, vz = 0.2f;
+        std::string textura;
+        int   id = -1;                  // la cuerda viva en el editor
+    };
+    std::vector<Cuerda> cuerdas;
+    int cuerda_sel = -1;
+    int cuerda_paso = 0;                // 0 = esperando el primer clic, 1 = el segundo
+    float cuerda_a[3] = { 0, 0, 0 };
     std::vector<float> river_draft;   // rio que se esta trazando (pares x,z)
     // ---- cascadas (elemento propio: borde arriba -> base abajo) ----
     struct Waterfall { float top[3]; float base[3]; float width; float arc; WaterfallFX fx; };
@@ -1339,7 +1376,7 @@ int main(int, char**) {
     // ---- herramienta activa (toolbar con iconos) ----
     enum Tool { T_SELECT, T_MOVE, T_ROTATE, T_SCALE, T_PLACE, T_RAISE, T_LOWER, T_SMOOTH, T_FLATTEN, T_PAINT,
                 T_HOLE, T_ZONE, T_LAKE, T_RIVER, T_WATERFALL, T_WATERSOURCE, T_VERTEX,
-                T_SCATTER, T_HUD, T_SPRITE, T_CLOTH };
+                T_SCATTER, T_HUD, T_SPRITE, T_CLOTH, T_ROPE };
     bool hole_fill = false;   // T_HOLE: false=perforar, true=rellenar
     int tool = T_SELECT;
     int  zone_layer = 0;      // T_ZONE: capa (0..3) que se pinta
@@ -3987,10 +4024,16 @@ int main(int, char**) {
         FILE* f = fopen(path.c_str(), "w");
         if (!f) { status = "ERROR guardando escena"; return; }
         fputs("# escena del editor BennuGD2\n", f);
+        for (auto& c : cuerdas)
+            fprintf(f, "CUERDA %.4f %.4f %.4f %.4f %.4f %.4f %d %.4f %.4f %d %d %.3f %.3f %.3f %.3f|%s|%s\n",
+                    c.ax, c.ay, c.az, c.bx, c.by, c.bz, c.segmentos, c.grosor, c.holgura,
+                    c.fijo_a, c.fijo_b, c.viento, c.vx, c.vy, c.vz,
+                    c.nombre.c_str(), c.textura.c_str());
         for (auto& t : telas)
-            fprintf(f, "TELA %.4f %.4f %.4f %.3f %.3f %d %d %d %.3f %.3f %.3f %.3f %d %.3f|%s|%s\n",
+            fprintf(f, "TELA %.4f %.4f %.4f %.3f %.3f %d %d %d %.3f %.3f %.3f %.3f %d %.3f %d %d|%s|%s\n",
                     t.x, t.y, t.z, t.ancho, t.alto, t.nx, t.ny, t.sujecion,
                     t.viento, t.vx, t.vy, t.vz, t.empuja, t.radio,
+                    t.colgada, t.colgada_desde,
                     t.nombre.c_str(), t.textura.c_str());
         // (las variables del juego van en el .bgd2 del proyecto, no aqui)
         // ---- sonido de la escena ----
@@ -4174,6 +4217,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         sprites.clear(); spr_sel = -1; spr_follow = -1;
         esc_musica.clear(); zsonidos.clear();
         telas.clear(); tela_sel = -1;   // las telas vivas se recrean al cargar
+        cuerdas.clear(); cuerda_sel = -1; cuerda_paso = 0;
         lakes.clear(); rivers.clear(); river_draft.clear(); waterfalls.clear();
         wsources.clear();   // los de la escena anterior no son de esta
         // terreno primero: las cuevas/objetos se apoyan en su altura
@@ -4599,12 +4643,38 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 continue;
             }
             // Las variables del juego (puntos, vida...): van con la escena.
+            if (!strncmp(line, "CUERDA ", 7)) {
+                Cuerda c;
+                char resto[512] = {0};
+                if (sscanf(line, "CUERDA %f %f %f %f %f %f %d %f %f %d %d %f %f %f %f|%511[^\n]",
+                           &c.ax, &c.ay, &c.az, &c.bx, &c.by, &c.bz, &c.segmentos,
+                           &c.grosor, &c.holgura, &c.fijo_a, &c.fijo_b,
+                           &c.viento, &c.vx, &c.vy, &c.vz, resto) >= 15) {
+                    std::string r(resto);
+                    auto bar = r.find('|');
+                    if (bar == std::string::npos) c.nombre = r;
+                    else { c.nombre = r.substr(0, bar); c.textura = r.substr(bar + 1); }
+                    while (!c.nombre.empty() && (c.nombre.back()=='\n' || c.nombre.back()=='\r')) c.nombre.pop_back();
+                    while (!c.textura.empty() && (c.textura.back()=='\n' || c.textura.back()=='\r')) c.textura.pop_back();
+                    if (c.nombre.empty()) c.nombre = "cuerda" + std::to_string((int)cuerdas.size() + 1);
+                    cuerdas.push_back(c);
+                }
+                continue;
+            }
             if (!strncmp(line, "TELA ", 5)) {
                 Tela t;
                 char resto[512] = {0};
-                if (sscanf(line, "TELA %f %f %f %f %f %d %d %d %f %f %f %f %d %f|%511[^\n]",
+                int leidos = sscanf(line, "TELA %f %f %f %f %f %d %d %d %f %f %f %f %d %f %d %d|%511[^\n]",
                            &t.x, &t.y, &t.z, &t.ancho, &t.alto, &t.nx, &t.ny, &t.sujecion,
-                           &t.viento, &t.vx, &t.vy, &t.vz, &t.empuja, &t.radio, resto) >= 14) {
+                           &t.viento, &t.vx, &t.vy, &t.vz, &t.empuja, &t.radio,
+                           &t.colgada, &t.colgada_desde, resto);
+                if (leidos < 15) {   // escenas de antes de las cuerdas
+                    t.colgada = -1; t.colgada_desde = 0;
+                    leidos = sscanf(line, "TELA %f %f %f %f %f %d %d %d %f %f %f %f %d %f|%511[^\n]",
+                           &t.x, &t.y, &t.z, &t.ancho, &t.alto, &t.nx, &t.ny, &t.sujecion,
+                           &t.viento, &t.vx, &t.vy, &t.vz, &t.empuja, &t.radio, resto);
+                }
+                if (leidos >= 14) {
                     std::string r(resto);
                     auto bar = r.find('|');
                     if (bar == std::string::npos) t.nombre = r;
@@ -5624,6 +5694,38 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                   ws_evap, ws_flow, surf_dir);
         }
 
+        /* ---- cada CUERDA, como proceso BennuGD2 ----
+           Igual que la tela: el proceso ES la cuerda y sus locales mandan. Se
+           generan ANTES que las telas porque una tela puede colgar de una. */
+        for (auto& c : cuerdas) {
+            std::string pn = ident_bgd(c.nombre, "cuerda");
+            fprintf(f, "// CUERDA '%s'\n"
+                       "PROCESS %s_%s()\n"
+                       "BEGIN\n"
+                       "    ctype = C_3D; csubtype = C3D_ROPE;\n"
+                       "    entity = g3d_rope_create(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %d, %.4f, %.4f);\n"
+                       "    IF (entity < 0) RETURN; END\n"
+                       "    %s = entity;   // para que puedan colgarse cosas de ella\n"
+                       "    g3d_rope_pin(entity, 0, %d);\n"
+                       "    g3d_rope_pin(entity, 1, %d);\n",
+                    c.nombre.c_str(), pref.c_str(), pn.c_str(),
+                    c.ax, c.ay, c.az, c.bx, c.by, c.bz, c.segmentos, c.grosor, c.holgura,
+                    ("id_" + pn).c_str(), c.fijo_a, c.fijo_b);
+            if (!c.textura.empty())
+                fprintf(f, "    g3d_rope_set_texture(entity, g3d_load_texture(\"Assets/%s\"));\n",
+                        ruta_asset(c.textura).c_str());
+            fprintf(f, "    // el viento, con las locales de siempre\n"
+                       "    target_x = %.3f; target_y = %.3f; target_z = %.3f;\n"
+                       "    wind = %.3f;\n"
+                       "    LOOP\n"
+                       "        FRAME;\n"
+                       "    END\n"
+                       "END\n\n",
+                    c.vx, c.vy, c.vz, c.viento);
+            add_global("    int id_" + pn + ";   // la cuerda '" + c.nombre + "'\n");
+            lanzados.push_back(pref + "_" + pn);
+        }
+
         /* ---- cada TELA, como proceso BennuGD2 ----
            Igual que la vegetacion o el agua: el proceso ES la tela y sus locales
            mandan. 'wind' es la fuerza del viento y target_x/y/z hacia donde sopla,
@@ -5633,6 +5735,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             std::string pn = ident_bgd(t.nombre, "tela");
             fprintf(f, "// TELA '%s'\n"
                        "PROCESS %s_%s()\n"
+                       "PRIVATE int k;\nEND\n"
                        "BEGIN\n"
                        "    ctype = C_3D; csubtype = C3D_CLOTH;\n"
                        "    x = %.3f;  y = %.3f;  z = %.3f;   // de donde cuelga\n"
@@ -5651,6 +5754,20 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                        "    target_x = %.3f; target_y = %.3f; target_z = %.3f;\n"
                        "    wind = %.3f;\n"
                        "    LOOP\n", t.vx, t.vy, t.vz, t.viento);
+            if (t.colgada >= 0 && t.colgada < (int)cuerdas.size()) {
+                std::string cn = ident_bgd(cuerdas[t.colgada].nombre, "cuerda");
+                fprintf(f, "        // COLGADA DE LA CUERDA '%s': su borde de arriba sigue\n"
+                           "        // los puntos de la cuerda, asi que se mueve con ella\n"
+                           "        FOR (k = 0; k < %d; k = k + 1)\n"
+                           "            g3d_cloth_pin_move(entity, k, 0,\n"
+                           "                               g3d_rope_x(id_%s, %d + k),\n"
+                           "                               g3d_rope_y(id_%s, %d + k),\n"
+                           "                               g3d_rope_z(id_%s, %d + k));\n"
+                           "        END\n",
+                        cuerdas[t.colgada].nombre.c_str(), t.nx,
+                        cn.c_str(), t.colgada_desde, cn.c_str(), t.colgada_desde,
+                        cn.c_str(), t.colgada_desde);
+            }
             if (t.empuja)
                 fprintf(f, "        // el jugador la aparta al pasar, de los pies a la cabeza\n"
                            "        g3d_cloth_push_capsule(jug_x, jug_y, jug_z,\n"
@@ -6707,6 +6824,11 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 { fprintf(f, "    %s_veg_%s();\n", pref.c_str(), pn.c_str());
                   lanzados.push_back(pref + "_veg_" + pn); }
             }
+        // las cuerdas primero: las telas pueden colgar de ellas
+        for (auto& c : cuerdas) {
+            std::string pn = ident_bgd(c.nombre, "cuerda");
+            fprintf(f, "    %s_%s();\n", pref.c_str(), pn.c_str());
+        }
         // las telas de esta escena
         for (auto& t : telas) {
             std::string pn = ident_bgd(t.nombre, "tela");
@@ -8493,6 +8615,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             ImGui::DockBuilderDockWindow("Inspector", right);
             ImGui::DockBuilderDockWindow(ICON_FA_FONT "  HUD 2D", right);
             ImGui::DockBuilderDockWindow(ICON_FA_FLAG "  Telas", right);
+            ImGui::DockBuilderDockWindow(ICON_FA_LINK "  Cuerdas", right);
             ImGui::DockBuilderDockWindow(ICON_FA_PERSON_RUNNING "  Sprites 3D", bottom);
             ImGui::DockBuilderDockWindow("Editor de codigo", center);
             ImGui::DockBuilderFinish(ds);
@@ -8539,6 +8662,8 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 btn(ICON_FA_DRAW_POLYGON,       T_ZONE,   "Zonas",       "Pintar zonas: barreras, ambientes y disparadores");
                 if (btn(ICON_FA_FLAG,           T_CLOTH,  "Tela",        "Bandera, cortina o toldo: se mueve con el viento y el jugador la aparta"))
                     enfocar_panel = ICON_FA_FLAG "  Telas";
+                if (btn(ICON_FA_LINK,           T_ROPE,   "Cuerda",      "Tendedero, cable, liana: clic donde empieza y clic donde acaba"))
+                    enfocar_panel = ICON_FA_LINK "  Cuerdas";
             } else if (modo == M_TERRENO) {
                 grupo("ESCULPIR");
                 btn(ICON_FA_MOUNTAIN,            T_RAISE,   "Subir",     "Levantar montanas");
@@ -8603,6 +8728,27 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             float dt = (ahora - tela_t0) / 1000.0f;
             tela_t0 = ahora;
             if (dt > 0.05f) dt = 0.05f;
+            /* Las cuerdas se avanzan ANTES: si la tela cuelga de una, tiene que
+               seguir donde esta la cuerda AHORA, no donde estaba el frame pasado
+               (si no, la tela va siempre un frame por detras y tiembla). */
+            for (auto& c : cuerdas) {
+                if (c.id < 0) {
+                    c.id = g3d_rope_create(c.ax, c.ay, c.az, c.bx, c.by, c.bz,
+                                           c.segmentos, c.grosor, c.holgura);
+                    if (c.id >= 0) {
+                        g3d_rope_pin(c.id, 0, c.fijo_a);
+                        g3d_rope_pin(c.id, 1, c.fijo_b);
+                        if (!c.textura.empty()) {
+                            H2Img* im = hud_img(c.textura);
+                            if (im && im->tex) g3d_rope_set_texture(c.id, im->tex);
+                        }
+                    }
+                }
+                if (c.id >= 0) {
+                    g3d_rope_set_wind(c.id, c.vx, c.vy, c.vz, c.viento);
+                    g3d_rope_update(c.id, dt);
+                }
+            }
             for (auto& t : telas) {
                 if (t.id < 0) {
                     t.id = g3d_cloth_create(t.ancho, t.alto, t.nx, t.ny, t.x, t.y, t.z);
@@ -8616,6 +8762,20 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 }
                 if (t.id >= 0) {
                     g3d_cloth_set_wind(t.id, t.vx, t.vy, t.vz, t.viento);
+                    /* colgada de una cuerda: su borde de arriba sigue los puntos de
+                       esa cuerda, asi que si la cuerda se mueve, la tela va detras */
+                    if (t.colgada >= 0 && t.colgada < (int)cuerdas.size() &&
+                        cuerdas[t.colgada].id >= 0) {
+                        int rid = cuerdas[t.colgada].id;
+                        int np = g3d_rope_points(rid);
+                        for (int i = 0; i < t.nx; i++) {
+                            int pi = t.colgada_desde + i;
+                            if (pi < 0 || pi >= np) continue;
+                            float rx, ry, rz;
+                            if (g3d_rope_point(rid, pi, &rx, &ry, &rz))
+                                g3d_cloth_pin_move(t.id, i, 0, rx, ry, rz);
+                        }
+                    }
                     g3d_cloth_update(t.id, dt);
                 }
             }
@@ -9598,6 +9758,39 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     river_draft.push_back(hit[0]);
                     river_draft.push_back(hit[2]);
+                }
+            } else if (tool == T_ROPE && terrain &&
+                       g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
+                /* Se dibuja con dos clics: donde empieza y donde acaba. Entre medias
+                   se ensenia por donde iria, que es lo que hace que "dibujar" una
+                   cuerda se sienta como dibujar. */
+                float alto = g3d_editor_terrain_height(terrain, hit[0], hit[2]) + 3.0f;
+                if (cuerda_paso == 1) {
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    float p0[2], p1[2];
+                    if (g3d_editor_world_to_screen(cuerda_a[0], cuerda_a[1], cuerda_a[2],
+                                                   (float)vp.w, (float)vp.h, p0) &&
+                        g3d_editor_world_to_screen(hit[0], alto, hit[2],
+                                                   (float)vp.w, (float)vp.h, p1))
+                        dl->AddLine(ImVec2(img_min.x + p0[0], img_min.y + p0[1]),
+                                    ImVec2(img_min.x + p1[0], img_min.y + p1[1]),
+                                    IM_COL32(242, 175, 66, 220), 2.5f);
+                }
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    if (cuerda_paso == 0) {
+                        cuerda_a[0] = hit[0]; cuerda_a[1] = alto; cuerda_a[2] = hit[2];
+                        cuerda_paso = 1;
+                        status = "Cuerda: ahora el otro extremo";
+                    } else {
+                        Cuerda c;
+                        c.nombre = "cuerda" + std::to_string((int)cuerdas.size() + 1);
+                        c.ax = cuerda_a[0]; c.ay = cuerda_a[1]; c.az = cuerda_a[2];
+                        c.bx = hit[0];      c.by = alto;        c.bz = hit[2];
+                        cuerdas.push_back(c);
+                        cuerda_sel = (int)cuerdas.size() - 1;
+                        cuerda_paso = 0;
+                        status = "Cuerda '" + c.nombre + "' tendida";
+                    }
                 }
             } else if (tool == T_CLOTH && terrain &&
                        g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
@@ -12250,6 +12443,22 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 ImGui::DragFloat("Fuerza", &t.viento, 0.02f, 0.0f, 12.0f, "%.2f");
                 ImGui::DragFloat3("Hacia donde", &t.vx, 0.02f, -1.0f, 1.0f, "%.2f");
                 ImGui::TextDisabled("Se ve ondear aqui mismo mientras la ajustas.");
+                ImGui::SeparatorText("Colgarla de una cuerda");
+                {   std::string cur = (t.colgada >= 0 && t.colgada < (int)cuerdas.size())
+                                      ? cuerdas[t.colgada].nombre : std::string("(de nada, cuelga sola)");
+                    ImGui::SetNextItemWidth(240);
+                    if (ImGui::BeginCombo("Colgada de", cur.c_str())) {
+                        if (ImGui::Selectable("(de nada, cuelga sola)", t.colgada < 0)) t.colgada = -1;
+                        for (int i = 0; i < (int)cuerdas.size(); i++)
+                            if (ImGui::Selectable(cuerdas[i].nombre.c_str(), t.colgada == i)) t.colgada = i;
+                        ImGui::EndCombo();
+                    }
+                    if (t.colgada >= 0) {
+                        ImGui::DragInt("Desde que punto", &t.colgada_desde, 0.2f, 0, 200);
+                        ImGui::TextDisabled("Su borde de arriba se ata a los puntos de la cuerda");
+                        ImGui::TextDisabled("a partir de ese, uno por trozo de la tela.");
+                    }
+                }
                 ImGui::SeparatorText("El jugador");
                 { bool e = t.empuja != 0;
                   if (ImGui::Checkbox("La aparta al pasar", &e)) t.empuja = e ? 1 : 0; }
@@ -12263,6 +12472,71 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                        se queda con su rejilla. Se marca para recrearla en el frame
                        siguiente, que es cuando se ve el cambio. */
                     t.id = -1;
+                }
+            }
+            ImGui::PopTextWrapPos();
+            ImGui::End();
+        }
+
+        /* ---- LA FICHA DE UNA CUERDA ---- */
+        if (tool == T_ROPE) {
+            ImGui::Begin(ICON_FA_LINK "  Cuerdas");
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextWrapped("Tendederos, cables, lianas, puentes. Clic donde empieza y clic "
+                               "donde acaba. Cuelgan con su propia fisica y se pueden usar para "
+                               "colgar telas (en la ficha de la tela).");
+            if (cuerda_paso == 1) ImGui::TextColored(ImVec4(0.95f, 0.69f, 0.26f, 1),
+                                                     "Marca ahora el otro extremo.");
+            ImGui::Separator();
+            for (int i = 0; i < (int)cuerdas.size(); i++) {
+                ImGui::PushID(i);
+                if (ImGui::Selectable(cuerdas[i].nombre.c_str(), cuerda_sel == i)) cuerda_sel = i;
+                ImGui::PopID();
+            }
+            if (cuerdas.empty()) ImGui::TextDisabled("(ninguna: haz dos clics en la escena)");
+            if (cuerda_sel >= 0 && cuerda_sel < (int)cuerdas.size()) {
+                Cuerda& c = cuerdas[cuerda_sel];
+                bool rehacer = false;
+                ImGui::SeparatorText("La cuerda");
+                { char nb[80]; snprintf(nb, sizeof(nb), "%s", c.nombre.c_str());
+                  ImGui::SetNextItemWidth(180);
+                  if (ImGui::InputText("Nombre (PROCESS)", nb, sizeof(nb))) c.nombre = ident_bgd(nb, "cuerda"); }
+                if (ImGui::DragFloat3("Empieza en", &c.ax, 0.1f)) rehacer = true;
+                if (ImGui::DragFloat3("Acaba en",   &c.bx, 0.1f)) rehacer = true;
+                if (ImGui::DragFloat("Cuanto cuelga", &c.holgura, 0.01f, 0.0f, 2.0f, "%.2f")) rehacer = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("0 = tirante como un cable.\n0.2 = un tendedero.\n1 = una cadena floja.");
+                if (ImGui::DragFloat("Grosor", &c.grosor, 0.005f, 0.01f, 1.0f, "%.3f")) rehacer = true;
+                if (ImGui::DragInt("Tramos", &c.segmentos, 0.3f, 2, 200)) rehacer = true;
+                ImGui::TextDisabled("Mas tramos = curva mas fina, cuesta un poco mas.");
+                { bool a = c.fijo_a != 0, b = c.fijo_b != 0;
+                  if (ImGui::Checkbox("Extremo de salida fijo", &a)) { c.fijo_a = a; rehacer = true; }
+                  if (ImGui::Checkbox("Extremo de llegada fijo", &b)) { c.fijo_b = b; rehacer = true; }
+                  ImGui::TextDisabled("Suelta uno y la cuerda cae y se balancea."); }
+                {   const char* cur = c.textura.empty() ? "(sin textura)" : c.textura.c_str();
+                    ImGui::SetNextItemWidth(240);
+                    if (ImGui::BeginCombo("Textura", cur)) {
+                        if (ImGui::Selectable("(sin textura)", c.textura.empty())) { c.textura.clear(); rehacer = true; }
+                        for (auto& g : hud_gfx_files)
+                            if (ImGui::Selectable(g.c_str(), g == c.textura)) { c.textura = g; rehacer = true; }
+                        ImGui::EndCombo();
+                    }
+                }
+                ImGui::SeparatorText("El viento");
+                ImGui::DragFloat("Fuerza", &c.viento, 0.02f, 0.0f, 8.0f, "%.2f");
+                ImGui::DragFloat3("Hacia donde", &c.vx, 0.02f, -1.0f, 1.0f, "%.2f");
+                ImGui::Spacing();
+                if (ImGui::Button("Quitar esta cuerda", ImVec2(-1, 0))) {
+                    if (cuerdas[cuerda_sel].id >= 0) g3d_rope_destroy(cuerdas[cuerda_sel].id);
+                    for (auto& t : telas) {
+                        if (t.colgada == cuerda_sel) t.colgada = -1;
+                        else if (t.colgada > cuerda_sel) t.colgada--;
+                    }
+                    cuerdas.erase(cuerdas.begin() + cuerda_sel);
+                    cuerda_sel = cuerdas.empty() ? -1 : 0;
+                } else if (rehacer) {
+                    if (c.id >= 0) g3d_rope_destroy(c.id);
+                    c.id = -1;   // se rehace en el frame siguiente, ya con lo nuevo
                 }
             }
             ImGui::PopTextWrapPos();

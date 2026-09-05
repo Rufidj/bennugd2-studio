@@ -237,6 +237,24 @@ END
 Cambia `wind` desde tu código y tienes una racha o una tormenta, sin llamar a nada.
 
 
+## Cuerdas
+
+Herramienta **Cuerda** (modo Escena): **clic donde empieza y clic donde acaba** — mientras
+mueves el ratón ves por dónde iría. Cuelga con su propia física: tendederos, cables,
+lianas, puentes.
+
+- **Cuánto cuelga** (0 = tirante como un cable, 0.2 = un tendedero), grosor, tramos y su
+  textura.
+- **Cada extremo se puede soltar**: entonces cae y se balancea.
+- La aparta lo que pase, igual que las telas.
+- **Se le cuelgan telas**: en la ficha de la tela eliges de qué cuerda cuelga y desde qué
+  punto. Su borde de arriba sigue la cuerda, así que si la cuerda se mueve, la tela va con
+  ella.
+
+Se dibuja como un tubo, no como una línea, para que se vea desde cualquier ángulo y le
+dé la luz. En el juego es un `PROCESS` con `wind` y `target_x/y/z`, como la tela.
+
+
 ## Colisión: la forma del propio modelo
 
 Además de caja, esfera, cápsula y cilindro —donde la colisión es **un solo número** y

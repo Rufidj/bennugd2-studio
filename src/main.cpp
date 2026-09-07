@@ -250,6 +250,11 @@ extern "C" {
     int   g3d_zone_load(const char *path);
     void  g3d_editor_dbg_camera(void);
     int   g3d_editor_ray_plane(float sx, float sy, float w, float h, float planeY, float *out);
+    int   g3d_editor_screen_ray(float sx, float sy, float w, float h, float *out_org, float *out_dir);
+    int   g3d_editor_ray_model(float ox, float oy, float oz, float dx, float dy, float dz,
+                               void *model_ptr, float px, float py, float pz,
+                               float yaw, float scale,
+                               float *inout_dist, float *hit, float *normal);
     int   g3d_entity_impl_set_position(int entity_id, float x, float y, float z);
     int   g3d_entity_impl_set_rotation(int entity_id, float pitch, float yaw, float roll);
     int   g3d_entity_impl_set_scale(int entity_id, float sx, float sy, float sz);
@@ -261,6 +266,8 @@ extern "C" {
     int   g3d_editor_terrain_pick(float sx, float sy, float w, float h, void *mesh, float *out);
     /* ---- telas (banderas, cortinas, toldos) ---- */
     int   g3d_cloth_create(float width, float height, int nx, int ny, float px, float py, float pz);
+    int   g3d_cloth_create_oriented(float width, float height, int nx, int ny,
+                                    float px, float py, float pz, float dirx, float dirz);
     void  g3d_cloth_pin(int cloth, int mode);
     void  g3d_cloth_set_wind(int cloth, float x, float y, float z, float strength);
     void  g3d_cloth_set_collider(int cloth, float x, float y, float z, float radius);
@@ -651,6 +658,13 @@ int main(int, char**) {
            desde 'colgada_desde'. -1 = no cuelga de ninguna. */
         int   colgada = -1;
         int   colgada_desde = 0;
+        /* Hacia donde apunta su ancho (horizontal, perpendicular a como cuelga).
+           (1,0) es lo de siempre (a lo largo del eje X); una tela clavada en una
+           pared toma la tangente de esa pared, sea cual sea su angulo. */
+        float dirx = 1.0f, dirz = 0.0f;
+        /* Clavada en una pared (en vez de en el aire o de una cuerda): solo es
+           para que la ficha lo diga y avise si luego la mueves a mano. */
+        int   en_pared = 0;
     };
     std::vector<Tela> telas;
     int tela_sel = -1;
@@ -4041,10 +4055,10 @@ int main(int, char**) {
                     c.fijo_a, c.fijo_b, c.viento, c.vx, c.vy, c.vz,
                     c.nombre.c_str(), c.textura.c_str());
         for (auto& t : telas)
-            fprintf(f, "TELA %.4f %.4f %.4f %.3f %.3f %d %d %d %.3f %.3f %.3f %.3f %d %.3f %d %d|%s|%s\n",
+            fprintf(f, "TELA %.4f %.4f %.4f %.3f %.3f %d %d %d %.3f %.3f %.3f %.3f %d %.3f %d %d %.4f %.4f %d|%s|%s\n",
                     t.x, t.y, t.z, t.ancho, t.alto, t.nx, t.ny, t.sujecion,
                     t.viento, t.vx, t.vy, t.vz, t.empuja, t.radio,
-                    t.colgada, t.colgada_desde,
+                    t.colgada, t.colgada_desde, t.dirx, t.dirz, t.en_pared,
                     t.nombre.c_str(), t.textura.c_str());
         // (las variables del juego van en el .bgd2 del proyecto, no aqui)
         // ---- sonido de la escena ----
@@ -4675,10 +4689,17 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             if (!strncmp(line, "TELA ", 5)) {
                 Tela t;
                 char resto[512] = {0};
-                int leidos = sscanf(line, "TELA %f %f %f %f %f %d %d %d %f %f %f %f %d %f %d %d|%511[^\n]",
+                int leidos = sscanf(line, "TELA %f %f %f %f %f %d %d %d %f %f %f %f %d %f %d %d %f %f %d|%511[^\n]",
                            &t.x, &t.y, &t.z, &t.ancho, &t.alto, &t.nx, &t.ny, &t.sujecion,
                            &t.viento, &t.vx, &t.vy, &t.vz, &t.empuja, &t.radio,
-                           &t.colgada, &t.colgada_desde, resto);
+                           &t.colgada, &t.colgada_desde, &t.dirx, &t.dirz, &t.en_pared, resto);
+                if (leidos < 18) {   // escenas de antes de la orientacion (pared)
+                    t.dirx = 1.0f; t.dirz = 0.0f; t.en_pared = 0;
+                    leidos = sscanf(line, "TELA %f %f %f %f %f %d %d %d %f %f %f %f %d %f %d %d|%511[^\n]",
+                               &t.x, &t.y, &t.z, &t.ancho, &t.alto, &t.nx, &t.ny, &t.sujecion,
+                               &t.viento, &t.vx, &t.vy, &t.vz, &t.empuja, &t.radio,
+                               &t.colgada, &t.colgada_desde, resto);
+                }
                 if (leidos < 15) {   // escenas de antes de las cuerdas
                     t.colgada = -1; t.colgada_desde = 0;
                     leidos = sscanf(line, "TELA %f %f %f %f %f %d %d %d %f %f %f %f %d %f|%511[^\n]",
@@ -5750,11 +5771,11 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                        "BEGIN\n"
                        "    ctype = C_3D; csubtype = C3D_CLOTH;\n"
                        "    x = %.3f;  y = %.3f;  z = %.3f;   // de donde cuelga\n"
-                       "    entity = g3d_cloth_create(%.3f, %.3f, %d, %d, x, y, z);\n"
+                       "    entity = g3d_cloth_create_oriented(%.3f, %.3f, %d, %d, x, y, z, %.4f, %.4f);\n"
                        "    IF (entity < 0) RETURN; END\n"
                        "    g3d_cloth_pin(entity, %d);   // %s\n",
                     t.nombre.c_str(), pref.c_str(), pn.c_str(),
-                    t.x, t.y, t.z, t.ancho, t.alto, t.nx, t.ny, t.sujecion,
+                    t.x, t.y, t.z, t.ancho, t.alto, t.nx, t.ny, t.dirx, t.dirz, t.sujecion,
                     t.sujecion == 0 ? "colgada del borde de arriba"
                                     : (t.sujecion == 1 ? "sujeta por las dos esquinas"
                                                        : "sujeta por la izquierda (bandera)"));
@@ -8765,7 +8786,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             }
             for (auto& t : telas) {
                 if (t.id < 0) {
-                    t.id = g3d_cloth_create(t.ancho, t.alto, t.nx, t.ny, t.x, t.y, t.z);
+                    t.id = g3d_cloth_create_oriented(t.ancho, t.alto, t.nx, t.ny, t.x, t.y, t.z, t.dirx, t.dirz);
                     if (t.id >= 0) {
                         g3d_cloth_pin(t.id, t.sujecion);
                         if (!t.textura.empty()) {
@@ -9875,45 +9896,148 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                         status = "Cuerda '" + c.nombre + "' tendida";
                     }
                 }
-            } else if (tool == T_CLOTH && terrain &&
-                       g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
-                /* Se cuelga a la altura de una persona por encima del suelo, que es
-                   donde se pone una bandera o una cortina; luego se ajusta en su
-                   ficha. Se ve ondear al momento. */
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                    Tela t;
-                    t.nombre = "tela" + std::to_string((int)telas.size() + 1);
-                    t.x = hit[0];  t.z = hit[2];
-                    t.y = g3d_editor_terrain_height(terrain, hit[0], hit[2]) + t.alto + 1.5f;
-                    /* Si hay una cuerda justo encima, la tela se cuelga de ella sola:
-                       es lo que uno espera al poner una sabana bajo un tendedero, y
-                       si no, la tela se queda colgando del aire. */
-                    int mejor_c = -1, mejor_p = 0; float mejor_d = 3.0f;
+            } else if (tool == T_CLOTH) {
+                /* Una tela no se puede clavar en el aire: solo se pone donde
+                   ondearia de verdad, colgada de una CUERDA o clavada en una
+                   PARED (mas adelante, tambien en astas). Antes se colocaba
+                   donde cayera el clic en el terreno y, si acaso, se buscaba una
+                   cuerda cerca -- pero acertar en una cuerda fina a ojo, en 3D,
+                   es casi imposible. Ahora se busca de dos formas mucho mas
+                   tolerantes y se ENSENIA donde va a quedar antes de soltar el
+                   clic: verde si hay sitio, nada (nada que soltar) si no. */
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                int   marc_tipo = 0;      // 0 nada, 1 cuerda, 2 pared
+                int   marc_cuerda = -1, marc_punto = 0;
+                float marc_pos[3] = { 0, 0, 0 };
+                float marc_nrm[3] = { 0, 0, 1 };
+
+                float ro[3], rd[3];
+                if (g3d_editor_screen_ray(sx, sy, (float)vp.w, (float)vp.h, ro, rd)) {
+                    /* A) CUERDAS: se busca por distancia EN PANTALLA, no en el
+                       mundo -- una cuerda es fina y de lejos ocupa pocos pixeles,
+                       asi que la tolerancia va en pixeles (bastante mas generosa
+                       que intentar acertarle al pelo con un rayo 3D). */
+                    float mejor_px = 22.0f;
                     for (int ci = 0; ci < (int)cuerdas.size(); ci++) {
                         if (cuerdas[ci].id < 0) continue;
                         int np = g3d_rope_points(cuerdas[ci].id);
                         for (int pi = 0; pi < np; pi++) {
                             float rx, ry, rz;
                             if (!g3d_rope_point(cuerdas[ci].id, pi, &rx, &ry, &rz)) continue;
-                            float dx = rx - hit[0], dz = rz - hit[2];
-                            float d = sqrtf(dx * dx + dz * dz);
-                            if (d < mejor_d) { mejor_d = d; mejor_c = ci; mejor_p = pi; }
+                            float p2[2];
+                            if (!g3d_editor_world_to_screen(rx, ry, rz, (float)vp.w, (float)vp.h, p2)) continue;
+                            float d = sqrtf((p2[0]-sx)*(p2[0]-sx) + (p2[1]-sy)*(p2[1]-sy));
+                            if (d < mejor_px) {
+                                mejor_px = d; marc_tipo = 1; marc_cuerda = ci; marc_punto = pi;
+                                marc_pos[0] = rx; marc_pos[1] = ry; marc_pos[2] = rz;
+                            }
                         }
                     }
-                    if (mejor_c >= 0) {
-                        int np = g3d_rope_points(cuerdas[mejor_c].id);
-                        int desde = mejor_p - t.nx / 2;
+                    /* B) PAREDES: un rayo de verdad contra la malla de los objetos
+                       marcados como colision exacta (PHYS 6) -- es la unica
+                       geometria de la que el editor conoce la forma real. Solo si
+                       no hay ya una cuerda cerca: una cuerda pegada a un muro no
+                       deberia "perderse" contra la pared que tiene detras. */
+                    if (marc_tipo == 0) {
+                        float dist = 1e6f;
+                        float hp[3], hn[3];
+                        for (auto& o : objects) {
+                            if (o.phys != 6 || o.asset.empty()) continue;
+                            void* m = load_model(o.asset);
+                            if (!m) continue;
+                            if (g3d_editor_ray_model(ro[0], ro[1], ro[2], rd[0], rd[1], rd[2],
+                                                     m, o.x, o.y, o.z, o.ry, o.scale,
+                                                     &dist, hp, hn)) {
+                                /* solo caras razonablemente verticales cuentan como
+                                   "pared" -- un techo o un suelo no sirven para
+                                   colgar una tela */
+                                if (fabsf(hn[1]) < 0.6f) {
+                                    marc_tipo = 2;
+                                    marc_pos[0] = hp[0]; marc_pos[1] = hp[1]; marc_pos[2] = hp[2];
+                                    marc_nrm[0] = hn[0]; marc_nrm[1] = hn[1]; marc_nrm[2] = hn[2];
+                                }
+                            }
+                        }
+                    }
+                }
+
+                /* el tamano con el que se va a crear (para que el marcador
+                   ensenie el hueco real que va a ocupar) */
+                Tela def_prev;
+
+                if (marc_tipo == 1) {
+                    float p2[2];
+                    if (g3d_editor_world_to_screen(marc_pos[0], marc_pos[1], marc_pos[2],
+                                                   (float)vp.w, (float)vp.h, p2)) {
+                        ImVec2 c(img_min.x + p2[0], img_min.y + p2[1]);
+                        dl->AddCircleFilled(c, 8.0f, IM_COL32(90, 220, 120, 235));
+                        dl->AddCircle(c, 13.0f, IM_COL32(90, 220, 120, 200), 0, 2.0f);
+                    }
+                    status = "Cuerda '" + cuerdas[marc_cuerda].nombre + "': clic para colgar la tela aqui";
+                } else if (marc_tipo == 2) {
+                    /* la tangente horizontal de la pared: perpendicular a su
+                       normal, proyectada al plano XZ */
+                    float tx = marc_nrm[2], tz = -marc_nrm[0];
+                    float tl = sqrtf(tx*tx + tz*tz);
+                    if (tl < 1e-4f) { tx = 1.0f; tz = 0.0f; } else { tx /= tl; tz /= tl; }
+                    float ox = -tx * def_prev.ancho * 0.5f, oz = -tz * def_prev.ancho * 0.5f;
+                    float epsx = marc_nrm[0] * 0.04f, epsz = marc_nrm[2] * 0.04f;
+                    float p0x = marc_pos[0] + ox + epsx, p0z = marc_pos[2] + oz + epsz;
+                    ImVec2 pts[4]; bool ok4 = true;
+                    float corners[4][3] = {
+                        { p0x,                       marc_pos[1],                  p0z },
+                        { p0x + tx*def_prev.ancho,    marc_pos[1],                  p0z + tz*def_prev.ancho },
+                        { p0x + tx*def_prev.ancho,    marc_pos[1]-def_prev.alto,    p0z + tz*def_prev.ancho },
+                        { p0x,                       marc_pos[1]-def_prev.alto,    p0z },
+                    };
+                    for (int k = 0; k < 4 && ok4; k++) {
+                        float p2[2];
+                        if (!g3d_editor_world_to_screen(corners[k][0], corners[k][1], corners[k][2],
+                                                        (float)vp.w, (float)vp.h, p2)) { ok4 = false; break; }
+                        pts[k] = ImVec2(img_min.x + p2[0], img_min.y + p2[1]);
+                    }
+                    if (ok4) {
+                        ImU32 col = IM_COL32(90, 220, 120, 235);
+                        for (int k = 0; k < 4; k++) dl->AddLine(pts[k], pts[(k+1)%4], col, 2.5f);
+                        dl->AddConvexPolyFilled(pts, 4, IM_COL32(90, 220, 120, 55));
+                    }
+                    status = "Pared: clic para clavar la tela aqui";
+                } else {
+                    /* nada valido bajo el cursor: una marca roja, para que quede
+                       claro que aqui NO se puede soltar (y no un simple silencio,
+                       que parece que el editor no ha oido el click) */
+                    ImVec2 c(img_min.x + sx, img_min.y + sy);
+                    dl->AddCircle(c, 10.0f, IM_COL32(230, 70, 60, 220), 0, 2.5f);
+                    dl->AddLine(ImVec2(c.x-7,c.y-7), ImVec2(c.x+7,c.y+7), IM_COL32(230,70,60,220), 2.5f);
+                    dl->AddLine(ImVec2(c.x-7,c.y+7), ImVec2(c.x+7,c.y-7), IM_COL32(230,70,60,220), 2.5f);
+                    status = "Aqui no se puede poner una tela: hace falta una cuerda o una pared cerca";
+                }
+
+                if (marc_tipo != 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    Tela t;
+                    t.nombre = "tela" + std::to_string((int)telas.size() + 1);
+                    if (marc_tipo == 1) {
+                        int np = g3d_rope_points(cuerdas[marc_cuerda].id);
+                        int desde = marc_punto - t.nx / 2;
                         if (desde < 0) desde = 0;
                         if (desde + t.nx > np) desde = np - t.nx;
                         if (desde < 0) desde = 0;
-                        t.colgada = mejor_c; t.colgada_desde = desde;
+                        t.colgada = marc_cuerda; t.colgada_desde = desde;
                         float rx, ry, rz;
-                        if (g3d_rope_point(cuerdas[mejor_c].id, desde, &rx, &ry, &rz)) {
+                        if (g3d_rope_point(cuerdas[marc_cuerda].id, desde, &rx, &ry, &rz)) {
                             t.x = rx; t.y = ry; t.z = rz;
-                        }
-                        status = "Tela '" + t.nombre + "' colgada de '" + cuerdas[mejor_c].nombre + "'";
+                        } else { t.x = marc_pos[0]; t.y = marc_pos[1]; t.z = marc_pos[2]; }
+                        status = "Tela '" + t.nombre + "' colgada de '" + cuerdas[marc_cuerda].nombre + "'";
                     } else {
-                        status = "Tela '" + t.nombre + "' colocada (no cuelga de ninguna cuerda)";
+                        float tx = marc_nrm[2], tz = -marc_nrm[0];
+                        float tl = sqrtf(tx*tx + tz*tz);
+                        if (tl < 1e-4f) { tx = 1.0f; tz = 0.0f; } else { tx /= tl; tz /= tl; }
+                        t.dirx = tx; t.dirz = tz;
+                        t.en_pared = 1;
+                        t.x = marc_pos[0] - tx * t.ancho * 0.5f + marc_nrm[0] * 0.04f;
+                        t.y = marc_pos[1];
+                        t.z = marc_pos[2] - tz * t.ancho * 0.5f + marc_nrm[2] * 0.04f;
+                        status = "Tela '" + t.nombre + "' clavada en la pared";
                     }
                     telas.push_back(t);
                     tela_sel = (int)telas.size() - 1;
@@ -12514,10 +12638,13 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         if (tool == T_CLOTH) {
             ImGui::Begin(ICON_FA_FLAG "  Telas");
             ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextWrapped("Banderas, cortinas, toldos. Clic en la escena para poner una. "
-                               "En el juego sale como un PROCESS con sus locales: 'wind' es la "
-                               "fuerza del viento y target_x/y/z hacia donde sopla, asi que una "
-                               "racha se hace tocando esas variables desde tu codigo.");
+            ImGui::TextWrapped("Banderas, cortinas, toldos. Se cuelgan de una CUERDA o se clavan en "
+                               "una PARED (mas adelante, tambien en astas): no valen en el aire. "
+                               "Acerca el raton a una cuerda o apunta a un muro (colision exacta) y "
+                               "veras en verde donde va a quedar antes de soltar el clic; en rojo, "
+                               "aqui no se puede. En el juego sale como un PROCESS con sus locales: "
+                               "'wind' es la fuerza del viento y target_x/y/z hacia donde sopla, asi "
+                               "que una racha se hace tocando esas variables desde tu codigo.");
             ImGui::Separator();
             for (int i = 0; i < (int)telas.size(); i++) {
                 ImGui::PushID(i);
@@ -12565,13 +12692,23 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                             if (ImGui::Selectable(cuerdas[i].nombre.c_str(), t.colgada == i)) t.colgada = i;
                         ImGui::EndCombo();
                     }
-                    if (t.colgada < 0)
-                        ImGui::TextDisabled("Cuelga del aire por su borde: para una bandera en un muro\n"
-                                            "vale, pero para una sabana pon antes una cuerda.");
+                    if (t.colgada < 0 && !t.en_pared)
+                        ImGui::TextDisabled("No cuelga de ninguna cuerda: se clavo en una pared, o la\n"
+                                            "has movido a mano y ha perdido el enganche.");
                     if (t.colgada >= 0) {
                         ImGui::DragInt("Desde que punto", &t.colgada_desde, 0.2f, 0, 200);
                         ImGui::TextDisabled("Su borde de arriba se ata a los puntos de la cuerda");
                         ImGui::TextDisabled("a partir de ese, uno por trozo de la tela.");
+                    }
+                }
+                if (t.en_pared) {
+                    ImGui::SeparatorText("Clavada en una pared");
+                    ImGui::TextDisabled("Su plano mira hacia donde apunta esta flecha (horizontal);");
+                    ImGui::TextDisabled("se calculo sola al clavarla, pero se puede ajustar a mano.");
+                    if (ImGui::DragFloat2("Hacia donde mira", &t.dirx, 0.02f, -1.0f, 1.0f, "%.2f")) {
+                        float l = sqrtf(t.dirx*t.dirx + t.dirz*t.dirz);
+                        if (l > 1e-4f) { t.dirx /= l; t.dirz /= l; }
+                        rehacer = true;
                     }
                 }
                 ImGui::SeparatorText("El jugador");

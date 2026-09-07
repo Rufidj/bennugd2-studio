@@ -205,8 +205,19 @@ Dos cosas que conviene saber:
 
 ## Telas: banderas, cortinas, toldos
 
-Herramienta **Tela** (modo Escena): clic en la escena y ahí cuelga. Se ve **ondear
-mientras la editas**, que es la única forma de saber si una bandera queda bien.
+Herramienta **Tela** (modo Escena). Una tela **no se pone en el aire**: solo se cuelga de
+una **cuerda** o se clava en una **pared** (más adelante, también en astas). Al mover el
+ratón por la escena aparece un **marcador de dónde va a quedar**, antes de soltar el clic:
+
+- **Verde y un círculo**, sobre una cuerda: se busca por distancia **en pantalla** (no en
+  3D), así que no hace falta acertarle al pelo a una cuerda fina — con acercarse basta.
+- **Verde y un recuadro pegado a la pared**, sobre un muro con colisión exacta: es un
+  rayo de verdad contra la malla del objeto, así que se ajusta al relieve real (piedra,
+  ladrillo, lo que sea) y toma su orientación exacta, la tenga girada como la tenga.
+- **Rojo**, si no hay ni cuerda ni pared cerca: el clic no hace nada, y lo dice.
+
+Se ve **ondear mientras la editas**, que es la única forma de saber si una bandera queda
+bien.
 
 - **Cómo cuelga**: del borde de arriba (cortina), de las dos esquinas (guirnalda) o del
   borde izquierdo (bandera). Su tamaño, sus trozos (más = cae mejor, cuesta más) y **su

@@ -64,6 +64,132 @@ int g3d_editor_ray_plane(float sx, float sy, float w, float h, float planeY, flo
     return 1;
 }
 
+/* El rayo de esta pantalla (sx,sy en pixeles): origen y direccion en el mundo.
+   Es la version generica de g3d_editor_ray_plane, para cuando lo que hay que
+   probar no es un plano sino una malla (una pared, un objeto). */
+int g3d_editor_screen_ray(float sx, float sy, float w, float h, float *out_org, float *out_dir) {
+    if (!g_editor_cam || w < 1.0f || h < 1.0f) return 0;
+    Mat4 inv = mat4_inverse(g_editor_cam->view_projection);
+    float ndcx = 2.0f * sx / w - 1.0f;
+    float ndcy = 1.0f - 2.0f * sy / h;
+    Vec4 pn = mat4_mul_vec4(inv, vec4_make(ndcx, ndcy, -1.0f, 1.0f));
+    Vec4 pf = mat4_mul_vec4(inv, vec4_make(ndcx, ndcy,  1.0f, 1.0f));
+    if (fabsf(pn.w) < 1e-6f || fabsf(pf.w) < 1e-6f) return 0;
+    Vec3 a = vec3_make(pn.x / pn.w, pn.y / pn.w, pn.z / pn.w);
+    Vec3 b = vec3_make(pf.x / pf.w, pf.y / pf.w, pf.z / pf.w);
+    Vec3 d = vec3_normalize(vec3_sub(b, a));
+    out_org[0] = g_editor_cam->position.x;
+    out_org[1] = g_editor_cam->position.y;
+    out_org[2] = g_editor_cam->position.z;
+    out_dir[0] = d.x; out_dir[1] = d.y; out_dir[2] = d.z;
+    return 1;
+}
+
+/* Interseccion rayo-triangulo (Moller-Trumbore), en espacio de mundo. */
+static int ray_hits_tri(Vec3 o, Vec3 d, Vec3 v0, Vec3 v1, Vec3 v2, float max_t, float *out_t) {
+    Vec3 e1 = vec3_sub(v1, v0);
+    Vec3 e2 = vec3_sub(v2, v0);
+    Vec3 pv = vec3_cross(d, e2);
+    float det = vec3_dot(e1, pv);
+    if (fabsf(det) < 1e-8f) return 0;               /* rayo paralelo al triangulo */
+    float invDet = 1.0f / det;
+    Vec3 tv = vec3_sub(o, v0);
+    float u = vec3_dot(tv, pv) * invDet;
+    if (u < 0.0f || u > 1.0f) return 0;
+    Vec3 qv = vec3_cross(tv, e1);
+    float v = vec3_dot(d, qv) * invDet;
+    if (v < 0.0f || u + v > 1.0f) return 0;
+    float t = vec3_dot(e2, qv) * invDet;
+    if (t < 1e-4f || t > max_t) return 0;            /* detras o mas lejos que lo ya hallado */
+    *out_t = t;
+    return 1;
+}
+
+/* Rayo contra un modelo cargado, colocado como en la escena (posicion + giro Y +
+   escala uniforme -- la misma composicion que usa g3d_model_spawn con el objeto:
+   world = Ry(yaw) * (v_local * escala) + (px,py,pz)). Sirve para clavar cosas en
+   una pared: el editor no tiene mas colision que esta contra la geometria real.
+
+   *inout_dist entra con la distancia maxima a batir (un valor grande al
+   empezar) y SOLO se actualiza si este modelo golpea mas cerca; se puede pasar
+   el mismo puntero por varios objetos seguidos y quedarse con el mas cercano de
+   todos sin rehacer la cuenta. hit = el punto; normal = la cara del triangulo,
+   ya orientada hacia el origen del rayo (para que "hacia fuera" sea siempre
+   hacia fuera, sin depender de que lado se modelo la pared). */
+int g3d_editor_ray_model(float ox, float oy, float oz, float dx, float dy, float dz,
+                         void *model_ptr, float px, float py, float pz,
+                         float yaw, float scale,
+                         float *inout_dist, float *hit, float *normal) {
+    G3DModel *model = (G3DModel *)model_ptr;
+    if (!model || model->mesh_count == 0 || scale <= 0.0f) return 0;
+    Vec3 o = vec3_make(ox, oy, oz);
+    Vec3 d = vec3_normalize(vec3_make(dx, dy, dz));
+    float cy = cosf(yaw), sy = sinf(yaw);
+    int found = 0;
+
+    for (uint32_t mi = 0; mi < model->mesh_count; mi++) {
+        G3DMesh *mesh = &model->meshes[mi];
+        if (!mesh->vertices || !mesh->indices || mesh->index_count < 3) continue;
+
+        /* rechazo rapido: la caja del submesh, transformada, contra el rayo */
+        Vec3 bmin = vec3_make(1e30f, 1e30f, 1e30f), bmax = vec3_make(-1e30f, -1e30f, -1e30f);
+        for (int c = 0; c < 8; c++) {
+            Vec3 lp = vec3_make(
+                (c & 1) ? mesh->aabb_max[0] : mesh->aabb_min[0],
+                (c & 2) ? mesh->aabb_max[1] : mesh->aabb_min[1],
+                (c & 4) ? mesh->aabb_max[2] : mesh->aabb_min[2]);
+            lp = vec3_scale(lp, scale);
+            Vec3 wp = vec3_make(lp.x * cy + lp.z * sy, lp.y, -lp.x * sy + lp.z * cy);
+            wp = vec3_make(wp.x + px, wp.y + py, wp.z + pz);
+            if (wp.x < bmin.x) bmin.x = wp.x; if (wp.x > bmax.x) bmax.x = wp.x;
+            if (wp.y < bmin.y) bmin.y = wp.y; if (wp.y > bmax.y) bmax.y = wp.y;
+            if (wp.z < bmin.z) bmin.z = wp.z; if (wp.z > bmax.z) bmax.z = wp.z;
+        }
+        float tmin = 0.0f, tmax = *inout_dist;
+        int reject = 0;
+        float od[3] = { o.x, o.y, o.z }, dd[3] = { d.x, d.y, d.z };
+        float bn[3] = { bmin.x, bmin.y, bmin.z }, bx[3] = { bmax.x, bmax.y, bmax.z };
+        for (int ax = 0; ax < 3 && !reject; ax++) {
+            if (fabsf(dd[ax]) < 1e-9f) {
+                if (od[ax] < bn[ax] - 0.01f || od[ax] > bx[ax] + 0.01f) reject = 1;
+            } else {
+                float inv = 1.0f / dd[ax];
+                float t1 = (bn[ax] - od[ax]) * inv, t2 = (bx[ax] - od[ax]) * inv;
+                if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
+                if (t1 > tmin) tmin = t1;
+                if (t2 < tmax) tmax = t2;
+                if (tmin > tmax) reject = 1;
+            }
+        }
+        if (reject) continue;
+
+        /* el triangulo a triangulo, ya con pocos submeshes filtrados */
+        for (uint32_t ii = 0; ii + 2 < mesh->index_count; ii += 3) {
+            uint32_t i0 = mesh->indices[ii], i1 = mesh->indices[ii+1], i2 = mesh->indices[ii+2];
+            if (i0 >= mesh->vertex_count || i1 >= mesh->vertex_count || i2 >= mesh->vertex_count) continue;
+            Vec3 lv[3];
+            lv[0] = vec3_make(mesh->vertices[i0].position[0], mesh->vertices[i0].position[1], mesh->vertices[i0].position[2]);
+            lv[1] = vec3_make(mesh->vertices[i1].position[0], mesh->vertices[i1].position[1], mesh->vertices[i1].position[2]);
+            lv[2] = vec3_make(mesh->vertices[i2].position[0], mesh->vertices[i2].position[1], mesh->vertices[i2].position[2]);
+            Vec3 wv[3];
+            for (int k = 0; k < 3; k++) {
+                Vec3 lp = vec3_scale(lv[k], scale);
+                Vec3 rp = vec3_make(lp.x * cy + lp.z * sy, lp.y, -lp.x * sy + lp.z * cy);
+                wv[k] = vec3_make(rp.x + px, rp.y + py, rp.z + pz);
+            }
+            float t;
+            if (!ray_hits_tri(o, d, wv[0], wv[1], wv[2], *inout_dist, &t)) continue;
+            *inout_dist = t;
+            found = 1;
+            hit[0] = o.x + d.x * t; hit[1] = o.y + d.y * t; hit[2] = o.z + d.z * t;
+            Vec3 n = vec3_normalize(vec3_cross(vec3_sub(wv[1], wv[0]), vec3_sub(wv[2], wv[0])));
+            if (vec3_dot(n, d) > 0.0f) n = vec3_scale(n, -1.0f);   /* siempre hacia la camara */
+            normal[0] = n.x; normal[1] = n.y; normal[2] = n.z;
+        }
+    }
+    return found;
+}
+
 /* DBG: imprime la camara real y a que NDC proyecta un punto del mundo */
 void g3d_editor_dbg_camera(void) {
     if (!g_editor_cam) { printf("DBG cam = NULL\n"); return; }

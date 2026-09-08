@@ -192,9 +192,13 @@ extern "C" {
     int   g3d_camera_look_at(int camera_id, float tx, float ty, float tz,
                              float ux, float uy, float uz);
     int   g3d_light_create(int type, float r, float g, float b);
+    int   g3d_light_impl_set_position(int light_id, float x, float y, float z);
     int   g3d_light_set_direction(int light_id, float dx, float dy, float dz);
     int   g3d_light_set_intensity(int light_id, float intensity);
+    int   g3d_light_impl_set_range(int light_id, float range);
     int   g3d_light_impl_set_color(int light_id, float r, float g, float b);
+    int   g3d_light_impl_set_cone(int light_id, float angle_degrees);
+    int   g3d_light_impl_destroy(int light_id);
     void *g3d_gltf_load(const char *filepath);
     void *g3d_fbx_load(const char *filepath);
     void  g3d_fbx_set_recenter(int enabled);
@@ -711,6 +715,32 @@ int main(int, char**) {
        la guia que se dibuja usa este mismo valor, para que lo que ves sea lo que
        vas a tender. */
     float cuerda_holgura_nueva = 0.0f;
+
+    /* ================== LUCES ==================
+       Antorchas, focos, farolas: ademas del sol (uno solo, siempre en la
+       escena) se pueden poner luces de punto o de foco que iluminan de
+       verdad a los objetos Y a los personajes 2D "HD-2D" (los que llevan
+       marcada la casilla "Iluminado" en su ficha) -- el sol ya los tenia en
+       cuenta, estas son las que faltaban. Se ven encendidas mientras editas,
+       igual que las telas ondean: cada una es una entidad de luz de verdad
+       en la escena del editor. */
+    struct Luz {
+        std::string nombre = "luz";
+        float x = 0, y = 3, z = 0;
+        /* G3D_LIGHT_POINT=1, G3D_LIGHT_SPOT=2 (el sol, tipo 0, no se pone
+           con esta herramienta: es unico y ya esta en "Sol y ciclo dia/noche"). */
+        int   tipo = 1;
+        float color[3] = { 1.0f, 0.92f, 0.75f };   // calida, como una vela
+        float intensidad = 3.0f;
+        float alcance = 8.0f;         // hasta donde llega
+        float cono = 40.0f;           // grados, solo para el foco
+        float dirx = 0.0f, diry = -1.0f, dirz = 0.0f;   // hacia donde apunta el foco
+        int   sombra = 0;             // hace sombra (cuesta mas: pocas a la vez)
+        int   id = -1;                // la luz viva en el editor
+    };
+    std::vector<Luz> luces;
+    int luz_sel = -1;
+
     std::vector<float> river_draft;   // rio que se esta trazando (pares x,z)
     // ---- cascadas (elemento propio: borde arriba -> base abajo) ----
     struct Waterfall { float top[3]; float base[3]; float width; float arc; WaterfallFX fx; };
@@ -1412,7 +1442,7 @@ int main(int, char**) {
     // ---- herramienta activa (toolbar con iconos) ----
     enum Tool { T_SELECT, T_MOVE, T_ROTATE, T_SCALE, T_PLACE, T_RAISE, T_LOWER, T_SMOOTH, T_FLATTEN, T_PAINT,
                 T_HOLE, T_ZONE, T_LAKE, T_RIVER, T_WATERFALL, T_WATERSOURCE, T_VERTEX,
-                T_SCATTER, T_HUD, T_SPRITE, T_CLOTH, T_ROPE };
+                T_SCATTER, T_HUD, T_SPRITE, T_CLOTH, T_ROPE, T_LIGHT };
     bool hole_fill = false;   // T_HOLE: false=perforar, true=rellenar
     int tool = T_SELECT;
     int  zone_layer = 0;      // T_ZONE: capa (0..3) que se pinta
@@ -4071,6 +4101,11 @@ int main(int, char**) {
                     t.viento, t.vx, t.vy, t.vz, t.empuja, t.radio,
                     t.colgada, t.colgada_desde, t.dirx, t.dirz, t.en_pared,
                     t.nombre.c_str(), t.textura.c_str());
+        for (auto& l : luces)
+            fprintf(f, "LUZ %.4f %.4f %.4f %d %.4f %.4f %.4f %.3f %.3f %.2f %.4f %.4f %.4f %d|%s\n",
+                    l.x, l.y, l.z, l.tipo, l.color[0], l.color[1], l.color[2],
+                    l.intensidad, l.alcance, l.cono, l.dirx, l.diry, l.dirz, l.sombra,
+                    l.nombre.c_str());
         // (las variables del juego van en el .bgd2 del proyecto, no aqui)
         // ---- sonido de la escena ----
         if (!esc_musica.empty())
@@ -4256,6 +4291,8 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         telas.clear(); tela_sel = -1;   // las telas vivas se recrean al cargar
         for (auto& c : cuerdas) if (c.id >= 0) g3d_rope_destroy(c.id);
         cuerdas.clear(); cuerda_sel = -1; cuerda_paso = 0;
+        for (auto& l : luces) if (l.id >= 0) g3d_light_impl_destroy(l.id);
+        luces.clear(); luz_sel = -1;
         lakes.clear(); rivers.clear(); river_draft.clear(); waterfalls.clear();
         wsources.clear();   // los de la escena anterior no son de esta
         // terreno primero: las cuevas/objetos se apoyan en su altura
@@ -4728,6 +4765,22 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                     while (!t.textura.empty() && (t.textura.back()=='\n' || t.textura.back()=='\r')) t.textura.pop_back();
                     if (t.nombre.empty()) t.nombre = "tela" + std::to_string((int)telas.size() + 1);
                     telas.push_back(t);
+                }
+                continue;
+            }
+            if (!strncmp(line, "LUZ ", 4)) {
+                Luz l;
+                char resto[512] = {0};
+                int leidos = sscanf(line, "LUZ %f %f %f %d %f %f %f %f %f %f %f %f %f %d|%511[^\n]",
+                           &l.x, &l.y, &l.z, &l.tipo, &l.color[0], &l.color[1], &l.color[2],
+                           &l.intensidad, &l.alcance, &l.cono, &l.dirx, &l.diry, &l.dirz,
+                           &l.sombra, resto);
+                if (leidos >= 14) {
+                    std::string r(resto);
+                    l.nombre = r;
+                    while (!l.nombre.empty() && (l.nombre.back()=='\n' || l.nombre.back()=='\r')) l.nombre.pop_back();
+                    if (l.nombre.empty()) l.nombre = "luz" + std::to_string((int)luces.size() + 1);
+                    luces.push_back(l);
                 }
                 continue;
             }
@@ -5768,6 +5821,39 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                        "END\n\n",
                     c.vx, c.vy, c.vz, c.viento);
             add_global("    int id_" + pn + ";   // la cuerda '" + c.nombre + "'\n");
+            lanzados.push_back(pref + "_" + pn);
+        }
+
+        /* ---- cada LUZ (antorcha, foco), como proceso BennuGD2 ----
+           Igual que el sol: fija ctype/csubtype y sus locales nativas, y el
+           motor las manda a la luz cada FRAME (el hook C3D_LIGHT). Para
+           moverla, cambiar de color o apagarla y encenderla en marcha basta
+           con tocar x/y/z, color_r/g/b o intensity desde el propio codigo. */
+        for (auto& l : luces) {
+            std::string pn = ident_bgd(l.nombre, "luz");
+            fprintf(f,
+                  "// LUZ '%s'\n"
+                  "PROCESS %s_%s()\n"
+                  "BEGIN\n"
+                  "    ctype = C_3D; csubtype = C3D_LIGHT;\n"
+                  "    x = %.4f; y = %.4f; z = %.4f;\n"
+                  "    target_x = x + %.4f; target_y = y + %.4f; target_z = z + %.4f;   // hacia donde apunta (solo importa en el foco)\n"
+                  "    intensity = %.3f;\n"
+                  "    range = %.3f;\n"
+                  "    cone_angle = %.2f;\n"
+                  "    color_r = %d; color_g = %d; color_b = %d;\n"
+                  "    entity = g3d_light_create(%d);   // sin color: lo ponen color_r/g/b\n",
+                  l.nombre.c_str(), pref.c_str(), pn.c_str(),
+                  l.x, l.y, l.z, l.dirx, l.diry, l.dirz,
+                  l.intensidad, l.alcance, l.cono,
+                  (int)(l.color[0] * 255.0f + 0.5f), (int)(l.color[1] * 255.0f + 0.5f),
+                  (int)(l.color[2] * 255.0f + 0.5f), l.tipo);
+            if (l.sombra)
+                fprintf(f, "    g3d_light_enable_shadow(entity, 1);\n");
+            fputs("    LOOP\n"
+                  "        FRAME;\n"
+                  "    END\n"
+                  "END\n\n", f);
             lanzados.push_back(pref + "_" + pn);
         }
 
@@ -6880,6 +6966,11 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         // las telas de esta escena
         for (auto& t : telas) {
             std::string pn = ident_bgd(t.nombre, "tela");
+            fprintf(f, "    %s_%s();\n", pref.c_str(), pn.c_str());
+        }
+        // las luces (antorchas, focos) de esta escena
+        for (auto& l : luces) {
+            std::string pn = ident_bgd(l.nombre, "luz");
             fprintf(f, "    %s_%s();\n", pref.c_str(), pn.c_str());
         }
         fputs("    escena_dt = 1.0 / 60.0;\n", f);
@@ -8712,6 +8803,8 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                     enfocar_panel = ICON_FA_FLAG "  Telas";
                 if (btn(ICON_FA_LINK,           T_ROPE,   "Cuerda",      "Tendedero, cable, liana: clic donde empieza y clic donde acaba"))
                     enfocar_panel = ICON_FA_LINK "  Cuerdas";
+                if (btn(ICON_FA_LIGHTBULB,      T_LIGHT,  "Luz",         "Antorcha o foco: ilumina de verdad a los objetos y a los personajes 2D"))
+                    enfocar_panel = ICON_FA_LIGHTBULB "  Luces";
             } else if (modo == M_TERRENO) {
                 grupo("ESCULPIR");
                 btn(ICON_FA_MOUNTAIN,            T_RAISE,   "Subir",     "Levantar montanas");
@@ -8829,6 +8922,25 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                     }
                     g3d_cloth_update(t.id, dt);
                 }
+            }
+        }
+
+        /* ---- LAS LUCES, ENCENDIDAS EN EL EDITOR ----
+           Igual que las telas: se crean de verdad en la escena y se les
+           manda sus propiedades cada frame, asi un cambio de color o de
+           intensidad en la ficha se ve en el momento. */
+        for (auto& l : luces) {
+            if (l.id < 0) l.id = g3d_light_create(l.tipo, l.color[0], l.color[1], l.color[2]);
+            if (l.id >= 0) {
+                g3d_light_impl_set_position(l.id, l.x, l.y, l.z);
+                g3d_light_impl_set_color(l.id, l.color[0], l.color[1], l.color[2]);
+                g3d_light_set_intensity(l.id, l.intensidad);
+                g3d_light_impl_set_range(l.id, l.alcance);
+                if (l.tipo == 2) {   // foco: tambien apunta y tiene cono
+                    g3d_light_set_direction(l.id, l.dirx, l.diry, l.dirz);
+                    g3d_light_impl_set_cone(l.id, l.cono);
+                }
+                g3d_light_enable_shadow(l.id, l.sombra);
             }
         }
 
@@ -10226,6 +10338,13 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                             spr_sel = (int)sprites.size() - 1; obj_sel = -1;
                             status = "Sprite colocado (" + o.sheet + ")";
                         }
+                    } else if (tool == T_LIGHT) {                     // COLOCAR LUZ
+                        Luz l;
+                        l.nombre = "luz" + std::to_string((int)luces.size() + 1);
+                        l.x = hit[0]; l.y = hit[1] + 2.0f; l.z = hit[2];
+                        luces.push_back(l);
+                        luz_sel = (int)luces.size() - 1;
+                        status = "Luz '" + l.nombre + "' colocada";
                     } else if (tool == T_PLACE && asset_sel >= 0) {   // COLOCAR
                         void* m = load_model(assets[asset_sel]);
                         if (m) {
@@ -12892,6 +13011,62 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 } else if (rehacer) {
                     if (c.id >= 0) g3d_rope_destroy(c.id);
                     c.id = -1;   // se rehace en el frame siguiente, ya con lo nuevo
+                }
+            }
+            ImGui::PopTextWrapPos();
+            ImGui::End();
+        }
+
+        /* ---- LA FICHA DE UNA LUZ ---- */
+        if (tool == T_LIGHT) {
+            ImGui::Begin(ICON_FA_LIGHTBULB "  Luces");
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextWrapped("Antorchas, farolas, focos. Ademas del sol (unico, en 'Terreno "
+                               ICON_FA_MOUNTAIN "'), estas iluminan de verdad a los objetos y a "
+                               "los personajes 2D 'HD-2D' que lleven marcada su casilla "
+                               "'Iluminado'. Clic en la escena para poner una.");
+            ImGui::Separator();
+            for (int i = 0; i < (int)luces.size(); i++) {
+                ImGui::PushID(i);
+                if (ImGui::Selectable(luces[i].nombre.c_str(), luz_sel == i)) luz_sel = i;
+                ImGui::PopID();
+            }
+            if (luces.empty()) ImGui::TextDisabled("(ninguna: haz clic en la escena)");
+            if (luz_sel >= 0 && luz_sel < (int)luces.size()) {
+                Luz& l = luces[luz_sel];
+                bool rehacer = false;
+                ImGui::SeparatorText("La luz");
+                { char nb[80]; snprintf(nb, sizeof(nb), "%s", l.nombre.c_str());
+                  ImGui::SetNextItemWidth(180);
+                  if (ImGui::InputText("Nombre (PROCESS)", nb, sizeof(nb))) l.nombre = ident_bgd(nb, "luz"); }
+                ImGui::DragFloat3("Donde esta", &l.x, 0.1f);
+                { const char* tp[] = { "Punto (bombilla, antorcha: alumbra a todo su alrededor)",
+                                       "Foco (linterna, farola: alumbra en un cono, hacia donde apunta)" };
+                  int ti = (l.tipo == 2) ? 1 : 0;
+                  if (ImGui::Combo("Tipo", &ti, tp, 2)) { l.tipo = ti ? 2 : 1; rehacer = true; } }
+                ImGui::ColorEdit3("Color", l.color);
+                ImGui::DragFloat("Intensidad", &l.intensidad, 0.05f, 0.0f, 30.0f, "%.2f");
+                ImGui::DragFloat("Alcance", &l.alcance, 0.1f, 0.5f, 100.0f, "%.2f");
+                if (l.tipo == 2) {
+                    ImGui::DragFloat("Angulo del cono", &l.cono, 0.2f, 5.0f, 170.0f, "%.1f");
+                    if (ImGui::DragFloat3("Hacia donde apunta", &l.dirx, 0.01f, -1.0f, 1.0f, "%.2f")) {
+                        float len = sqrtf(l.dirx*l.dirx + l.diry*l.diry + l.dirz*l.dirz);
+                        if (len > 1e-4f) { l.dirx /= len; l.diry /= len; l.dirz /= len; }
+                    }
+                }
+                { bool s = l.sombra != 0;
+                  if (ImGui::Checkbox("Hace sombra", &s)) l.sombra = s ? 1 : 0;
+                  ImGui::TextDisabled("Cuesta mas: pocas luces con sombra a la vez."); }
+                ImGui::Spacing();
+                if (ImGui::Button("Quitar esta luz", ImVec2(-1, 0))) {
+                    if (l.id >= 0) g3d_light_impl_destroy(l.id);
+                    luces.erase(luces.begin() + luz_sel);
+                    luz_sel = luces.empty() ? -1 : 0;
+                } else if (rehacer) {
+                    /* El tipo (punto/foco) se fija al crear la luz: cambiarlo pide
+                       una luz nueva, igual que el ancho de una tela. */
+                    if (l.id >= 0) g3d_light_impl_destroy(l.id);
+                    l.id = -1;
                 }
             }
             ImGui::PopTextWrapPos();

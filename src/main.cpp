@@ -278,6 +278,7 @@ extern "C" {
     int   g3d_cloth_push_capsule(float ax, float ay, float az,
                                  float bx, float by, float bz, float radius);
     void  g3d_cloth_pin_move(int cloth, int i, int j, float x, float y, float z);
+    void  g3d_cloth_destroy(int cloth);
     /* ---- cuerdas ---- */
     int   g3d_rope_create(float ax, float ay, float az, float bx, float by, float bz,
                           int segmentos, float grosor, float holgura);
@@ -4241,7 +4242,9 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         for (auto& sp : sprites) if (sp.entity >= 0) g3d_sprite_destroy(sp.entity);
         sprites.clear(); spr_sel = -1; spr_follow = -1;
         esc_musica.clear(); zsonidos.clear();
+        for (auto& t : telas) if (t.id >= 0) g3d_cloth_destroy(t.id);
         telas.clear(); tela_sel = -1;   // las telas vivas se recrean al cargar
+        for (auto& c : cuerdas) if (c.id >= 0) g3d_rope_destroy(c.id);
         cuerdas.clear(); cuerda_sel = -1; cuerda_paso = 0;
         lakes.clear(); rivers.clear(); river_draft.clear(); waterfalls.clear();
         wsources.clear();   // los de la escena anterior no son de esta
@@ -12757,12 +12760,15 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 if (t.empuja) ImGui::DragFloat("Grosor del empujon", &t.radio, 0.05f, 0.1f, 5.0f, "%.2f");
                 ImGui::Spacing();
                 if (ImGui::Button("Quitar esta tela", ImVec2(-1, 0))) {
+                    if (t.id >= 0) g3d_cloth_destroy(t.id);
                     telas.erase(telas.begin() + tela_sel);
                     tela_sel = telas.empty() ? -1 : 0;
                 } else if (rehacer) {
                     /* Cambiar el tamanio o la sujecion pide una tela nueva: la vieja
-                       se queda con su rejilla. Se marca para recrearla en el frame
-                       siguiente, que es cuando se ve el cambio. */
+                       se queda con su rejilla. Se destruye y se marca para recrearla
+                       en el frame siguiente, que es cuando se ve el cambio -- sin
+                       destruirla aqui, la de antes se quedaba pintada por encima. */
+                    if (t.id >= 0) g3d_cloth_destroy(t.id);
                     t.id = -1;
                 }
             }

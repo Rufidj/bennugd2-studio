@@ -10027,6 +10027,27 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                         if (g3d_rope_point(cuerdas[marc_cuerda].id, desde, &rx, &ry, &rz)) {
                             t.x = rx; t.y = ry; t.z = rz;
                         } else { t.x = marc_pos[0]; t.y = marc_pos[1]; t.z = marc_pos[2]; }
+                        /* El ancho de la tela tiene que ser lo que REALMENTE separa,
+                           en el mundo, al primer y al ultimo punto de la cuerda de
+                           los que va a colgar -- si no, sus propias restricciones de
+                           distancia (pensadas para ese ancho) y las posiciones reales
+                           de la cuerda (mas juntas o mas separadas) se pelean cada
+                           frame y la tela acaba enrollandose sobre la cuerda en vez
+                           de colgar lisa. */
+                        {
+                            float px, py, pz;
+                            float total = 0.0f;
+                            if (g3d_rope_point(cuerdas[marc_cuerda].id, desde, &px, &py, &pz)) {
+                                for (int k = 1; k < t.nx; k++) {
+                                    float qx, qy, qz;
+                                    if (!g3d_rope_point(cuerdas[marc_cuerda].id, desde + k, &qx, &qy, &qz)) break;
+                                    float ddx = qx - px, ddy = qy - py, ddz = qz - pz;
+                                    total += sqrtf(ddx*ddx + ddy*ddy + ddz*ddz);
+                                    px = qx; py = qy; pz = qz;
+                                }
+                            }
+                            if (total > 0.05f) t.ancho = total;
+                        }
                         status = "Tela '" + t.nombre + "' colgada de '" + cuerdas[marc_cuerda].nombre + "'";
                     } else {
                         float tx = marc_nrm[2], tz = -marc_nrm[0];
@@ -12655,6 +12676,25 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             if (tela_sel >= 0 && tela_sel < (int)telas.size()) {
                 Tela& t = telas[tela_sel];
                 bool rehacer = false;
+                /* El ancho de la tela tiene que casar con lo que separa, en el
+                   mundo, al primer y al ultimo punto de la cuerda de los que
+                   cuelga -- si no, se pelea con las posiciones reales de la
+                   cuerda cada frame y acaba enrollandose sobre ella en vez de
+                   colgar lisa. Se recalcula solo si esta colgada de una. */
+                auto ajustar_ancho_a_cuerda = [&]() {
+                    if (t.colgada < 0 || t.colgada >= (int)cuerdas.size()) return;
+                    if (cuerdas[t.colgada].id < 0) return;
+                    float px, py, pz, total = 0.0f;
+                    if (!g3d_rope_point(cuerdas[t.colgada].id, t.colgada_desde, &px, &py, &pz)) return;
+                    for (int k = 1; k < t.nx; k++) {
+                        float qx, qy, qz;
+                        if (!g3d_rope_point(cuerdas[t.colgada].id, t.colgada_desde + k, &qx, &qy, &qz)) break;
+                        float ddx = qx - px, ddy = qy - py, ddz = qz - pz;
+                        total += sqrtf(ddx*ddx + ddy*ddy + ddz*ddz);
+                        px = qx; py = qy; pz = qz;
+                    }
+                    if (total > 0.05f) { t.ancho = total; rehacer = true; }
+                };
                 ImGui::SeparatorText("La tela");
                 { char nb[80]; snprintf(nb, sizeof(nb), "%s", t.nombre.c_str());
                   ImGui::SetNextItemWidth(180);
@@ -12662,7 +12702,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 if (ImGui::DragFloat3("Donde cuelga", &t.x, 0.1f)) rehacer = true;
                 if (ImGui::DragFloat("Ancho", &t.ancho, 0.05f, 0.2f, 60.0f, "%.2f")) rehacer = true;
                 if (ImGui::DragFloat("Alto",  &t.alto,  0.05f, 0.2f, 60.0f, "%.2f")) rehacer = true;
-                if (ImGui::DragInt("Trozos a lo ancho", &t.nx, 0.2f, 3, 60)) rehacer = true;
+                if (ImGui::DragInt("Trozos a lo ancho", &t.nx, 0.2f, 3, 60)) { ajustar_ancho_a_cuerda(); rehacer = true; }
                 if (ImGui::DragInt("Trozos a lo alto",  &t.ny, 0.2f, 3, 60)) rehacer = true;
                 ImGui::TextDisabled("Mas trozos = cae mejor, pero cuesta mas.");
                 { const char* sj[] = { "Del borde de arriba (cortina)",
@@ -12689,14 +12729,14 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                     if (ImGui::BeginCombo("Colgada de", cur.c_str())) {
                         if (ImGui::Selectable("(de nada, cuelga sola)", t.colgada < 0)) t.colgada = -1;
                         for (int i = 0; i < (int)cuerdas.size(); i++)
-                            if (ImGui::Selectable(cuerdas[i].nombre.c_str(), t.colgada == i)) t.colgada = i;
+                            if (ImGui::Selectable(cuerdas[i].nombre.c_str(), t.colgada == i)) { t.colgada = i; ajustar_ancho_a_cuerda(); }
                         ImGui::EndCombo();
                     }
                     if (t.colgada < 0 && !t.en_pared)
                         ImGui::TextDisabled("No cuelga de ninguna cuerda: se clavo en una pared, o la\n"
                                             "has movido a mano y ha perdido el enganche.");
                     if (t.colgada >= 0) {
-                        ImGui::DragInt("Desde que punto", &t.colgada_desde, 0.2f, 0, 200);
+                        if (ImGui::DragInt("Desde que punto", &t.colgada_desde, 0.2f, 0, 200)) ajustar_ancho_a_cuerda();
                         ImGui::TextDisabled("Su borde de arriba se ata a los puntos de la cuerda");
                         ImGui::TextDisabled("a partir de ese, uno por trozo de la tela.");
                     }

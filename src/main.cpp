@@ -669,6 +669,16 @@ int main(int, char**) {
     };
     std::vector<Tela> telas;
     int tela_sel = -1;
+    /* Con que tamano nacera la proxima tela: se pregunta ANTES de colocarla
+       (en la ficha, mientras la herramienta esta activa), no despues -- asi
+       no hay que soltarla con el tamano de fabrica y luego reajustarla.
+       Colgada de una cuerda el ancho lo acaba dando la cuerda igualmente
+       (se recalcula al soltarla); el de aqui solo cuenta tal cual al
+       clavarla en una pared. */
+    float tela_nueva_ancho = 3.0f;
+    float tela_nueva_alto = 2.0f;
+    int   tela_nueva_nx = 14;
+    int   tela_nueva_ny = 10;
 
     /* ================== CUERDAS ==================
        Se dibujan de un punto a otro y cuelgan con su propia fisica: tendederos,
@@ -9967,6 +9977,8 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 /* el tamano con el que se va a crear (para que el marcador
                    ensenie el hueco real que va a ocupar) */
                 Tela def_prev;
+                def_prev.ancho = tela_nueva_ancho; def_prev.alto = tela_nueva_alto;
+                def_prev.nx = tela_nueva_nx; def_prev.ny = tela_nueva_ny;
 
                 if (marc_tipo == 1) {
                     float p2[2];
@@ -10019,6 +10031,9 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 if (marc_tipo != 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     Tela t;
                     t.nombre = "tela" + std::to_string((int)telas.size() + 1);
+                    // el tamano se pregunto ya en la ficha, antes de soltarla
+                    t.ancho = tela_nueva_ancho; t.alto = tela_nueva_alto;
+                    t.nx = tela_nueva_nx; t.ny = tela_nueva_ny;
                     if (marc_tipo == 1) {
                         int np = g3d_rope_points(cuerdas[marc_cuerda].id);
                         int desde = marc_punto - t.nx / 2;
@@ -12669,6 +12684,19 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                                "aqui no se puede. En el juego sale como un PROCESS con sus locales: "
                                "'wind' es la fuerza del viento y target_x/y/z hacia donde sopla, asi "
                                "que una racha se hace tocando esas variables desde tu codigo.");
+            ImGui::SeparatorText("Tamano de la proxima");
+            ImGui::SetNextItemWidth(160);
+            ImGui::DragFloat("Ancho (si se clava en pared)", &tela_nueva_ancho, 0.05f, 0.2f, 60.0f, "%.2f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Colgada de una cuerda no cuenta: el ancho lo acaba dando\n"
+                                  "la propia cuerda, para que la tela no se enrolle en ella.");
+            ImGui::SetNextItemWidth(160);
+            ImGui::DragFloat("Alto", &tela_nueva_alto, 0.05f, 0.2f, 60.0f, "%.2f");
+            ImGui::SetNextItemWidth(160);
+            ImGui::DragInt("Trozos a lo ancho", &tela_nueva_nx, 0.2f, 3, 60);
+            ImGui::SetNextItemWidth(160);
+            ImGui::DragInt("Trozos a lo alto", &tela_nueva_ny, 0.2f, 3, 60);
+            ImGui::TextDisabled("Con esto se coloca; se puede retocar despues en su ficha.");
             ImGui::Separator();
             for (int i = 0; i < (int)telas.size(); i++) {
                 ImGui::PushID(i);
@@ -12703,7 +12731,16 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                   ImGui::SetNextItemWidth(180);
                   if (ImGui::InputText("Nombre (PROCESS)", nb, sizeof(nb))) t.nombre = ident_bgd(nb, "tela"); }
                 if (ImGui::DragFloat3("Donde cuelga", &t.x, 0.1f)) rehacer = true;
-                if (ImGui::DragFloat("Ancho", &t.ancho, 0.05f, 0.2f, 60.0f, "%.2f")) rehacer = true;
+                /* Colgada de una cuerda, el ancho NO es cosa de esta tela: lo manda
+                   la propia cuerda (la distancia real entre sus puntos). Tocarlo a
+                   mano aqui volveria a descuadrarlo de esa distancia real, y la tela
+                   volveria a enrollarse sobre la cuerda -- para cambiar el ancho hay
+                   que cambiar "Trozos a lo ancho", que sí se reajusta solo. */
+                if (t.colgada >= 0) {
+                    ImGui::BeginDisabled();
+                    ImGui::DragFloat("Ancho (lo da la cuerda)", &t.ancho, 0.05f, 0.2f, 60.0f, "%.2f");
+                    ImGui::EndDisabled();
+                } else if (ImGui::DragFloat("Ancho", &t.ancho, 0.05f, 0.2f, 60.0f, "%.2f")) rehacer = true;
                 if (ImGui::DragFloat("Alto",  &t.alto,  0.05f, 0.2f, 60.0f, "%.2f")) rehacer = true;
                 if (ImGui::DragInt("Trozos a lo ancho", &t.nx, 0.2f, 3, 60)) { ajustar_ancho_a_cuerda(); rehacer = true; }
                 if (ImGui::DragInt("Trozos a lo alto",  &t.ny, 0.2f, 3, 60)) rehacer = true;

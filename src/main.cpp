@@ -8755,6 +8755,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             ImGui::DockBuilderDockWindow(ICON_FA_FONT "  HUD 2D", right);
             ImGui::DockBuilderDockWindow(ICON_FA_FLAG "  Telas", right);
             ImGui::DockBuilderDockWindow(ICON_FA_LINK "  Cuerdas", right);
+            ImGui::DockBuilderDockWindow(ICON_FA_LIGHTBULB "  Luces", right);
             ImGui::DockBuilderDockWindow(ICON_FA_PERSON_RUNNING "  Sprites 3D", bottom);
             ImGui::DockBuilderDockWindow("Editor de codigo", center);
             ImGui::DockBuilderFinish(ds);

@@ -9046,6 +9046,37 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 }
             }
         }
+        /* Lo mismo para una LUZ elegida: arrastrarla con el gizmo en vez de
+           teclear numeros en "Donde esta". Con Rotar, si es un FOCO, lo que se
+           arrastra no es la luz sino un punto fantasma delante de ella --
+           soltarlo donde tiene que alumbrar es mucho mas facil que ajustar un
+           vector a mano, y es literalmente "apuntar a un sitio". Un punto no
+           tiene hacia donde apuntar, asi que Rotar no hace nada con uno. */
+        else if (gizmo_tool && luz_sel >= 0 && luz_sel < (int)luces.size()) {
+            Luz& l = luces[luz_sel];
+            float view[16], proj[16], model[16];
+            g3d_editor_get_view(view); g3d_editor_get_proj(proj);
+            bool apuntando = (tool == T_ROTATE && l.tipo == 2);
+            const float DIST_MIRA = 3.0f;
+            float t[3] = { l.x, l.y, l.z };
+            if (apuntando) {
+                t[0] += l.dirx * DIST_MIRA; t[1] += l.diry * DIST_MIRA; t[2] += l.dirz * DIST_MIRA;
+            }
+            float r[3] = { 0.0f, 0.0f, 0.0f };
+            float s2[3] = { 0.3f, 0.3f, 0.3f };
+            ImGuizmo::RecomposeMatrixFromComponents(t, r, s2, model);
+            ImGuizmo::Manipulate(view, proj, ImGuizmo::TRANSLATE, ImGuizmo::WORLD, model);
+            if (ImGuizmo::IsUsing()) {
+                ImGuizmo::DecomposeMatrixToComponents(model, t, r, s2);
+                if (apuntando) {
+                    float dx = t[0] - l.x, dy = t[1] - l.y, dz = t[2] - l.z;
+                    float len = sqrtf(dx*dx + dy*dy + dz*dz);
+                    if (len > 1e-4f) { l.dirx = dx / len; l.diry = dy / len; l.dirz = dz / len; }
+                } else {
+                    l.x = t[0]; l.y = t[1]; l.z = t[2];
+                }
+            }
+        }
 
         /* ---- GIZMO DE LA CAMARA ----
            Colocar la camara a base de deslizadores es adivinar. Con el gizmo se
@@ -10358,24 +10389,31 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                             objects.push_back(o); obj_sel = (int)objects.size() - 1; spr_sel = -1;
                         }
                     } else {                                         // SELECCIONAR
-                        /* Se busca entre los modelos 3D Y los personajes 2D, y gana
-                           el que caiga mas cerca del clic: un sprite es un objeto
-                           mas de la escena. La seleccion es una sola, o objeto o
-                           sprite, para que el Inspector y el gizmo no dude. */
-                        float best = 1e12f; int bi = -1, bs = -1;
+                        /* Se busca entre los modelos 3D, los personajes 2D Y las
+                           luces, y gana el que caiga mas cerca del clic: una luz
+                           es un objeto mas de la escena. La seleccion es una sola
+                           (objeto, sprite o luz), para que el Inspector y el
+                           gizmo no duden. */
+                        float best = 1e12f; int bi = -1, bs = -1, bl = -1;
                         for (int i = 0; i < (int)objects.size(); i++) {
                             float dx = objects[i].x - hit[0], dz = objects[i].z - hit[2];
                             float d = dx*dx + dz*dz;
-                            if (d < best) { best = d; bi = i; bs = -1; }
+                            if (d < best) { best = d; bi = i; bs = -1; bl = -1; }
                         }
                         for (int i = 0; i < (int)sprites.size(); i++) {
                             float dx = sprites[i].x - hit[0], dz = sprites[i].z - hit[2];
                             float d = dx*dx + dz*dz;
-                            if (d < best) { best = d; bs = i; bi = -1; }
+                            if (d < best) { best = d; bs = i; bi = -1; bl = -1; }
+                        }
+                        for (int i = 0; i < (int)luces.size(); i++) {
+                            float dx = luces[i].x - hit[0], dz = luces[i].z - hit[2];
+                            float d = dx*dx + dz*dz;
+                            if (d < best) { best = d; bl = i; bi = -1; bs = -1; }
                         }
                         if (best < 36.0f) {
-                            if (bs >= 0) { spr_sel = bs; obj_sel = -1; }
-                            else if (bi >= 0) { obj_sel = bi; spr_sel = -1; }
+                            if (bs >= 0) { spr_sel = bs; obj_sel = -1; luz_sel = -1; }
+                            else if (bi >= 0) { obj_sel = bi; spr_sel = -1; luz_sel = -1; }
+                            else if (bl >= 0) { luz_sel = bl; obj_sel = -1; spr_sel = -1; }
                         }
                     }
                 }

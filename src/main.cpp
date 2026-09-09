@@ -1527,6 +1527,19 @@ int main(int, char**) {
         if (!hallado.empty()) asset_cache[nombre] = hallado;
         return hallado.empty() ? nombre : hallado;
     };
+    /* Nombre base para un objeto nuevo, a partir de la ruta de su asset (p.ej.
+       "Models/pirate_ship.glb" -> "pirate_ship"). Sin quitar la carpeta, un
+       asset que no este suelto en Assets/ (la mayoria van en Models/) dejaba
+       el nombre como "Models/pirate_ship_6" -- con la barra colada, que no es
+       un identificador valido. El objeto se colocaba y se veia bien en el
+       editor, pero al generar el juego su script (Scripts/Models/xxx.prg) no
+       se podia ni crear ni encontrar (esa carpeta no existe), asi que se
+       generaba SIN el, en silencio: el objeto sencillamente no salia. */
+    auto nombre_base_asset = [](const std::string& ruta) -> std::string {
+        std::string base = fs::path(ruta).filename().string();
+        auto punto = base.rfind('.');
+        return punto == std::string::npos ? base : base.substr(0, punto);
+    };
     // La siembra guarda rutas relativas al proyecto (portables al juego); el
     // editor corre desde otro sitio, asi que le dice donde esta la raiz.
     g3d_scatter_set_base(project_dir.c_str());
@@ -5431,6 +5444,13 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 console_add((existe ? "Actualizado Scripts/" : "Creado Scripts/") + o.name + ".prg (" +
                             (o.is_player ? "controles del jugador"
                              : (o.phys == 0) ? "objeto decorativo" : "cuerpo fisico") + ")\n");
+            else
+                /* Si esto falla el objeto se genera SIN script y desaparece del
+                   juego sin ningun aviso -- avisar aqui es la unica oportunidad,
+                   porque mas adelante el generador simplemente no encuentra el
+                   fichero y sigue como si el objeto no existiera. */
+                console_add("AVISO: no pude crear Scripts/" + o.name + ".prg para '" + o.name +
+                            "' -- ese objeto no va a aparecer en el juego generado.\n");
         }
 
         /* ---- lo que comparten personajes y objetos ----
@@ -8979,7 +8999,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                         g3d_entity_impl_set_position(drag_ent, hit[0], hit[1], hit[2]);
                         if (pl->IsDelivery()) {           // soltado -> objeto real
                             SObj o; o.asset = assets[idx];
-                            o.name = assets[idx].substr(0, assets[idx].find('.')) +
+                            o.name = nombre_base_asset(assets[idx]) +
                                      "_" + std::to_string((int)objects.size());
                             o.entity = drag_ent;
                             o.x = hit[0]; o.y = hit[1]; o.z = hit[2]; o.ry = 0; o.scale = 1;
@@ -10382,7 +10402,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                         if (m) {
                             int e = g3d_model_spawn(scene, m, hit[0], hit[1], hit[2], 0.0f, 0.0f);
                             SObj o; o.asset = assets[asset_sel];
-                            o.name = assets[asset_sel].substr(0, assets[asset_sel].find('.')) +
+                            o.name = nombre_base_asset(assets[asset_sel]) +
                                      "_" + std::to_string((int)objects.size());
                             o.entity = e; o.x = hit[0]; o.y = hit[1]; o.z = hit[2]; o.ry = 0; o.scale = 1;
                             o.csize = csize_del_modelo(o);   // la colision, del tamanio del modelo

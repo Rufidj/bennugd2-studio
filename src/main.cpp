@@ -10409,32 +10409,37 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                             objects.push_back(o); obj_sel = (int)objects.size() - 1; spr_sel = -1;
                         }
                     } else {                                         // SELECCIONAR
-                        /* Se busca entre los modelos 3D, los personajes 2D Y las
-                           luces, y gana el que caiga mas cerca del clic: una luz
-                           es un objeto mas de la escena. La seleccion es una sola
-                           (objeto, sprite o luz), para que el Inspector y el
-                           gizmo no duden. */
-                        float best = 1e12f; int bi = -1, bs = -1, bl = -1;
+                        /* Se busca primero entre los modelos 3D y los personajes
+                           2D, como siempre; las luces solo entran si nada de eso
+                           cayo cerca. Al reves (todo a la vez, gana el mas
+                           cercano) una luz puesta junto a un objeto -- lo normal,
+                           si es para alumbrarlo -- le robaba la seleccion al
+                           objeto con solo clicar un pelin mas cerca de ella, y su
+                           ficha (con su "Su sonido") desaparecia sin motivo
+                           aparente. La seleccion sigue siendo una sola (objeto,
+                           sprite o luz), para que el Inspector y el gizmo no
+                           duden. */
+                        float best = 1e12f; int bi = -1, bs = -1;
                         for (int i = 0; i < (int)objects.size(); i++) {
                             float dx = objects[i].x - hit[0], dz = objects[i].z - hit[2];
                             float d = dx*dx + dz*dz;
-                            if (d < best) { best = d; bi = i; bs = -1; bl = -1; }
+                            if (d < best) { best = d; bi = i; bs = -1; }
                         }
                         for (int i = 0; i < (int)sprites.size(); i++) {
                             float dx = sprites[i].x - hit[0], dz = sprites[i].z - hit[2];
                             float d = dx*dx + dz*dz;
-                            if (d < best) { best = d; bs = i; bi = -1; bl = -1; }
+                            if (d < best) { best = d; bs = i; bi = -1; }
                         }
-                        for (int i = 0; i < (int)luces.size(); i++) {
-                            float dx = luces[i].x - hit[0], dz = luces[i].z - hit[2];
-                            float d = dx*dx + dz*dz;
-                            if (d < best) { best = d; bl = i; bi = -1; bs = -1; }
-                        }
-                        if (best < 36.0f) {
-                            if (bs >= 0) { spr_sel = bs; obj_sel = -1; luz_sel = -1; }
-                            else if (bi >= 0) { obj_sel = bi; spr_sel = -1; luz_sel = -1; }
-                            else if (bl >= 0) { luz_sel = bl; obj_sel = -1; spr_sel = -1; }
-                        }
+                        if (best >= 36.0f) {
+                            int bl = -1;
+                            for (int i = 0; i < (int)luces.size(); i++) {
+                                float dx = luces[i].x - hit[0], dz = luces[i].z - hit[2];
+                                float d = dx*dx + dz*dz;
+                                if (d < best) { best = d; bl = i; }
+                            }
+                            if (bl >= 0) { luz_sel = bl; obj_sel = -1; spr_sel = -1; }
+                        } else if (bs >= 0) { spr_sel = bs; obj_sel = -1; luz_sel = -1; }
+                        else if (bi >= 0) { obj_sel = bi; spr_sel = -1; luz_sel = -1; }
                     }
                 }
             }

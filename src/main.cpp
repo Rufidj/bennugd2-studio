@@ -623,7 +623,15 @@ int main(int, char**) {
         float foam = 1.0f;       // intensidad de espuma
         float color[3] = { 0.60f, 0.78f, 0.85f };
     };
-    struct Lake { float sx, sz, level, depth; float radius; WaterFX fx; };
+    struct Lake {
+        float sx, sz, level, depth; float radius; WaterFX fx;
+        /* Su propio sonido (ranas, grillos, oleaje...), igual que puede llevar
+           cualquier objeto: en bucle, mas fuerte cuanto mas cerca este el
+           jugador de su centro. */
+        std::string amb_sonido;
+        float amb_radio = 30.0f;
+        int   amb_vol = 100;
+    };
     std::vector<Lake> lakes;
     bool  lake_auto  = true;    // nivel automatico (justo antes de desbordar)
     float lake_level = -1.0f;   // nivel manual del agua
@@ -4153,6 +4161,8 @@ int main(int, char**) {
             fprintf(f, "LAKE %.4f %.4f %.4f %.4f", lk.sx, lk.sz, lk.level, lk.depth);
             fprint_fx(lk.fx);
             fprintf(f, " R %.3f", lk.radius);
+            if (!lk.amb_sonido.empty())
+                fprintf(f, " SND %.3f %d|%s", lk.amb_radio, lk.amb_vol, lk.amb_sonido.c_str());
             fputc('\n', f);
         }
         for (auto& rv : rivers) {
@@ -4549,6 +4559,15 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                   parse_fx(line, lk.fx);
                   char* r = strstr(line, " R ");
                   if (r) sscanf(r, " R %f", &lk.radius);
+                  char* s = strstr(line, " SND ");
+                  if (s && sscanf(s, " SND %f %d", &lk.amb_radio, &lk.amb_vol) == 2) {
+                      char* bar = strchr(s, '|');
+                      if (bar) {
+                          std::string snd(bar + 1);
+                          while (!snd.empty() && (snd.back()=='\n' || snd.back()=='\r')) snd.pop_back();
+                          lk.amb_sonido = snd;
+                      }
+                  }
                   lakes.push_back(lk); continue; } }
             if (strncmp(line, "RIVER ", 6) == 0) {
                 char* p = line + 6; char* end;
@@ -5372,7 +5391,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 i = nl + 1;
             }
         };
-        int max_reglas = 0, max_amb = 0, max_zamb = 0;
+        int max_reglas = 0, max_amb = 0, max_zamb = 0, max_lamb = 0;
         /* Procesos que son del JUEGO y no de una escena (el cartelito de las
            reglas, el contador de FPS, el motor de fisica): se escriben una sola
            vez aunque haya diez escenas. */
@@ -5471,6 +5490,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             for (auto& r : sp.reglas) for (auto& a : r.acciones)
                 if (a.tipo == 4 && !a.sonido.empty()) sonidos_usados.insert(a.sonido);
         for (auto& z : zsonidos) if (!z.sonido.empty()) sonidos_usados.insert(z.sonido);
+        for (auto& lk : lakes) if (!lk.amb_sonido.empty()) sonidos_usados.insert(lk.amb_sonido);
         for (auto& mm : menus) {
             if (!mm.snd_mover.empty())  sonidos_usados.insert(mm.snd_mover);
             if (!mm.snd_elegir.empty()) sonidos_usados.insert(mm.snd_elegir);
@@ -5478,6 +5498,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 if (a.tipo == 4 && !a.sonido.empty()) sonidos_usados.insert(a.sonido);
         }
         int n_amb = total_amb();
+        int n_lamb = 0; for (auto& lk : lakes) if (!lk.amb_sonido.empty()) n_lamb++;
         /* El juego no puede abrir rutas con letras fuera del ASCII (medido: una
            tilde o un emoji en el nombre y music_load/sound_load devuelven 0). Aqui
            ya no hay UI donde ponerlo en rojo, asi que se avisa por la consola. */
@@ -5508,6 +5529,9 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 if (r.evento == 2 || r.evento == 3 || r.evento == 4) hay_jug = true;
             for (auto& sp : sprites) for (auto& r : sp.reglas)
                 if (r.evento == 2 || r.evento == 3 || r.evento == 4) hay_jug = true;
+            // El sonido de un lago tambien necesita saber donde esta el jugador.
+            if (!zsonidos.empty()) hay_jug = true;
+            if (n_lamb > 0) hay_jug = true;
             /* escena_dt se declara AQUI y no mas abajo con los demas: las reglas y
                el cartelito la usan, y en BennuGD2 un GLOBAL tiene que estar por
                encima del codigo que lo lee -- incluidos los #include. */
@@ -5537,12 +5561,14 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                    + "// " + sn + "\n";
             if (n_amb > max_amb) max_amb = n_amb;
             if ((int)zsonidos.size() > max_zamb) max_zamb = (int)zsonidos.size();
+            if (n_lamb > max_lamb) max_lamb = n_lamb;
             add_global(g);
         }
-        /* El ambiente de las zonas pintadas: suena mientras el jugador esta dentro.
-           Un canal por zona, que se abre al entrar y se cierra al salir. */
-        if (!zsonidos.empty()) {
-            fprintf(f, "// Ambiente de las zonas pintadas (lluvia, bosque, cueva).\n"
+        /* El ambiente de las zonas pintadas y el de los lagos: suenan mientras el
+           jugador esta dentro (zona) o cerca (lago). Un canal cada uno, que se
+           abre al entrar/acercarse y se cierra al salir/alejarse. */
+        if (!zsonidos.empty() || n_lamb > 0) {
+            fprintf(f, "// Ambiente de las zonas pintadas (lluvia, bosque, cueva) y de los lagos.\n"
                   "PROCESS %s_ambiente()\n"
                   "BEGIN\n"
                   "    LOOP\n", pref.c_str());
@@ -5559,6 +5585,26 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                   "        END\n",
                   zsonidos[i].zona, i, i, var_sonido(zsonidos[i].sonido).c_str(),
                   i, zsonidos[i].vol, i, i, i);
+            }
+            {
+                int slot = 0;
+                for (auto& lk : lakes) {
+                    if (lk.amb_sonido.empty()) continue;
+                    float r = lk.amb_radio > 0.5f ? lk.amb_radio : 0.5f;
+                    fprintf(f,
+                      "        // ---- lago: suena mas fuerte cuanto mas cerca de su centro ----\n"
+                      "        IF ((jug_x - %.3f) * (jug_x - %.3f) + (jug_z - %.3f) * (jug_z - %.3f) < %.3f)\n"
+                      "            IF (lamb_ch[%d] < 0) lamb_ch[%d] = sound_play(%s, -1); END   // -1 = en bucle\n"
+                      "            channel_set_volume(lamb_ch[%d], %d - %d * sqrt((jug_x - %.3f) * (jug_x - %.3f) + (jug_z - %.3f) * (jug_z - %.3f)) / %.3f);\n"
+                      "        ELSE\n"
+                      "            IF (lamb_ch[%d] >= 0)  sound_stop(lamb_ch[%d]);  lamb_ch[%d] = -1;  END\n"
+                      "        END\n",
+                      lk.sx, lk.sx, lk.sz, lk.sz, r * r,
+                      slot, slot, var_sonido(lk.amb_sonido).c_str(),
+                      slot, lk.amb_vol, lk.amb_vol, lk.sx, lk.sx, lk.sz, lk.sz, r,
+                      slot, slot, slot);
+                    slot++;
+                }
             }
             fputs("        FRAME;\n    END\nEND\n\n", f);
         }
@@ -7117,8 +7163,10 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 fprintf(f, "    amb_ch[%d] = -1;\n", i);
             for (int i = 0; i < (int)zsonidos.size(); i++)
                 fprintf(f, "    zamb_ch[%d] = -1;\n", i);
-            if (!zsonidos.empty())
-                { fprintf(f, "    %s_ambiente();   // ambientes de las zonas pintadas\n", pref.c_str());
+            for (int i = 0; i < n_lamb; i++)
+                fprintf(f, "    lamb_ch[%d] = -1;\n", i);
+            if (!zsonidos.empty() || n_lamb > 0)
+                { fprintf(f, "    %s_ambiente();   // ambientes de las zonas pintadas y de los lagos\n", pref.c_str());
                   lanzados.push_back(pref + "_ambiente"); }
             if (!esc_musica.empty()) {
                 fprintf(f, "    musica = music_load(\"Assets/%s\");\n", ruta_asset(esc_musica).c_str());
@@ -8021,6 +8069,8 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             setup += "    int amb_ch[" + std::to_string(max_amb) + "];   // canal del sonido de cada objeto (-1 = callado)\n";
         if (max_zamb > 0)
             setup += "    int zamb_ch[" + std::to_string(max_zamb) + "];  // canal del ambiente de cada zona\n";
+        if (max_lamb > 0)
+            setup += "    int lamb_ch[" + std::to_string(max_lamb) + "];  // canal del ambiente de cada lago\n";
         setup += "END\n\n";
         // el codigo tuyo y el de cada objeto, una sola vez aunque lo pidan dos escenas
         for (auto& in : includes) setup += in;
@@ -12282,6 +12332,17 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 char hdr[64]; snprintf(hdr, sizeof(hdr), ICON_FA_DROPLET "  Lago %d##lkfx%d", i + 1, i);
                 if (ImGui::TreeNode(hdr)) {
                     if (water_fx_editor(lakes[i].fx, 5000 + i)) water_fx_dirty = true;
+                    ImGui::PushID(9000 + i);
+                    ImGui::SeparatorText("Su sonido");
+                    combo_sonido("sonido propio", lakes[i].amb_sonido);
+                    if (!lakes[i].amb_sonido.empty()) {
+                        ImGui::DragFloat("Se oye a", &lakes[i].amb_radio, 0.5f, 1.0f, 300.0f, "%.0f");
+                        ImGui::SliderInt("Volumen pegado a el", &lakes[i].amb_vol, 0, 128);
+                        ImGui::TextDisabled("En bucle, mas fuerte cuanto mas cerca: ranas, grillos,\nel chapoteo de la orilla.");
+                    } else
+                        ImGui::TextDisabled("Suena en bucle mientras el jugador este cerca.");
+                    ImGui::PopID();
+                    ImGui::Spacing();
                     if (ImGui::SmallButton("Quitar este lago")) {
                         lakes.erase(lakes.begin() + i); rebuild_water();
                         ImGui::TreePop(); break;

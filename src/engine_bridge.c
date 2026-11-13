@@ -43,6 +43,13 @@ void g3d_editor_set_aspect(float a) {
     if (g_editor_cam && a > 0.0f) { g_editor_cam->aspect_ratio = a; g_editor_cam->proj_dirty = 1; }
 }
 
+/* Planos cercano y lejano de la camara del editor. La precision del buffer de profundidad cae con el CUADRADO de la
+   distancia dividido por el plano cercano: con 0.1 de cercano y un circuito de cientos de metros a la vista, las
+   superficies a pocos centimetros una de otra se pelean (z-fighting) y salen "triangulos rotos". Se ajusta a la distancia. */
+void g3d_editor_set_planes(float n, float f) {
+    if (g_editor_cam && n > 0.0f && f > n) { g_editor_cam->near_plane = n; g_editor_cam->far_plane = f; g_editor_cam->proj_dirty = 1; }
+}
+
 /* Rayo de pantalla (sx,sy en [0,w]x[0,h]) intersecado con el plano y=planeY.
    Devuelve 1 y el punto en out[3]. Base para colocar objetos con el raton. */
 int g3d_editor_ray_plane(float sx, float sy, float w, float h, float planeY, float *out) {
@@ -1012,4 +1019,144 @@ static int model_ray_all_core(void *model_ptr, Vec3 o, Vec3 d, float tx, float t
         out[3 * c] = o.x + d.x * ts[i]; out[3 * c + 1] = o.y + d.y * ts[i]; out[3 * c + 2] = o.z + d.z * ts[i]; c++;
     }
     return c;
+}
+
+/* ======================= PIEZAS DE UN MODELO (colision de pistas importadas) =======================
+   Un .glb de circuito junta en una sola malla todo lo que comparte material, asi que "la columna" o "el puente de debajo"
+   no existen como objetos sueltos. Pero cada pieza SI es una superficie conexa: se agrupan los triangulos por vertices
+   compartidos (o coincidentes) y cada grupo es una pieza que se puede quitar de la colision. */
+typedef struct { float c[3], mn[3], mx[3]; int ntri; } CompInfo;
+static void *g_cm_model = NULL;
+static int g_cm_n = 0, g_cm_total = 0;
+static int *g_cm_tricomp = NULL;          /* por triangulo (global): pieza */
+static uint32_t *g_cm_off = NULL;          /* por malla: primer triangulo global */
+static CompInfo *g_cm_info = NULL;
+
+static int cm_find(int *p, int x) { while (p[x] != x) { p[x] = p[p[x]]; x = p[x]; } return x; }
+
+int g3d_editor_comp_build(void *model_ptr) {
+    G3DModel *model = (G3DModel *)model_ptr;
+    if (!model) return 0;
+    if (model == g_cm_model && g_cm_tricomp) return g_cm_n;
+    free(g_cm_tricomp); free(g_cm_off); free(g_cm_info); g_cm_tricomp = NULL; g_cm_off = NULL; g_cm_info = NULL; g_cm_n = 0; g_cm_total = 0;
+    g_cm_model = model;
+    uint32_t nm = model->mesh_count, totv = 0; size_t tott = 0;
+    g_cm_off = (uint32_t *)calloc(nm + 1, sizeof(uint32_t));
+    for (uint32_t i = 0; i < nm; i++) { g_cm_off[i] = (uint32_t)tott; const G3DMesh *m = &model->meshes[i]; if (m->vertices && m->indices) { totv += m->vertex_count; tott += m->index_count / 3; } }
+    g_cm_off[nm] = (uint32_t)tott; g_cm_total = (int)tott;
+    if (tott == 0 || totv == 0) return 0;
+    /* ids de vertice globales, unificando los de la misma posicion (las costuras de UV duplican vertices) */
+    uint32_t cap = 1; while (cap < totv * 2 + 16) cap <<= 1;
+    int32_t *hk = (int32_t *)malloc((size_t)cap * 3 * sizeof(int32_t)); int *hv = (int *)malloc((size_t)cap * sizeof(int));
+    for (uint32_t i = 0; i < cap; i++) hv[i] = -1;
+    int *vid = (int *)malloc((size_t)totv * sizeof(int)); uint32_t base = 0; int nid = 0;
+    for (uint32_t mi = 0; mi < nm; mi++) {
+        const G3DMesh *m = &model->meshes[mi]; if (!m->vertices || !m->indices) continue;
+        for (uint32_t v = 0; v < m->vertex_count; v++) {
+            int32_t q[3]; for (int k = 0; k < 3; k++) q[k] = (int32_t)lrintf(m->vertices[v].position[k] * 50.0f);
+            uint32_t h = ((uint32_t)q[0] * 73856093u) ^ ((uint32_t)q[1] * 19349663u) ^ ((uint32_t)q[2] * 83492791u);
+            uint32_t s = h & (cap - 1); int got = -1;
+            while (hv[s] >= 0) { if (hk[s*3] == q[0] && hk[s*3+1] == q[1] && hk[s*3+2] == q[2]) { got = hv[s]; break; } s = (s + 1) & (cap - 1); }
+            if (got < 0) { hk[s*3] = q[0]; hk[s*3+1] = q[1]; hk[s*3+2] = q[2]; hv[s] = nid; got = nid++; }
+            vid[base + v] = got;
+        }
+        base += m->vertex_count;
+    }
+    int *par = (int *)malloc((size_t)nid * sizeof(int)); for (int i = 0; i < nid; i++) par[i] = i;
+    base = 0;
+    for (uint32_t mi = 0; mi < nm; mi++) {
+        const G3DMesh *m = &model->meshes[mi]; if (!m->vertices || !m->indices) continue;
+        for (uint32_t t = 0; t + 2 < m->index_count; t += 3) {
+            int a = cm_find(par, vid[base + m->indices[t]]), b = cm_find(par, vid[base + m->indices[t + 1]]), c = cm_find(par, vid[base + m->indices[t + 2]]);
+            if (a != b) par[b] = a; b = cm_find(par, vid[base + m->indices[t + 1]]); if (a != c) par[cm_find(par, c)] = a; (void)b;
+        }
+        base += m->vertex_count;
+    }
+    int *root2comp = (int *)malloc((size_t)nid * sizeof(int)); for (int i = 0; i < nid; i++) root2comp[i] = -1;
+    g_cm_tricomp = (int *)malloc(tott * sizeof(int));
+    int ncomp = 0; base = 0;
+    for (uint32_t mi = 0; mi < nm; mi++) {
+        const G3DMesh *m = &model->meshes[mi]; if (!m->vertices || !m->indices) continue;
+        for (uint32_t t = 0; t + 2 < m->index_count; t += 3) {
+            int r = cm_find(par, vid[base + m->indices[t]]);
+            if (root2comp[r] < 0) root2comp[r] = ncomp++;
+            g_cm_tricomp[g_cm_off[mi] + t / 3] = root2comp[r];
+        }
+        base += m->vertex_count;
+    }
+    g_cm_info = (CompInfo *)calloc((size_t)ncomp, sizeof(CompInfo));
+    for (int i = 0; i < ncomp; i++) for (int k = 0; k < 3; k++) { g_cm_info[i].mn[k] = 1e30f; g_cm_info[i].mx[k] = -1e30f; }
+    for (uint32_t mi = 0; mi < nm; mi++) {
+        const G3DMesh *m = &model->meshes[mi]; if (!m->vertices || !m->indices) continue;
+        for (uint32_t t = 0; t + 2 < m->index_count; t += 3) {
+            CompInfo *ci = &g_cm_info[g_cm_tricomp[g_cm_off[mi] + t / 3]]; ci->ntri++;
+            for (int e = 0; e < 3; e++) { const float *p = m->vertices[m->indices[t + e]].position;
+                for (int k = 0; k < 3; k++) { ci->c[k] += p[k] / 3.0f; if (p[k] < ci->mn[k]) ci->mn[k] = p[k]; if (p[k] > ci->mx[k]) ci->mx[k] = p[k]; } }
+        }
+    }
+    for (int i = 0; i < ncomp; i++) for (int k = 0; k < 3; k++) g_cm_info[i].c[k] /= (float)(g_cm_info[i].ntri > 0 ? g_cm_info[i].ntri : 1);
+    free(hk); free(hv); free(vid); free(par); free(root2comp);
+    g_cm_n = ncomp;
+    return ncomp;
+}
+/* c(3), mn(3), mx(3), ntri en out[10] */
+int g3d_editor_comp_info(int i, float *out10) {
+    if (!g_cm_info || i < 0 || i >= g_cm_n) return 0;
+    const CompInfo *c = &g_cm_info[i];
+    for (int k = 0; k < 3; k++) { out10[k] = c->c[k]; out10[3 + k] = c->mn[k]; out10[6 + k] = c->mx[k]; }
+    out10[9] = (float)c->ntri; return 1;
+}
+/* La pieza bajo el raton: la del triangulo mas cercano (modelo colocado como en g3d_editor_model_pick). -1 si no hay. */
+int g3d_editor_comp_pick(float sx, float sy, float w, float h, void *model_ptr, float tx, float ty, float tz, float scale, float yaw_deg) {
+    G3DModel *model = (G3DModel *)model_ptr; Vec3 o, d;
+    if (!model || !screen_ray_world(sx, sy, w, h, &o, &d)) return -1;
+    if (g3d_editor_comp_build(model) <= 0) return -1;
+    if (scale <= 1e-6f) scale = 1.0f;
+    float a = -yaw_deg * 0.017453292f, ca = cosf(a), sa = sinf(a);
+    float ox = o.x - tx, oy = o.y - ty, oz = o.z - tz;
+    float lox = (ox * ca + oz * sa) / scale, loy = oy / scale, loz = (-ox * sa + oz * ca) / scale;
+    float ldx = (d.x * ca + d.z * sa) / scale, ldy = d.y / scale, ldz = (-d.x * sa + d.z * ca) / scale;
+    float best = 1e30f; int comp = -1;
+    for (uint32_t mi = 0; mi < model->mesh_count; mi++) {
+        const G3DMesh *m = &model->meshes[mi]; if (!m->vertices || !m->indices) continue;
+        for (uint32_t i = 0; i + 2 < m->index_count; i += 3) {
+            const float *p0 = m->vertices[m->indices[i]].position, *p1 = m->vertices[m->indices[i + 1]].position, *p2 = m->vertices[m->indices[i + 2]].position;
+            float e1x = p1[0]-p0[0], e1y = p1[1]-p0[1], e1z = p1[2]-p0[2], e2x = p2[0]-p0[0], e2y = p2[1]-p0[1], e2z = p2[2]-p0[2];
+            float px = ldy*e2z - ldz*e2y, py = ldz*e2x - ldx*e2z, pz = ldx*e2y - ldy*e2x;
+            float det = e1x*px + e1y*py + e1z*pz; if (fabsf(det) < 1e-12f) continue;
+            float inv = 1.0f / det, tx_ = lox-p0[0], ty_ = loy-p0[1], tz_ = loz-p0[2];
+            float u = (tx_*px + ty_*py + tz_*pz) * inv; if (u < 0.0f || u > 1.0f) continue;
+            float qx = ty_*e1z - tz_*e1y, qy = tz_*e1x - tx_*e1z, qz = tx_*e1y - ty_*e1x;
+            float v = (ldx*qx + ldy*qy + ldz*qz) * inv; if (v < 0.0f || u + v > 1.0f) continue;
+            float t = (e2x*qx + e2y*qy + e2z*qz) * inv;
+            if (t > 1e-4f && t < best) { best = t; comp = g_cm_tricomp[g_cm_off[mi] + i / 3]; }
+        }
+    }
+    return comp;
+}
+/* Los triangulos que se quedan (las piezas con excl[i] == 0), sin compartir vertices; el que llama los libera con free(). */
+static int cm_tri_ok(const G3DMesh *m, uint32_t t, float min_ny, float min_alto) {
+    if (min_ny <= -1.5f && min_alto <= 0.0f) return 1;
+    const float *p0 = m->vertices[m->indices[t]].position, *p1 = m->vertices[m->indices[t + 1]].position, *p2 = m->vertices[m->indices[t + 2]].position;
+    float e1x = p1[0]-p0[0], e1y = p1[1]-p0[1], e1z = p1[2]-p0[2], e2x = p2[0]-p0[0], e2y = p2[1]-p0[1], e2z = p2[2]-p0[2];
+    float nx = e1y*e2z - e1z*e2y, ny = e1z*e2x - e1x*e2z, nz = e1x*e2y - e1y*e2x;
+    float l = sqrtf(nx*nx + ny*ny + nz*nz); if (l < 1e-12f) return 0;
+    float nyn = ny / l;
+    if (nyn < min_ny) return 0;
+    /* una cara empinada de menos de min_alto de alto es un bordillo, un escalon o el canto de una pegatina: el kart se encaja ahi */
+    if (min_alto > 0.0f && fabsf(nyn) < 0.6f) { float ymin = p0[1], ymax = p0[1]; if (p1[1] < ymin) ymin = p1[1]; if (p2[1] < ymin) ymin = p2[1]; if (p1[1] > ymax) ymax = p1[1]; if (p2[1] > ymax) ymax = p2[1]; if (ymax - ymin < min_alto) return 0; }
+    return 1;   /* los triangulos que miran hacia abajo (techos, bajos de puentes) se pueden descartar */
+}
+int g3d_editor_comp_kept(void *model_ptr, const unsigned char *excl, float min_ny, float min_alto, float **pos, uint32_t **idx, uint32_t *nv, uint32_t *ni) {
+    G3DModel *model = (G3DModel *)model_ptr; if (!model || g3d_editor_comp_build(model) <= 0) return 0;
+    size_t cnt = 0;
+    for (uint32_t mi = 0; mi < model->mesh_count; mi++) { const G3DMesh *m = &model->meshes[mi]; if (!m->vertices || !m->indices) continue;
+        for (uint32_t t = 0; t + 2 < m->index_count; t += 3) if (!excl[g_cm_tricomp[g_cm_off[mi] + t / 3]] && cm_tri_ok(m, t, min_ny, min_alto)) cnt++; }
+    if (cnt == 0) return 0;
+    float *P = (float *)malloc(cnt * 9 * sizeof(float)); uint32_t *I = (uint32_t *)malloc(cnt * 3 * sizeof(uint32_t)); size_t k = 0;
+    for (uint32_t mi = 0; mi < model->mesh_count; mi++) { const G3DMesh *m = &model->meshes[mi]; if (!m->vertices || !m->indices) continue;
+        for (uint32_t t = 0; t + 2 < m->index_count; t += 3) if (!excl[g_cm_tricomp[g_cm_off[mi] + t / 3]] && cm_tri_ok(m, t, min_ny, min_alto)) {
+            for (int e = 0; e < 3; e++) { const float *p = m->vertices[m->indices[t + e]].position; P[k*9 + e*3] = p[0]; P[k*9 + e*3 + 1] = p[1]; P[k*9 + e*3 + 2] = p[2]; I[k*3 + e] = (uint32_t)(k*3 + e); }
+            k++; } }
+    *pos = P; *idx = I; *nv = (uint32_t)(cnt * 3); *ni = (uint32_t)(cnt * 3); return 1;
 }

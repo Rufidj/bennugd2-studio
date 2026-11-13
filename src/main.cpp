@@ -189,6 +189,7 @@ extern "C" {
     void  g3d_renderer_render(void);
     void  g3d_renderer_set_viewport_physical(unsigned x, unsigned y, unsigned w, unsigned h);
     void  g3d_renderer_set_hdr(int enabled);
+    void  g3d_occlusion_set_enabled(int enable);
     void  g3d_renderer_set_shadows(int enabled);
     void  g3d_renderer_set_shadow_resolution(unsigned resolution);
     void  g3d_renderer_set_clear_color(float r, float g, float b, float a);
@@ -275,6 +276,10 @@ extern "C" {
     int   g3d_entity_impl_set_scale(int entity_id, float sx, float sy, float sz);
     int   g3d_entity_impl_destroy(int entity_id);
     int   g3d_editor_count_entities(void);
+    int   g3d_editor_comp_build(void *model);
+    int   g3d_editor_comp_info(int i, float *out10);
+    int   g3d_editor_comp_pick(float sx, float sy, float w, float h, void *model, float tx, float ty, float tz, float scale, float yaw_deg);
+    int   g3d_editor_comp_kept(void *model, const unsigned char *excl, float min_ny, float min_alto, float **pos, uint32_t **idx, uint32_t *nv, uint32_t *ni);
     int   g3d_editor_model_ray_all(void *model, float ox, float oy, float oz, float dx, float dy, float dz, float tx, float ty, float tz, float scale, float yaw_deg, float *out, int max);
     int   g3d_editor_model_pick_all(float sx, float sy, float w, float h, void *model, float tx, float ty, float tz, float scale, float yaw_deg, float *out, int max);
     int   g3d_editor_model_bounds(void *model, float *out6);
@@ -287,6 +292,7 @@ extern "C" {
     void  g3d_editor_get_view(float *m16);
     void  g3d_editor_get_proj(float *m16);
     void  g3d_editor_set_aspect(float a);
+    void  g3d_editor_set_planes(float n, float f);
     void *g3d_editor_make_terrain(int scene_id, int grid, float worldsize, float tiling, const char *texpath);
     int   g3d_editor_terrain_pick(float sx, float sy, float w, float h, void *mesh, float *out);
     /* ---- telas (banderas, cortinas, toldos) ---- */
@@ -519,6 +525,7 @@ int main(int, char**) {
     // sombras ON: el shader del modelo muestrea el shadow map; con sombras off
     // esa textura de profundidad queda incompleta -> el driver tira el draw.
     g3d_renderer_set_hdr(0);
+    if (getenv("EDITOR_NOOCC")) g3d_occlusion_set_enabled(0);   // prueba: sin occlusion culling
     g3d_renderer_set_shadows(1);
     g3d_renderer_set_shadow_resolution(2048);   // por defecto; se ajusta al cargar la escena
     g3d_renderer_set_clear_color(0.15f, 0.20f, 0.30f, 1.0f);
@@ -652,6 +659,29 @@ int main(int, char**) {
         if (terrain) g3d_editor_terrain_restore(terrain, hs.data());
         terr_grid = grid; terr_size = size;
         g3d_zone_init(grid + 1, size);
+    };
+    // ¿esta pieza (centro + triangulos) esta en la lista de las que no colisionan?
+    auto pieza_quitada = [](const std::vector<kr::SinCol>& sc, const float* info) -> bool {
+        for (auto& s : sc) if (fabsf(s.cx - info[0]) < 0.3f && fabsf(s.cy - info[1]) < 0.3f && fabsf(s.cz - info[2]) < 0.3f && s.ntri == (int)info[9]) return true;
+        return false;
+    };
+    // escribe el modelo de COLISION de una pista propia: sus triangulos menos las piezas quitadas (misma colocacion que la pista)
+    auto escribir_colision = [&](const std::string& proyecto, const std::string& pista_rel, const std::vector<kr::SinCol>& sc, float min_ny, float min_alto, const std::string& out_rel, std::string& err) -> bool {
+        g3d_gltf_set_recenter(0); void* pm = g3d_gltf_load((proyecto + "/" + pista_rel).c_str()); g3d_gltf_set_recenter(1);
+        if (!pm) { err = "no se pudo cargar " + pista_rel; return false; }
+        int n = g3d_editor_comp_build(pm); if (n <= 0) { err = "la pista no tiene triangulos"; return false; }
+        std::vector<unsigned char> excl(n, 0);
+        for (int i = 0; i < n; i++) { float inf[10]; if (g3d_editor_comp_info(i, inf) && pieza_quitada(sc, inf)) excl[i] = 1; }
+        float* pos = nullptr; uint32_t* idx = nullptr; uint32_t nv = 0, ni = 0;
+        if (!g3d_editor_comp_kept(pm, excl.data(), min_ny, min_alto, &pos, &idx, &nv, &ni)) { err = "no queda ninguna pieza con colision"; return false; }
+        kr::Circuito::Malla ml; ml.nombre = "colision"; ml.uri = "../Textures/carreras/base.png";
+        ml.pos.assign(pos, pos + (size_t)nv * 3); ml.idx.assign(idx, idx + ni);
+        ml.nrm.assign((size_t)nv * 3, 0.0f); for (uint32_t i = 0; i < nv; i++) ml.nrm[i * 3 + 1] = 1.0f;
+        ml.uv.assign((size_t)nv * 2, 0.0f);
+        free(pos); free(idx);
+        std::vector<kr::Circuito::Malla> M; M.push_back(std::move(ml));
+        fs::create_directories(fs::path(proyecto + "/" + out_rel).parent_path());
+        return kr::Circuito::escribir_glb(M, proyecto + "/" + out_rel, err);
     };
     // tamano de terreno que dice una escena (para leerla sin cargarla): 0 = no dice nada (400 de serie)
     auto terreno_tam_de = [&](const std::string& scene_file, int* grid_out) -> float {
@@ -1515,6 +1545,7 @@ int main(int, char**) {
     bool hole_fill = false;   // T_HOLE: false=perforar, true=rellenar
     int tool = T_SELECT;
     int road_nodo_sel = -1;   // T_ROAD: punto elegido del circuito
+    bool road_sincol = false; // pista propia: clic en una pieza para quitarla de la colision / ponerla otra vez
     int road_pista_op = 0;    // pista propia: gizmo en el visor (0 ninguno, 1 mover, 2 rotar, 3 escalar)
     int road_poner = 0;       // T_ROAD: que pone un clic (0 punto de la carretera, 1 placa de turbo, 2 rampa, 3 farola)
     int  zone_layer = 0;      // T_ZONE: capa (0..3) que se pinta
@@ -2498,7 +2529,7 @@ int main(int, char**) {
             prev_cam = g3d_camera_create();
         }
         if (prev_ent_model != m) {            // (re)spawnear el modelo a mostrar
-            if (prev_ent >= 0) g3d_entity_impl_set_position(prev_ent, 0, -99999, 0);
+            if (prev_ent >= 0) { g3d_entity_impl_destroy_tree(prev_ent, 1); prev_ent = -1; }   // el anterior se quita entero (antes se escondia y se quedaba)
             int save_scene_active = scene;    // spawn requiere una escena; usamos prev_scene
             g3d_scene_set_active(prev_scene);
             prev_ent = g3d_model_spawn(prev_scene, m, 0, 0, 0, 0.0f, 0.0f);
@@ -2548,7 +2579,7 @@ int main(int, char**) {
     /* ---- Vista previa de los mapas 2.5D del mundo: se construyen en la escena del editor (cajas con la textura de cada tile) para verlos
        y colocarlos donde van. Solo es una vista: el juego los construye con su biblioteca (pl_montar_mundo). ---- */
     auto mapas_reconstruir = [&]() {
-        for (int r : mapas_prev) if (r >= 0) g3d_entity_impl_destroy(r);
+        for (int r : mapas_prev) if (r >= 0) g3d_entity_impl_destroy_tree(r, 0);   // la raiz Y sus hijas (los materiales de estas vistas son compartidos)
         mapas_prev.clear(); mapas_sucios = false;
         if (mapas.empty()) return;
         if (te.game_dir.empty()) te.game_dir = project_dir;
@@ -3144,7 +3175,7 @@ int main(int, char**) {
     auto delete_obj = [&](int i) {
         if (playing) { status = "Para el Play antes de editar la escena"; return; }
         if (i < 0 || i >= (int)objects.size()) return;
-        g3d_entity_impl_destroy(objects[i].entity);
+        g3d_entity_impl_destroy_tree(objects[i].entity, 1);   // un modelo = raiz + una entidad por malla: hay que quitarlas todas y soltar sus materiales
         objects.erase(objects.begin() + i);
         fix_indices_after_erase(i);
         if (obj_sel == i) obj_sel = -1;
@@ -3221,7 +3252,7 @@ int main(int, char**) {
     // todas. Con estas cantidades es instantaneo, y sirve igual para deshacer un
     // borrado, un duplicado o un movimiento, sin casos especiales.
     auto apply_state = [&](const EditState& st) {
-        for (auto& o : objects) if (o.entity >= 0) g3d_entity_impl_destroy(o.entity);
+        for (auto& o : objects) if (o.entity >= 0) g3d_entity_impl_destroy_tree(o.entity, 1);
         objects = st.objs;
         cam_follow = st.follow;
         for (auto& o : objects) {
@@ -4459,7 +4490,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         // Cargar es empezar de cero: la pila de deshacer de la escena anterior no
         // vale, y si se dejara, un Ctrl+Z de mas restauraria un estado vacio.
         undo_reset();
-        for (auto& o : objects) if (o.entity >= 0) g3d_entity_impl_destroy(o.entity);
+        for (auto& o : objects) if (o.entity >= 0) g3d_entity_impl_destroy_tree(o.entity, 1);
         objects.clear(); obj_sel = -1; mapas.clear(); mapas_sucios = true;
         hud.clear(); hud_sel = -1;   // el HUD tambien es de la escena
         for (auto& sp : sprites) if (sp.entity >= 0) g3d_sprite_destroy(sp.entity);
@@ -7515,6 +7546,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         auto generar_escena_kart = [&](const std::string& ruta) {
             kr::Circuito kc;
             std::string nombre = fs::path(ruta).stem().string(), rel, err, aviso;
+            kc.hook_col = escribir_colision;
             if (!kc.load(ruta)) console_add("AVISO: el circuito " + ruta + " no tiene 3 puntos\n");
             if (!kc.escena.empty()) { std::string sf = (fs::path(project_dir) / kc.escena).string(); kc.usar_terreno_fichero(sf + ".terrain", terreno_tam_de(sf, nullptr)); }   // la carretera sigue al relieve guardado
             if (!kc.exportar(project_dir, nombre, ruta_util("runtime/carreras", KART_TEX_PATH), rel, err, &aviso))
@@ -7549,12 +7581,13 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 fputs("    kr_externa = 1; kr_ext_scene = scene; kr_ext_camera = camera;\n", f);
             } else fputs("    kr_externa = 0;\n", f);
             fprintf(f, "    kr_pista = \"%s\"; kr_kart_modelo = \"%s\"; kr_kart_tam = %.3f;\n", rel.c_str(), kc.kart.c_str(), kc.kart_tam);
+            fprintf(f, "    kr_n_ia = %d; kr_ia_dif = %d; kr_ia_modelo = \"%s\";\n", kc.n_ia, kc.dif_ia, kc.ia_modelo.c_str());
             for (int i = 0; i < kr::N_SUP; i++)
                 fprintf(f, "    kr_ef_ag[%d] = %.3f; kr_ef_vel[%d] = %.3f; kr_ef_acel[%d] = %.3f;\n", i, kc.sup_ef[i].agarre, i, kc.sup_ef[i].vel, i, kc.sup_ef[i].acel);
             for (int i = 0; i < 4; i++)
                 fprintf(f, "    kr_zn_on[%d] = %d; kr_zn_ag[%d] = %.3f; kr_zn_vel[%d] = %.3f; kr_zn_acel[%d] = %.3f;\n", i, kc.zona_on[i], i, kc.zona_ef[i].agarre, i, kc.zona_ef[i].vel, i, kc.zona_ef[i].acel);
             fputs("    kr_ef_ok = 1;\n", f);
-            fprintf(f, "    kr_extra_vis = \"%s\"; kr_extra_col = \"%s\";\n", kc.ex_vis.c_str(), kc.ex_col.c_str());
+            fprintf(f, "    kr_extra_vis = \"%s\"; kr_extra_col = \"%s\"; kr_pista_col = \"%s\";\n", kc.ex_vis.c_str(), kc.ex_col.c_str(), kc.ex_pcol.c_str());
             if (!kc.pista_glb.empty()) fprintf(f, "    kr_pista_x = %.3f; kr_pista_y = %.3f; kr_pista_z = %.3f; kr_pista_esc = %.4f; kr_pista_yaw = %.2f;\n", kc.pista_x, kc.pista_y, kc.pista_z, kc.pista_esc, kc.pista_yaw);
             fprintf(f, "    kr_salida_x = %.3f; kr_salida_y = %.3f; kr_salida_z = %.3f; kr_salida_yaw = %.3f;\n", kc.sx, kc.salida_y, kc.sz, kc.salida_yaw);
             fprintf(f, "    kr_lim_x0 = %.3f; kr_lim_x1 = %.3f; kr_lim_z0 = %.3f; kr_lim_z1 = %.3f;\n", kc.gx0, kc.gx1, kc.gz0, kc.gz1);
@@ -7580,7 +7613,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 fprintf(f, "    kr_objeto_add(\"%s\", %.3f, %.3f, %.3f, %.2f, %.3f, %d);\n",
                         o.modelo.c_str(), o.x, o.base + o.y, o.z, o.yaw, o.alto, o.colision);
             fputs("    kr_montar();\n    RETURN;\nEND\n\n", f);
-            for (const char* n : { "kr_kart", "kr_camara", "kr_control", "kr_notify_toast", "kr_semaforo" }) lanzados.push_back(n);
+            for (const char* n : { "kr_kart", "kr_camara", "kr_control", "kr_notify_toast", "kr_semaforo", "kr_clasif" }) lanzados.push_back(n);
             add_include("Scripts/carreras.prg");
             std::string src = ruta_util("runtime/carreras.prg", KART_RUNTIME_PATH), txt;
             if (leer_todo(src, txt)) escribir_todo(scripts_dir + "/carreras.prg", txt);
@@ -8926,10 +8959,15 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 vcam_target[2] = objects[obj_sel].z;
             }
         }
+        if (const char* cd = getenv("EDITOR_CAMDIST")) {      // prueba: camara a esta distancia, mirando desde arriba en diagonal
+            static bool una = false; if (!una) { una = true; cam_dist = (float)atof(cd); cam_pitch = 0.6f; cam_yaw = 0.8f; vcam_target[0] = vcam_target[1] = vcam_target[2] = 0.0f; }
+        }
         float cx = vcam_target[0] + sinf(cam_yaw) * cosf(cam_pitch) * cam_dist;
         float cy = vcam_target[1] + sinf(cam_pitch) * cam_dist + 1.0f;
         float cz = vcam_target[2] + cosf(cam_yaw) * cosf(cam_pitch) * cam_dist;
         g3d_camera_set_position(cam, cx, cy, cz);
+        // planos segun lo lejos que se mira: cerca, fino (0.1); lejos, el cercano sube para que el buffer de profundidad no se pelee
+        if (!getenv("EDITOR_OLDPLANES")) g3d_editor_set_planes(std::clamp(cam_dist * 0.012f, 0.1f, 25.0f), std::max(4000.0f, cam_dist * 80.0f + terr_size * 2.0f));
         g3d_camera_look_at(cam, vcam_target[0], vcam_target[1], vcam_target[2], 0.0f, 1.0f, 0.0f);
         }   // fin modo edicion (durante Play manda play_update)
 
@@ -9504,6 +9542,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         auto kre_escena_rel = [&]() { return fs::path(scene_path).lexically_relative(project_dir).generic_string(); };
         auto kre_terreno_sync = [&]() {
             static int estado = -1; static std::string clave;
+            kre.c.hook_col = escribir_colision;
             if (!kre.cargado || kre.c.escena.empty()) { kre.c.terreno_h = nullptr; estado = -1; return; }
             std::string comp = kre_ruta_escena();
             bool vivo = terrain && fs::path(scene_path) == fs::path(comp);
@@ -9632,6 +9671,12 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                         kre.c.pista_glb = pg; kre.c.sx = 0; kre.c.sz = -40; kre.c.sy_manual = 1.0f; kre.c.syaw_manual = 0;
                         if (const char* p3 = getenv("EDITOR_KR_PISTA3D")) { float a=0,b=0,c=0,d=1,e=0,f=0,g=-40,h=0; sscanf(p3, "%f %f %f %f %f %f %f %f", &a,&b,&c,&d,&e,&f,&g,&h); kre.c.pista_x=a; kre.c.pista_y=b; kre.c.pista_z=c; kre.c.pista_esc=d; kre.c.pista_yaw=e; kre.c.sx=f; kre.c.sz=g; kre.c.syaw_manual=h; }
                         kre.c.escena.clear();
+                        if (getenv("EDITOR_KR_QUITARGRANDE")) {      // prueba: quita de la colision la pieza mas grande de la pista
+                            g3d_gltf_set_recenter(0); void* pm = g3d_gltf_load((project_dir + "/" + std::string(pg)).c_str()); g3d_gltf_set_recenter(1);
+                            int n = g3d_editor_comp_build(pm); int mejor = -1, nt = 0;
+                            for (int i = 0; i < n; i++) { float inf[10]; g3d_editor_comp_info(i, inf); if ((int)inf[9] > nt) { nt = (int)inf[9]; mejor = i; } }
+                            if (mejor >= 0) { float inf[10]; g3d_editor_comp_info(mejor, inf); kr::SinCol s; s.cx = inf[0]; s.cy = inf[1]; s.cz = inf[2]; s.ntri = (int)inf[9]; kre.c.sincol.push_back(s); printf("EDITOR_KR_QUITARGRANDE: pieza %d (%d tri)\n", mejor, nt); }
+                        }
                         if (getenv("EDITOR_KR_PISTA_NODOS")) {      // el trazado de prueba.glb (los puntos de control con que se genero) + un turbo y una rampa
                             const float P[13][3] = { {0,0,-80},{0,0,0},{0,0,80},{30,0,130},{90,0,148},{140,0,110},{160,6,50},{160,10,-10},{150,2,-70},{110,0,-115},{65,0,-105},{35,0,-145},{5,0,-125} };
                             kr::Camino cm; cm.nombre = "camino0"; cm.cerrado = true; cm.principal = true;
@@ -9714,6 +9759,68 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                     for (int q = 0; q < 5; q++) { kr::Nodo n; float a = q * 1.2566f; n.x = cosf(a) * 40.0f; n.z = sinf(a) * 40.0f; n.sigue = 1; kr::Tramo t; t.muro_izq = t.muro_der = 1; c0.nodos.push_back(n); c0.tramos.push_back(t); }
                     c0.cerrado = true; kre.c.sx = 40; kre.c.sz = 0; kre.tocar(); kre.c.save(kre.ruta());
                     printf("EDITOR_KR_BORRAR: circuito nuevo con %d nodos, vuelta %.0f m\n", (int)c0.nodos.size(), kre.c.vuelta); fflush(stdout);
+                }
+            }
+            {   // aviso: si las entidades se agotan, los modelos nuevos salen incompletos (faltan trozos, sin textura)
+                static int fa = 0; static bool avisado = false;
+                if (++fa % 300 == 0) {
+                    int ne = g3d_editor_count_entities();
+                    if (ne > 13000 && !avisado) { avisado = true; console_add("AVISO: el motor tiene " + std::to_string(ne) + " de 16384 entidades vivas: guarda y reinicia el editor; los modelos grandes saldran incompletos\n"); }
+                    if (ne < 11000) avisado = false;
+                }
+            }
+            if (getenv("EDITOR_LEAKTEST")) {      // prueba: recargar la escena varias veces y contar entidades vivas (fugas de entidades de modelos)
+                static int fl = 0; ++fl;
+                if (fl == 150 || fl == 300 || fl == 450 || fl == 600) {
+                    printf("EDITOR_LEAKTEST: fotograma %d: entidades vivas %d, objetos %d\n", fl, g3d_editor_count_entities(), (int)objects.size()); fflush(stdout);
+                    if (fl < 600) { std::string sp = scene_path; load_scene(sp); }
+                }
+            }
+            if (getenv("EDITOR_KR_COLOPC") && quiere && !kre.c.pista_glb.empty()) {       // prueba: "alto sin techos" -> opciones de colision
+                static bool h2 = false; if (!h2) { h2 = true; float al = 0; int te = 0; sscanf(getenv("EDITOR_KR_COLOPC"), "%f %d", &al, &te); kre.c.col_alto = al; kre.c.col_sin_techos = te != 0; kre.tocar(); kre.c.save(kre.ruta()); kre.guardar(); printf("EDITOR_KR_COLOPC: alto %.2f techos %d\n", al, te); fflush(stdout); }
+            }
+            if (getenv("EDITOR_KR_QUITARIDS") && quiere && !kre.c.pista_glb.empty()) {     // prueba: quita estas piezas (ids separados por comas) de la colision y guarda
+                static bool hecho = false; if (!hecho) { hecho = true;
+                    g3d_gltf_set_recenter(0); void* pm = g3d_gltf_load((project_dir + "/" + kre.c.pista_glb).c_str()); g3d_gltf_set_recenter(1);
+                    int n = g3d_editor_comp_build(pm); std::string ids = getenv("EDITOR_KR_QUITARIDS"); size_t p0 = 0;
+                    while (p0 < ids.size()) { size_t p1 = ids.find(',', p0); if (p1 == std::string::npos) p1 = ids.size(); int id = atoi(ids.substr(p0, p1 - p0).c_str());
+                        float inf[10]; if (id >= 0 && id < n && g3d_editor_comp_info(id, inf)) { kr::SinCol s; s.cx = inf[0]; s.cy = inf[1]; s.cz = inf[2]; s.ntri = (int)inf[9]; kre.c.sincol.push_back(s); }
+                        p0 = p1 + 1; }
+                    kre.tocar(); kre.c.save(kre.ruta()); kre.guardar(); printf("EDITOR_KR_QUITARIDS: %d piezas sin colision\n", (int)kre.c.sincol.size()); fflush(stdout);
+                }
+            }
+            if (getenv("EDITOR_KR_AQUI") && quiere && !kre.c.pista_glb.empty()) {         // prueba: que piezas hay alrededor de un punto del mundo
+                static int fq2 = 0; if (++fq2 == 100) {
+                    float px = 0, py = 0, pz = 0; sscanf(getenv("EDITOR_KR_AQUI"), "%f %f %f", &px, &py, &pz);
+                    g3d_gltf_set_recenter(0); void* pm = g3d_gltf_load((project_dir + "/" + kre.c.pista_glb).c_str()); g3d_gltf_set_recenter(1);
+                    int n = g3d_editor_comp_build(pm); float es = kre.c.pista_esc, a = -kre.c.pista_yaw * 0.0174533f, ca = cosf(a), sa = sinf(a);
+                    float dx = px - kre.c.pista_x, dy = py - kre.c.pista_y, dz = pz - kre.c.pista_z;
+                    float lx = (dx * ca + dz * sa) / es, ly = dy / es, lz = (-dx * sa + dz * ca) / es, rad = 3.0f / es;
+                    { float hs[3 * 24]; int nh = g3d_editor_model_ray_all(pm, px, py + 300.0f, pz, 0, -1, 0, kre.c.pista_x, kre.c.pista_y, kre.c.pista_z, kre.c.pista_esc, kre.c.pista_yaw, hs, 24);
+                      printf("EDITOR_KR_AQUI: superficies en la vertical (arriba a abajo):"); for (int q = 0; q < nh; q++) printf(" %.2f", hs[3 * q + 1]); printf("\n");
+                      for (float ddx : { -2.0f, 2.0f }) for (float ddz : { -2.0f, 2.0f }) { nh = g3d_editor_model_ray_all(pm, px + ddx, py + 300.0f, pz + ddz, 0, -1, 0, kre.c.pista_x, kre.c.pista_y, kre.c.pista_z, kre.c.pista_esc, kre.c.pista_yaw, hs, 24);
+                        printf("   a (%+.0f,%+.0f):", ddx, ddz); for (int q = 0; q < nh; q++) printf(" %.2f", hs[3 * q + 1]); printf("\n"); } }
+                    printf("EDITOR_KR_AQUI: punto en el modelo (%.2f, %.2f, %.2f), radio %.3f\n", lx, ly, lz, rad);
+                    for (int i = 0; i < n; i++) { float inf[10]; g3d_editor_comp_info(i, inf);
+                        if (lx >= inf[3] - rad && lx <= inf[6] + rad && ly >= inf[4] - rad && ly <= inf[7] + rad && lz >= inf[5] - rad && lz <= inf[8] + rad)
+                            printf("   pieza %d: %d tri, tamano mundo %.1f x %.1f x %.1f, y mundo %.1f..%.1f\n", i, (int)inf[9], (inf[6]-inf[3])*es, (inf[7]-inf[4])*es, (inf[8]-inf[5])*es, kre.c.pista_y + inf[4]*es, kre.c.pista_y + inf[7]*es); }
+                    fflush(stdout);
+                }
+            }
+            if (getenv("EDITOR_KR_COMPTEST") && quiere && !kre.c.pista_glb.empty()) {     // prueba: piezas del modelo y colision filtrada
+                static int fc = 0; if (++fc == 100) {
+                    g3d_gltf_set_recenter(0); void* pm = g3d_gltf_load((project_dir + "/" + kre.c.pista_glb).c_str()); g3d_gltf_set_recenter(1);
+                    uint32_t t0 = SDL_GetTicks(); int n = g3d_editor_comp_build(pm); uint32_t t1 = SDL_GetTicks();
+                    printf("EDITOR_KR_COMPTEST: %d piezas (%u ms)\n", n, t1 - t0);
+                    std::vector<std::pair<int,int>> tam; for (int i = 0; i < n; i++) { float inf[10]; g3d_editor_comp_info(i, inf); tam.push_back({ (int)inf[9], i }); }
+                    std::sort(tam.begin(), tam.end(), [](auto& a, auto& b) { return a.first > b.first; });
+                    for (int i = 0; i < 8 && i < n; i++) { float inf[10]; g3d_editor_comp_info(tam[i].second, inf); printf("   pieza %d: %d tri, caja (%.0f,%.0f,%.0f)-(%.0f,%.0f,%.0f)\n", tam[i].second, (int)inf[9], inf[3], inf[4], inf[5], inf[6], inf[7], inf[8]); }
+                    int pequenas = 0; for (auto& t : tam) if (t.first < 200) pequenas++;
+                    printf("   piezas con menos de 200 triangulos: %d\n", pequenas);
+                    // quitar las 5 mas pequenas y escribir la colision
+                    std::vector<kr::SinCol> sc; for (int q = 0; q < 5 && q < n; q++) { float inf[10]; g3d_editor_comp_info(tam[n - 1 - q].second, inf); kr::SinCol s; s.cx = inf[0]; s.cy = inf[1]; s.cz = inf[2]; s.ntri = (int)inf[9]; sc.push_back(s); }
+                    std::string err; bool ok = escribir_colision(project_dir, kre.c.pista_glb, sc, -2.0f, 0.0f, "Assets/Models/_prueba_col.glb", err);
+                    printf("   colision sin 5 piezas: %s %s\n", ok ? "escrita" : "FALLO", err.c_str()); fflush(stdout);
                 }
             }
             if (getenv("EDITOR_KR_NODOSMAL") && quiere && !kre.c.pista_glb.empty() && !kre.c.caminos.empty()) {   // prueba: que superficies hay bajo cada punto del trazado
@@ -10004,7 +10111,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                                 if (ext != ".glb" && ext != ".gltf") continue;
                                 if (a.find("_pista.glb") != std::string::npos) continue;
                                 if (fp[0] && a.find(fp) == std::string::npos) continue;
-                                if (ImGui::Selectable(a.c_str(), kre.c.pista_glb == "Assets/" + a)) { kre.push_undo(); kre.c.pista_glb = "Assets/" + a; cambio(); }
+                                if (ImGui::Selectable(a.c_str(), kre.c.pista_glb == "Assets/" + a)) { kre.push_undo(); kre.c.pista_glb = "Assets/" + a; if (kre.c.col_alto <= 0.0f) kre.c.col_alto = 1.0f; cambio(); }   // por defecto, sin bordes de menos de 1 m en la colision
                             }
                             ImGui::EndCombo();
                         }
@@ -10012,6 +10119,51 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                             { bool st = kre.c.sin_terreno; if (ImGui::Checkbox("Ocultar el terreno de la escena en el juego", &st)) { kre.c.sin_terreno = st; cambio(); } }
                             ImGui::TextDisabled("Si la pista queda tapada por el terreno (a la misma altura), marcalo o baja el terreno bajo ella.");
                             if (ImGui::Button("Volver a la carretera generada")) { kre.push_undo(); kre.c.pista_glb.clear(); cambio(); }
+                            ImGui::SeparatorText("Colisiones de la pista");
+                            ImGui::Checkbox("Quitar piezas de la colision (clic en el visor)", &road_sincol);
+                            {
+                                g3d_gltf_set_recenter(0); void* pmc = g3d_gltf_load((project_dir + "/" + kre.c.pista_glb).c_str()); g3d_gltf_set_recenter(1);
+                                int npz = pmc ? g3d_editor_comp_build(pmc) : 0;
+                                ImGui::TextDisabled("%d piezas en el modelo, %d sin colision", npz, (int)kre.c.sincol.size());
+                                if (!kre.c.sincol.empty() && ImGui::Button("Que todas vuelvan a colisionar")) { kre.push_undo(); kre.c.sincol.clear(); cambio(); }
+                                {   // limpieza automatica de la colision: lo que mas encaja al kart son los cantos pequenos y empinados
+                                    bool st = kre.c.col_sin_techos; if (ImGui::Checkbox("Ignorar caras que miran hacia abajo (techos, bajos de puentes)", &st)) { kre.c.col_sin_techos = st; cambio(); }
+                                    ImGui::SetNextItemWidth(140);
+                                    if (ImGui::DragFloat("Ignorar bordes de menos de", &kre.c.col_alto, 0.02f, 0.0f, 3.0f, kre.c.col_alto > 0 ? "%.2f m de alto" : "no")) cambio();
+                                    ImGui::TextDisabled("Un bordillo, un escalon o el canto de una pegatina de unos centimetros puede encajar al kart y dejarlo clavado. Con 0,5 m desaparecen de la colision (los muros altos se quedan).");
+                                }
+                                if (pmc && !kre.c.m.empty()) {
+                                    static float h_techo = 3.5f, h_suelo = 1.0f; static std::string inf_auto;
+                                    ImGui::SetNextItemWidth(120); ImGui::DragFloat("Techo a partir de", &h_techo, 0.1f, 1.5f, 30.0f, "%.1f m sobre la carretera");
+                                    ImGui::SetNextItemWidth(120); ImGui::DragFloat("Bajo la carretera desde", &h_suelo, 0.1f, 0.2f, 20.0f, "%.1f m por debajo");
+                                    if (ImGui::Button("Quitar piezas por encima y por debajo del trazado")) {
+                                        // piezas enteras que estan sobre el trazado pero por encima de la cabeza del kart (puentes, columnas altas, techos
+                                        // sueltos) o por debajo de la carretera (estructuras de debajo): no pueden tocar al kart y solo le estorban
+                                        kre.push_undo(); int quitadas = 0;
+                                        float a = kre.c.pista_yaw * 0.0174533f, ca = cosf(a), sa = sinf(a), es = kre.c.pista_esc;
+                                        for (int i = 0; i < npz; i++) {
+                                            float inf[10]; if (!g3d_editor_comp_info(i, inf) || pieza_quitada(kre.c.sincol, inf)) continue;
+                                            float wx0 = 1e30f, wx1 = -1e30f, wz0 = 1e30f, wz1 = -1e30f;
+                                            for (int q = 0; q < 4; q++) { float x = (q & 1) ? inf[6] : inf[3], z = (q & 2) ? inf[8] : inf[5];
+                                                float wx = kre.c.pista_x + (x * ca + z * sa) * es, wz = kre.c.pista_z + (-x * sa + z * ca) * es;
+                                                wx0 = std::min(wx0, wx); wx1 = std::max(wx1, wx); wz0 = std::min(wz0, wz); wz1 = std::max(wz1, wz); }
+                                            float y0 = kre.c.pista_y + inf[4] * es, y1 = kre.c.pista_y + inf[7] * es;
+                                            int solapa = 0, arriba = 0, abajo = 0, mezcla = 0;
+                                            for (auto& s : kre.c.m) {
+                                                float hw = s.ancho * 0.5f;
+                                                if (s.c.x < wx0 - hw || s.c.x > wx1 + hw || s.c.z < wz0 - hw || s.c.z > wz1 + hw) continue;
+                                                solapa++;
+                                                if (y0 > s.c.y + h_techo) arriba++; else if (y1 < s.c.y - h_suelo) abajo++; else mezcla++;
+                                            }
+                                            if (solapa > 0 && mezcla == 0) { kr::SinCol sc; sc.cx = inf[0]; sc.cy = inf[1]; sc.cz = inf[2]; sc.ntri = (int)inf[9]; kre.c.sincol.push_back(sc); quitadas++; }
+                                        }
+                                        char b[120]; snprintf(b, sizeof b, "Quitadas %d piezas de la colision (por encima o por debajo del trazado).", quitadas); inf_auto = b;
+                                        cambio();
+                                    }
+                                    if (!inf_auto.empty()) ImGui::TextWrapped("%s", inf_auto.c_str());
+                                }
+                            }
+                            ImGui::TextDisabled("Activa la casilla y pincha columnas, puentes de debajo o adornos que bloqueen al kart: se marcan en rojo y dejan de colisionar (se siguen viendo).");
                             if (!cm->nodos.empty()) {
                                 ImGui::SeparatorText("Alturas del trazado");
                                 // el modelo bajo cada punto: si el trazado se clico sobre un techo (tunel, puente) y no sobre la carretera, el kart
@@ -10107,6 +10259,27 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                             ImGui::EndCombo();
                         }
                         if (ImGui::SliderFloat("Tamano del kart", &kre.c.kart_tam, 0.5f, 4.0f, "%.2f m")) cambio();
+                        ImGui::SeparatorText("Rivales (IA)");
+                        if (ImGui::SliderInt("Rivales", &kre.c.n_ia, 0, 7)) cambio();
+                        if (kre.c.n_ia > 0) {
+                            const char* dn[] = { "Facil", "Normal", "Dificil" };
+                            if (ImGui::Combo("Dificultad", &kre.c.dif_ia, dn, 3)) cambio();
+                            ImGui::Text("Modelo de los rivales: %s", kre.c.ia_modelo.empty() ? "(el del jugador)" : kre.c.ia_modelo.c_str());
+                            static char fr[48] = "";
+                            if (ImGui::BeginCombo("Modelo rivales", "elegir...")) {
+                                if (ImGui::Selectable("(el del jugador)", kre.c.ia_modelo.empty())) { kre.c.ia_modelo.clear(); cambio(); }
+                                ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##fr", "buscar...", fr, sizeof fr);
+                                for (auto& a : assets) {
+                                    std::string ext = fs::path(a).extension().string();
+                                    if (ext != ".glb" && ext != ".gltf" && ext != ".fbx") continue;
+                                    if (a.find("_pista.glb") != std::string::npos || a.find("_col.glb") != std::string::npos || a.find("_extras.glb") != std::string::npos || a.find("_rampas.glb") != std::string::npos) continue;
+                                    if (fr[0] && a.find(fr) == std::string::npos) continue;
+                                    if (ImGui::Selectable(a.c_str(), kre.c.ia_modelo == "Assets/" + a)) { kre.c.ia_modelo = "Assets/" + a; cambio(); }
+                                }
+                                ImGui::EndCombo();
+                            }
+                            ImGui::TextDisabled("Salen en una parrilla de dos columnas detras de tu kart, por carriles distintos. Con el trazado cerrado.");
+                        }
                         if (ImGui::Button("Colocar la salida con un clic")) road_poner = 4;
                         ImGui::SameLine();
                         if (ImGui::Button("Salida en el primer punto") && !cm->nodos.empty()) { kre.push_undo(); kre.c.sx = cm->nodos[0].x; kre.c.sz = cm->nodos[0].z; cambio(); }
@@ -10270,7 +10443,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                     void* m = load_model(assets[idx]);
                     if (m) {
                         if (drag_ent < 0 || drag_asset != idx) {
-                            if (drag_ent >= 0) g3d_entity_impl_set_position(drag_ent, 0, -99999, 0);
+                            if (drag_ent >= 0) { g3d_entity_impl_destroy_tree(drag_ent, 1); drag_ent = -1; }
                             drag_ent = g3d_model_spawn(scene, m, hit[0], hit[1], hit[2], 0.0f, 0.0f);
                             drag_asset = idx;
                         }
@@ -10294,7 +10467,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         if (drag_ent >= 0) {
             const ImGuiPayload* cur = ImGui::GetDragDropPayload();
             if (!cur || !cur->IsDataType("ASSET_IDX")) {
-                g3d_entity_impl_set_position(drag_ent, 0, -99999, 0);
+                g3d_entity_impl_destroy_tree(drag_ent, 1);
                 drag_ent = -1; drag_asset = -1;
             }
         }
@@ -11099,7 +11272,42 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                             }
                         } else { rc_wdrag = false; kre.tocar(); kre.c.save(kre.ruta()); }
                     }
-                    const bool bloquea = sobre_asa;
+                    // PIEZAS SIN COLISION de la pista propia: se pincha una pieza (columna, puente de debajo, adorno...) y deja de colisionar
+                    bool pieza_click = false;
+                    if (road_sincol && sobre_pista && pista_mdl) {
+                        int npz = g3d_editor_comp_build(pista_mdl);
+                        static int pieza_hov = -1; static uint32_t pieza_t0 = 0; uint32_t ahora_p = SDL_GetTicks();
+                        if (ahora_p - pieza_t0 > 90 || ImGui::IsMouseClicked(ImGuiMouseButton_Left)) { pieza_t0 = ahora_p; pieza_hov = g3d_editor_comp_pick(sx, sy, (float)vp.w, (float)vp.h, pista_mdl, kre.c.pista_x, kre.c.pista_y, kre.c.pista_z, kre.c.pista_esc, kre.c.pista_yaw); }
+                        auto caja = [&](const float* inf, ImU32 col, float grosor) {
+                            float a = kre.c.pista_yaw * 0.0174533f, ca = cosf(a), sa = sinf(a), s = kre.c.pista_esc; ImVec2 pc[8]; bool ok = true;
+                            for (int q = 0; q < 8; q++) {
+                                float x = (q & 1) ? inf[6] : inf[3], y = (q & 2) ? inf[7] : inf[4], z = (q & 4) ? inf[8] : inf[5];
+                                if (!proy(kre.c.pista_x + (x * ca + z * sa) * s, kre.c.pista_y + y * s, kre.c.pista_z + (-x * sa + z * ca) * s, pc[q])) { ok = false; break; }
+                            }
+                            if (!ok) return;
+                            static const int E[12][2] = { {0,1},{2,3},{4,5},{6,7},{0,2},{1,3},{4,6},{5,7},{0,4},{1,5},{2,6},{3,7} };
+                            for (auto& e : E) dl->AddLine(pc[e[0]], pc[e[1]], col, grosor);
+                        };
+                        int dibujadas = 0;
+                        for (int i = 0; i < npz && dibujadas < 400; i++) { float inf[10]; if (g3d_editor_comp_info(i, inf) && pieza_quitada(kre.c.sincol, inf)) { caja(inf, IM_COL32(255, 70, 70, 255), 2.0f); dibujadas++; } }
+                        if (pieza_hov >= 0) {
+                            float inf[10];
+                            if (g3d_editor_comp_info(pieza_hov, inf)) {
+                                caja(inf, IM_COL32(255, 230, 60, 255), 3.0f);
+                                bool q = pieza_quitada(kre.c.sincol, inf);
+                                ImGui::SetTooltip("Pieza de %d triangulos (%.1f x %.1f x %.1f)\n%s", (int)inf[9], (inf[6]-inf[3]) * kre.c.pista_esc, (inf[7]-inf[4]) * kre.c.pista_esc, (inf[8]-inf[5]) * kre.c.pista_esc,
+                                                  q ? "Sin colision: clic para que vuelva a colisionar" : "Clic: quitarla de la colision");
+                                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                                    kre.push_undo();
+                                    if (q) { for (size_t k = 0; k < kre.c.sincol.size(); k++) { const kr::SinCol& s2 = kre.c.sincol[k];
+                                                 if (fabsf(s2.cx - inf[0]) < 0.3f && fabsf(s2.cy - inf[1]) < 0.3f && fabsf(s2.cz - inf[2]) < 0.3f && s2.ntri == (int)inf[9]) { kre.c.sincol.erase(kre.c.sincol.begin() + k); break; } } }
+                                    else { kr::SinCol s2; s2.cx = inf[0]; s2.cy = inf[1]; s2.cz = inf[2]; s2.ntri = (int)inf[9]; kre.c.sincol.push_back(s2); }
+                                    kre.tocar(); kre.c.save(kre.ruta()); pieza_click = true;
+                                }
+                            }
+                        }
+                    }
+                    const bool bloquea = sobre_asa || pieza_click || (road_sincol && sobre_pista);
                     // la salida: linea a cuadros de borde a borde de la carretera y una flecha hacia donde mira el kart
                     if (kre.c.ps >= 0 && kre.c.salida_i >= 0 && kre.c.salida_i < (int)kre.c.m.size()) {
                         const kr::Muestra& s = kre.c.m[kre.c.salida_i];

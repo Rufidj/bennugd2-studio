@@ -149,6 +149,8 @@ struct CruceDet {                                   // derivado: el cruce tal co
     std::vector<int> sup, inf;                      // muestras de la carretera de arriba y de la de abajo
 };
 struct Cp    { float x, y, z, yaw, hw; int sup; };
+// una pieza de la pista propia que NO colisiona (centro de la pieza en el espacio del modelo y su numero de triangulos: la identifican)
+struct SinCol { float cx = 0, cy = 0, cz = 0; int ntri = 0; };
 
 struct Muestra {
     V3 c, izq_borde, der_borde, t, izq;   // centro, bordes, tangente, lateral (+X = izquierda)
@@ -182,9 +184,17 @@ struct Circuito {
     std::string pista_glb;                     // pista propia (.glb de Blender...): se ve y colisiona ella, no se genera carretera. "" = carretera generada
     float sy_manual = 1.0f, syaw_manual = 0;   // salida a mano (altura y rumbo) cuando no hay trazado
     bool sin_terreno = false;                  // con pista propia: no se ve el terreno de la escena vinculada en el juego
+    std::vector<SinCol> sincol;                // piezas de la pista propia que se quitan de la colision
+    std::string ex_pcol;                       // modelo de colision generado (sin esas piezas); "" = se usa la pista entera
+    // lo pone el editor: escribe el modelo de colision sin las piezas quitadas
+    float col_alto = 0;                        // colision de la pista propia: se descartan las caras empinadas de menos de estos metros de alto (bordillos, cantos)
+    bool  col_sin_techos = false;              // ... y las que miran hacia abajo (techos, bajos de puentes)
+    std::function<bool(const std::string&, const std::string&, const std::vector<SinCol>&, float, float, const std::string&, std::string&)> hook_col;
     std::string ex_vis, ex_col;                // con pista propia: modelos extra generados (turbos y meta / rampas con colision); "" = ninguno
     float pista_x = 0, pista_y = 0, pista_z = 0, pista_esc = 1.0f, pista_yaw = 0;   // colocacion de la pista propia: posicion, escala y giro (grados)
     float kart_tam = 1.3f;
+    int   n_ia = 0, dif_ia = 1;                // rivales con IA (0..7) y su dificultad (0 facil, 1 normal, 2 dificil)
+    std::string ia_modelo;                     // modelo de los rivales ("" = el del jugador)
     float margen = 60;                         // cesped alrededor (y limites del respawn)
 
     Circuito() { for (int k = 0; k < MT_N; k++) esc[k] = MT_ESC[k]; efectos_defecto(); }
@@ -262,7 +272,7 @@ struct Circuito {
     // ------------------------------------------------------------- .kart
     bool load(const std::string& ruta) {
         std::ifstream in(ruta); if (!in) return false;
-        caminos.clear(); rampas.clear(); objetos.clear(); turbos.clear(); lagos.clear(); cruces.clear(); luces.clear(); vueltas = 3; efectos_defecto(); pista_glb.clear(); sin_terreno = false; sy_manual = 1.0f; syaw_manual = 0; pista_x = pista_y = pista_z = 0; pista_esc = 1.0f; pista_yaw = 0;
+        caminos.clear(); rampas.clear(); objetos.clear(); turbos.clear(); lagos.clear(); cruces.clear(); luces.clear(); vueltas = 3; efectos_defecto(); n_ia = 0; dif_ia = 1; ia_modelo.clear(); pista_glb.clear(); sincol.clear(); col_alto = 0; col_sin_techos = false; sin_terreno = false; sy_manual = 1.0f; syaw_manual = 0; pista_x = pista_y = pista_z = 0; pista_esc = 1.0f; pista_yaw = 0;
         bool hubo_amb = false; amb_modo = 1; amb_hora = 9.0f; amb_dur = 240.0f; faros = 1;
         for (int k = 0; k < MT_N; k++) { tex[k].clear(); esc[k] = MT_ESC[k]; }
         std::vector<std::pair<Nodo, Tramo>> viejos;       // formato antiguo (punto=): una sola linea cerrada
@@ -310,8 +320,11 @@ struct Circuito {
             else if (k == "pista") pista_glb = v;
             else if (k == "salida3d") s >> sy_manual >> syaw_manual;
             else if (k == "sin_terreno") { int v = 0; s >> v; sin_terreno = v != 0; }
+            else if (k == "colision") { int t = 0; s >> col_alto >> t; col_sin_techos = t != 0; }
+            else if (k == "sincol") { SinCol sc; if (s >> sc.cx >> sc.cy >> sc.cz >> sc.ntri) sincol.push_back(sc); }
             else if (k == "pista3d") s >> pista_x >> pista_y >> pista_z >> pista_esc >> pista_yaw;
             else if (k == "kart_tam") s >> kart_tam;
+            else if (k == "rivales") { s >> n_ia >> dif_ia; n_ia = std::clamp(n_ia, 0, 7); dif_ia = std::clamp(dif_ia, 0, 2); ia_modelo = resto(s); }
             else if (k == "margen") s >> margen;
         }
         if (caminos.empty() && !viejos.empty()) {
@@ -330,6 +343,9 @@ struct Circuito {
         FILE* f = fopen(ruta.c_str(), "w"); if (!f) return false;
         fputs("# circuito de karts (editor3d, modo Carreras)\n", f);
         if (!pista_glb.empty()) fprintf(f, "# pista propia: este .glb se ve y colisiona, no se genera carretera\npista=%s\nsalida3d=%.3f %.3f\npista3d=%.3f %.3f %.3f %.4f %.2f\nsin_terreno=%d\n", pista_glb.c_str(), sy_manual, syaw_manual, pista_x, pista_y, pista_z, pista_esc, pista_yaw, sin_terreno ? 1 : 0);
+        if (!pista_glb.empty()) fprintf(f, "colision=%.3f %d\n", col_alto, col_sin_techos ? 1 : 0);
+        for (auto& sc : sincol) fprintf(f, "sincol=%.4f %.4f %.4f %d\n", sc.cx, sc.cy, sc.cz, sc.ntri);
+        fprintf(f, "rivales=%d %d %s\n", n_ia, dif_ia, ia_modelo.c_str());
         fprintf(f, "kart=%s\nkart_tam=%.3f\nmargen=%.1f\nsalida=%.3f %.3f\nvueltas=%d\n", kart.c_str(), kart_tam, margen, sx, sz, vueltas);
         if (!escena.empty()) fprintf(f, "# escena 3D con el terreno y los objetos (se edita en los modos Terreno y Escena)\nescena=%s\n", escena.c_str());
         fputs("# efecto=superficie(0 asfalto,1 tierra,2 hielo,3 barro) agarre velocidad aceleracion   (multiplicadores)\n", f);
@@ -1041,7 +1057,7 @@ struct Circuito {
         if (!escena.empty() && !fs::exists(fs::path(proyecto) / escena)) escena.clear();
         calcular();
         const bool propia_pista = !pista_glb.empty();                // pista propia: su .glb se usa tal cual; solo se generan turbos, meta y rampas encima
-        ex_vis.clear(); ex_col.clear();
+        ex_vis.clear(); ex_col.clear(); ex_pcol.clear();
         if (propia_pista && !fs::exists(fs::path(proyecto) / pista_glb)) { err = "no existe la pista " + pista_glb; return false; }
         if (!propia_pista && m.empty()) { err = "el circuito necesita al menos un camino con 2 nodos"; return false; }
         std::error_code ec;
@@ -1078,6 +1094,10 @@ struct Circuito {
         if (aviso) *aviso += avisos();
         if (propia_pista) {
             rel = pista_glb;
+            if ((!sincol.empty() || col_alto > 0 || col_sin_techos) && hook_col) {   // la colision sin las piezas quitadas ni las caras que estorban
+                std::string rc = "Assets/Models/" + nombre + "_col.glb", e3;
+                if (hook_col(proyecto, pista_glb, sincol, col_sin_techos ? -0.3f : -2.0f, col_alto > 0 ? col_alto / std::max(0.001f, pista_esc) : 0.0f, rc, e3)) ex_pcol = rc; else if (aviso) *aviso += "colision: " + e3 + "\n";
+            }
             if (m.empty()) return true;
             std::vector<Malla> V = M, C = M; bool hv = false, hc = false;
             for (int k = 0; k < MT_N; k++) {

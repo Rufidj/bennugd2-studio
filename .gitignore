@@ -20,3 +20,4 @@ main.prg
 
 # Paquetes portables generados por tools/empaquetar.sh
 /dist/
+/carreras/

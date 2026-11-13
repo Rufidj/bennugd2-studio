@@ -48,7 +48,10 @@ static std::vector<std::string> scan_dir(const std::string& dir,
     return out;
 }
 static std::vector<std::string> scan_assets(const std::string& dir) {
-    return scan_dir(dir, { ".glb", ".gltf", ".fbx" });
+    std::vector<std::string> v = scan_dir(dir, { ".glb", ".gltf", ".fbx" });
+    // las pistas que genera el modo Carreras (<circuito>_pista.glb) no son assets que colocar
+    v.erase(std::remove_if(v.begin(), v.end(), [](const std::string& s) { return s.find("_pista.glb") != std::string::npos; }), v.end());
+    return v;
 }
 // Nombre valido para BennuGD2 a partir de un texto cualquiera (el nombre de un
 // fichero, lo que ha escrito el usuario): minusculas, sin acentos ni espacios, y
@@ -140,7 +143,11 @@ static void scan_sonoros(const std::string& assets, const char* sub,
 }
 
 static std::vector<std::string> scan_textures(const std::string& dir) {
-    return scan_dir(dir, { ".png", ".jpg", ".jpeg", ".tga", ".bmp" });
+    std::vector<std::string> v = scan_dir(dir, { ".png", ".jpg", ".jpeg", ".tga", ".bmp" });
+    // Textures/carreras/ es de uso interno del modo Carreras (texturas de serie de la pista y copias de las tuyas):
+    // si no se quitan, la primera (el asfalto) se convierte en la base de TODOS los terrenos
+    v.erase(std::remove_if(v.begin(), v.end(), [](const std::string& s) { return s.find("Textures/carreras/") != std::string::npos || s.rfind("carreras/", 0) == 0; }), v.end());
+    return v;
 }
 
 #include "imgui.h"
@@ -154,6 +161,8 @@ static std::vector<std::string> scan_textures(const std::string& dir) {
 #include "IconsFontAwesome6.h"   // macros ICON_FA_* para la toolbar
 #include <SDL_opengl.h>
 #include "hud2d.h"             // FPG/FNT/PNG nativos: el previo del HUD 2D
+#include "tilemap.h"           // modo Plataformas 2.5D: niveles por tiles con textura
+#include "carreras.h"          // modo Carreras: circuitos de karts (.kart)
 
 // ---- API C del motor (core de libmod_3d, sin la capa BennuGD2) --------------
 extern "C" {
@@ -200,6 +209,8 @@ extern "C" {
     int   g3d_light_impl_set_cone(int light_id, float angle_degrees);
     int   g3d_light_impl_destroy(int light_id);
     void *g3d_gltf_load(const char *filepath);
+    void *g3d_gltf_unshare(const char *filepath);   // saca el modelo de la cache compartida del motor
+    void  g3d_gltf_free(void *model);
     void *g3d_fbx_load(const char *filepath);
     void  g3d_fbx_set_recenter(int enabled);
     void  g3d_model_animate_all(void *model, float time, int loop);
@@ -263,6 +274,16 @@ extern "C" {
     int   g3d_entity_impl_set_rotation(int entity_id, float pitch, float yaw, float roll);
     int   g3d_entity_impl_set_scale(int entity_id, float sx, float sy, float sz);
     int   g3d_entity_impl_destroy(int entity_id);
+    int   g3d_editor_count_entities(void);
+    int   g3d_editor_model_ray_all(void *model, float ox, float oy, float oz, float dx, float dy, float dz, float tx, float ty, float tz, float scale, float yaw_deg, float *out, int max);
+    int   g3d_editor_model_pick_all(float sx, float sy, float w, float h, void *model, float tx, float ty, float tz, float scale, float yaw_deg, float *out, int max);
+    int   g3d_editor_model_bounds(void *model, float *out6);
+    void  g3d_editor_terrain_destroy(void);
+    int   g3d_editor_model_pick(float sx, float sy, float w, float h, void *model, float tx, float ty, float tz, float scale, float yaw_deg, float *out);
+    int   g3d_entity_impl_destroy_tree(int root_id, int free_materials);   // la raiz y todo lo que cuelga de ella (un modelo = raiz + una entidad por malla)
+    int   g3d_editor_prev_group(int scene_id, float x, float y, float z, float yaw_rad);        // mapas 2.5D en el mundo: vista previa (engine_bridge.c)
+    int   g3d_editor_prev_material(const char *path);
+    int   g3d_editor_prev_box(int scene_id, int parent, float cx, float cy, float cz, float sx, float sy, float sz, int mat);
     void  g3d_editor_get_view(float *m16);
     void  g3d_editor_get_proj(float *m16);
     void  g3d_editor_set_aspect(float a);
@@ -299,6 +320,7 @@ extern "C" {
     void  g3d_editor_terrain_smooth(void *mesh, float x, float z, float r, float amt);
     void  g3d_editor_terrain_flatten(void *mesh, float x, float z, float r, float amt);
     void  g3d_editor_terrain_flatten_to(void *mesh, float x, float z, float r, float target_h, float amt);
+    void  g3d_gltf_set_recenter(int on);
     void  g3d_editor_terrain_hole(void *mesh, float x, float z, float r, int on);
     float g3d_editor_terrain_height(void *mesh, float x, float z);
     int   g3d_editor_world_to_screen(float wx, float wy, float wz, float w, float h, float *out2);
@@ -522,6 +544,13 @@ int main(int, char**) {
     // venga junto al ejecutable.
     std::string project_dir = ruta_util("project", PROJECT_DIR);   // carpeta raiz del proyecto
     std::string project_name = "proyecto";
+    // Depuracion y pruebas: EDITOR_PROYECTO=<carpeta> abre (y crea si falta) ese proyecto en vez del de siempre
+    if (const char* ep = getenv("EDITOR_PROYECTO")) if (*ep) {
+        project_dir = ep;
+        std::error_code ec;
+        for (const char* sub : { "", "/Assets", "/Scenes", "/Scripts" }) fs::create_directories(project_dir + sub, ec);
+        project_name = fs::path(project_dir).filename().string();
+    }
 
     // texturas del proyecto (para pintar el terreno) -- NO hardcodeadas
     std::string tex_dir = project_dir + "/Assets";
@@ -601,9 +630,36 @@ int main(int, char**) {
 
     // terreno esculpible: base = primera textura del proyecto (o sin textura)
     std::string base_path = paints.empty() ? "" : (tex_dir + "/" + paints[0].file);
-    void* terrain = g3d_editor_make_terrain(scene, 160, 400.0f, 40.0f,
+    // tamano del terreno: se puede cambiar por escena (se guarda en la .scene como TERRAINSIZE)
+    int   terr_grid = 160;          // celdas por lado
+    float terr_size = 400.0f;       // metros por lado
+    void* terrain = g3d_editor_make_terrain(scene, terr_grid, terr_size, 40.0f,
                                             base_path.empty() ? nullptr : base_path.c_str());
-    g3d_zone_init(161, 400.0f);   // mascara de zonas: misma extension que el terreno (grid 160)
+    g3d_zone_init(terr_grid + 1, terr_size);   // mascara de zonas: misma extension que el terreno
+    // rehace el terreno con otro tamano, conservando el relieve (se remuestrea); el pintado se pierde (depende del tamano)
+    auto terrain_resize = [&](int grid, float size) {
+        if (grid == terr_grid && fabsf(size - terr_size) < 0.01f) return;
+        std::vector<float> hs;
+        int nv = (grid + 1) * (grid + 1);
+        hs.resize(nv);
+        for (int j = 0; j <= grid; j++)
+            for (int i = 0; i <= grid; i++) {
+                float wx = ((float)i / grid - 0.5f) * size, wz = ((float)j / grid - 0.5f) * size;
+                hs[(size_t)j * (grid + 1) + i] = (fabsf(wx) <= terr_size * 0.5f && fabsf(wz) <= terr_size * 0.5f) ? g3d_editor_terrain_height(terrain, wx, wz) : 0.0f;
+            }
+        g3d_editor_terrain_destroy();
+        terrain = g3d_editor_make_terrain(scene, grid, size, std::min(40.0f * size / 400.0f, 160.0f), base_path.empty() ? nullptr : base_path.c_str());   // la textura base se repite mas en un terreno grande
+        if (terrain) g3d_editor_terrain_restore(terrain, hs.data());
+        terr_grid = grid; terr_size = size;
+        g3d_zone_init(grid + 1, size);
+    };
+    // tamano de terreno que dice una escena (para leerla sin cargarla): 0 = no dice nada (400 de serie)
+    auto terreno_tam_de = [&](const std::string& scene_file, int* grid_out) -> float {
+        FILE* tf = fopen(scene_file.c_str(), "r"); if (!tf) return 400.0f;
+        char tl[512]; float sz = 400.0f; int gr = 160;
+        while (fgets(tl, sizeof tl, tf)) { if (sscanf(tl, "TERRAINSIZE %d %f", &gr, &sz) == 2) break; sz = 400.0f; gr = 160; if (tl[0] == 'O' && !strncmp(tl, "OBJECT", 6)) break; }
+        fclose(tf); if (grid_out) *grid_out = gr; return sz;
+    };
 
     // ---- lagos colocados (agua con la forma de un hoyo del terreno) ----
     // Efectos PROPIOS de cada masa de agua (olas, color, textura). Cada lago/rio
@@ -1080,7 +1136,7 @@ int main(int, char**) {
         std::vector<float> hs(nv);
         g3d_editor_terrain_snapshot(terrain, hs.data());
         if (!g3d_watersim_active())
-            g3d_watersim_init(hs.data(), side, 400.0f);
+            g3d_watersim_init(hs.data(), side, terr_size);
         else
             g3d_watersim_set_terrain(hs.data());
         g3d_watersim_set_sea_level(water_on ? water_level : -1e30f);
@@ -1111,7 +1167,7 @@ int main(int, char**) {
         if (iRock  < 0) iRock  = iGrass;
         if (iSand  < 0) iSand  = iGrass;
         if (iSnow  < 0) iSnow  = iRock;
-        const float half = 200.0f;            /* worldsize 400 -> [-200,200] */
+        const float half = terr_size * 0.5f;  /* worldsize 400 -> [-200,200] */
         // rango de alturas (muestreo grueso)
         float hmin = 1e30f, hmax = -1e30f;
         for (float z = -half; z <= half; z += 10.0f)
@@ -1402,6 +1458,7 @@ int main(int, char**) {
 
     bool show_gvars = false;               // ventana de variables del juego
     bool show_escenas = false;             // ventana de escenas del proyecto
+    bool show_mapas = false;               // ventana de mapas 2.5D colocados en el mundo
     bool show_menus = false;               // ventana de menus del juego
     bool show_dialogos = false;            // ventana de dialogos
     bool show_guardado = false;            // ventana de guardar partida
@@ -1409,8 +1466,12 @@ int main(int, char**) {
     /* ---- MODOS DE TRABAJO ----
        El editor no ensenia todo a la vez: cada modo saca sus herramientas y sus
        paneles, y esconde lo que no toca. Es lo que hace que no se amontone. */
-    enum Modo { M_ESCENA, M_TERRENO, M_PERSONAJES, M_INTERFAZ, M_CODIGO, M_NUM };
+    enum Modo { M_ESCENA, M_TERRENO, M_PERSONAJES, M_INTERFAZ, M_CODIGO, M_PLATAFORMAS, M_CARRERAS, M_NUM };
     int  modo = M_ESCENA;
+    TileEditor te;                         // modo Plataformas 2.5D (tilemap.h)
+    kr::EditorCarreras kre;                // modo Carreras: circuitos de karts (carreras.h)
+    int kre_prev_ent = -1;                 // la carretera del circuito, como vista previa en el visor 3D
+    if (const char* em = getenv("EDITOR_MODO")) { int m_ = atoi(em); if (m_ >= 0 && m_ < M_NUM) modo = m_; }   // depuracion: arrancar en un modo
     int  modo_ant = -1;                    // para rehacer la disposicion al cambiar
     bool rehacer_layout = false;           // "restablecer disposicion"
     bool poner_delante = false;            // traer al frente las pestanas del modo
@@ -1450,9 +1511,12 @@ int main(int, char**) {
     // ---- herramienta activa (toolbar con iconos) ----
     enum Tool { T_SELECT, T_MOVE, T_ROTATE, T_SCALE, T_PLACE, T_RAISE, T_LOWER, T_SMOOTH, T_FLATTEN, T_PAINT,
                 T_HOLE, T_ZONE, T_LAKE, T_RIVER, T_WATERFALL, T_WATERSOURCE, T_VERTEX,
-                T_SCATTER, T_HUD, T_SPRITE, T_CLOTH, T_ROPE, T_LIGHT };
+                T_SCATTER, T_HUD, T_SPRITE, T_CLOTH, T_ROPE, T_LIGHT, T_ROAD };
     bool hole_fill = false;   // T_HOLE: false=perforar, true=rellenar
     int tool = T_SELECT;
+    int road_nodo_sel = -1;   // T_ROAD: punto elegido del circuito
+    int road_pista_op = 0;    // pista propia: gizmo en el visor (0 ninguno, 1 mover, 2 rotar, 3 escalar)
+    int road_poner = 0;       // T_ROAD: que pone un clic (0 punto de la carretera, 1 placa de turbo, 2 rampa, 3 farola)
     int  zone_layer = 0;      // T_ZONE: capa (0..3) que se pinta
     bool zone_erase = false;  // T_ZONE: borrar en vez de pintar
     bool  cam_gizmo = false;   // el gizmo mueve la CAMARA cuando no hay objeto elegido
@@ -1717,6 +1781,7 @@ int main(int, char**) {
         float walk_speed = 12.0f, run_speed = 26.0f, jump_force = 13.0f;
         int   anim_idle = 0, anim_walk = 1, anim_run = 2, anim_jump = 3;
         int   anim_swim = -1;    // animacion de nado (-1 = ninguna)
+        int   anim_shoot = -1;   // animacion de disparo (-1 = ninguna): al disparar parado, se reproduce sin repetir
         float char_radius = 0.6f;  // radio de la capsula de colision del jugador
         float char_height = 3.0f;  // altura; en agua flota con la cabeza (py+altura) en la superficie
                                    //   -> menor altura = flota mas alto (util para barcos)
@@ -1733,6 +1798,11 @@ int main(int, char**) {
         int   amb_vol = 100;            // 0..128 pegado a el
     };
     std::vector<SObj> objects;
+    /* Mapas 2.5D (niveles de plataformas) colocados en el mundo: 'MAPA <nivel> x y z giro' en la escena. Se ven de verdad, y se entra por su portal. */
+    struct MapaObj { std::string nivel; float x = 0, y = 0, z = 0, yaw = 0; int modo = 0; int puerta = 1; std::string ev_pulsar, ev_abrir, ev_entrar; };   // puerta: con puerta e interruptor; ev_*: PROCESS tuyos a los que se llama al pulsar el interruptor, al abrirse la puerta y al entrar   // modo 0 = fachada + teletransporte a la escena del mapa; 1 = integrado en el mundo
+    std::vector<MapaObj> mapas;
+    std::vector<int> mapas_prev;            // raices de la vista previa de cada mapa en el editor
+    bool mapas_sucios = true;               // hay que reconstruir la vista previa
     int obj_sel = -1;
 
     // ---- HUD 2D: los graficos y los textos de BennuGD2 encima de la escena ----
@@ -2463,7 +2533,7 @@ int main(int, char**) {
         std::error_code ec;
         for (auto& e : fs::directory_iterator(scenes_dir, ec)) {
             if (!e.is_regular_file(ec)) continue;
-            if (e.path().extension() != ".scene") continue;
+            if (e.path().extension() != ".scene" && e.path().extension() != ".plat" && e.path().extension() != ".kart") continue;   // .plat = nivel de plataformas, .kart = circuito
             out.push_back(e.path().filename().string());
         }
         std::sort(out.begin(), out.end());
@@ -2475,6 +2545,42 @@ int main(int, char**) {
         return -1;
     };
 
+    /* ---- Vista previa de los mapas 2.5D del mundo: se construyen en la escena del editor (cajas con la textura de cada tile) para verlos
+       y colocarlos donde van. Solo es una vista: el juego los construye con su biblioteca (pl_montar_mundo). ---- */
+    auto mapas_reconstruir = [&]() {
+        for (int r : mapas_prev) if (r >= 0) g3d_entity_impl_destroy(r);
+        mapas_prev.clear(); mapas_sucios = false;
+        if (mapas.empty()) return;
+        if (te.game_dir.empty()) te.game_dir = project_dir;
+        if (te.tiles.empty()) te.load_tileset();
+        for (auto& m : mapas) {
+            G3DLvl* l = te.open_lvl(m.nivel);
+            if (!l) { mapas_prev.push_back(-1); continue; }
+            int root = g3d_editor_prev_group(scene, m.x, m.y, m.z, m.yaw * 0.0174533f);
+            mapas_prev.push_back(root);
+            int W = g3d_lvl_width(l, 0), H = g3d_lvl_height(l, 0);
+            std::vector<int> mats(te.tiles.size() + 1, -1);
+            auto mat_de = [&](int t) { if (t < 1 || t > (int)te.tiles.size()) return -1; if (mats[t] < 0) mats[t] = g3d_editor_prev_material(te.tiles[t - 1].tex.empty() ? "" : (te.tiles_dir() + "/" + te.tiles[t - 1].tex).c_str()); return mats[t]; };
+            auto pinta = [&](int capa, float zc, float sz, bool solo_solidos) {
+                uint8_t* d = g3d_lvl_layer(l, 0, capa); if (!d) return;
+                for (int r = 0; r < H; r++) {
+                    int c = 0;
+                    while (c < W) {
+                        int t = d[(H - 1 - r) * W + c];   // la fila 0 de la imagen es la de ARRIBA: r cuenta desde abajo
+                        bool ok = t > 0 && t <= (int)te.tiles.size();
+                        if (ok && solo_solidos) { const TmTile& tt = te.tiles[t - 1]; ok = (tt.solid || tt.ramp || tt.door) && tt.marker.empty() && !tt.portal && !tt.liq; }
+                        if (!ok) { c++; continue; }
+                        int c0 = c; while (c < W && d[(H - 1 - r) * W + c] == t) c++;
+                        g3d_editor_prev_box(scene, root, (c0 + c) * 1.0f * 1.0f, r * 2.0f + 1.0f, zc, (c - c0) * 2.0f, 2.0f, sz, mat_de(t));
+                    }
+                }
+            };
+            pinta(0, -1.35f, 3.3f, true);      // plano jugable (solidos)
+            pinta(1, -4.2f, 1.6f, false);      // fondo
+            pinta(6, 2.2f, 2.0f, false);       // fachada (lo que se ve desde fuera)
+            g3d_lvl_free(l);
+        }
+    };
     std::string scene_path = scenes_dir + "/level.scene";   // escena actual
     // La escena por la que empieza el juego (relativa al proyecto). Es la que dice
     // el manifiesto .bgd2; las demas se llegan cambiando de escena desde una regla.
@@ -2915,6 +3021,9 @@ int main(int, char**) {
                             if (ImGui::Selectable(e.c_str(), e == a.escena)) a.escena = e;
                         ImGui::EndCombo();
                     }
+                    { bool rec = (a.ranura == 2);
+                      if (ImGui::Checkbox("Recordar donde estoy (para poder volver)", &rec)) a.ranura = rec ? 2 : 1;
+                      if (ImGui::IsItemHovered()) ImGui::SetTooltip("Entrar a un mapa 2.5D (base, interior, pasillo) desde el mundo 3D:\nal salir del mapa por un portal 'Salir al mundo 3D' vuelves a esta escena, justo donde estabas."); }
                     if (!a.escena.empty() && indice_escena(a.escena) < 0)
                         ImGui::TextColored(ImVec4(1, 0.6f, 0.4f, 1), "  Esa escena ya no esta.");
                     else
@@ -3441,6 +3550,10 @@ int main(int, char**) {
                         /* No se cambia aqui mismo: quien pide el cambio es un objeto
                            de la escena que se va, y se moriria a media faena. Se deja
                            pedido y lo hace escena_gestor. */
+                        if (a.ranura == 2) {   // "recordar donde estoy": se apunta la escena y la posicion del jugador para volver (tras ir, no se vuelve a disparar hasta pasado un segundo)
+                            snprintf(l, sizeof(l), "%sIF (vuelta_cd == 0)\n%s    vuelta_escena = escena_actual; vuelta_x = jug_x; vuelta_y = jug_y; vuelta_z = jug_z; vuelta_ok = 1;\n"
+                                     "%s    escena_pedida = %d;   // ir a %s y poder volver\n%sEND\n", tab, tab, tab, ne, a.escena.c_str(), tab);
+                        } else
                         snprintf(l, sizeof(l), "%sescena_pedida = %d;   // ir a %s\n",
                                  tab, ne, a.escena.c_str());
                     } else if (a.tipo == 4) {
@@ -3645,12 +3758,14 @@ int main(int, char**) {
                    entidad, cualquier cosa que preguntara por este proceso se volvia
                    loca -- signal(TYPE ...) se llamaba a si misma sin fin y tumbaba
                    el juego al cambiar de escena. */
+                + std::string(!mapas.empty() ? "DECLARE PROCESS jug_bala(float bx, float by, float bz, float ddx, float ddz)\nEND\n\n" : "") +
                 "PROCESS " + o.name + "(int ent, int modelo)\n"
                 "PRIVATE\n"
                 "    int ch; int gnd; int inw; int moja;\n"
                 "    float wx; float wz; float wl; float spd; float t; float facing; float wlev;\n"
                 "    float mirax; float miray; float adel; float lat;\n"
                 "    float px; float py; float pz; float prevx; float prevz; float dt; float ript;\n"
+                "    int fprev; int cd; float tsh;\n"
                 "END\n"
                 "BEGIN\n"
                 "    // Proceso BennuGD2: usa sus variables nativas. La entidad la creo\n"
@@ -3693,7 +3808,15 @@ int main(int, char**) {
                 "    mirax = 0.0; miray = 0.0;\n"
                 "    g3d_mouse_capture(1);   // ocultar y capturar el raton\n";
             fmt +=
-                "\n    LOOP\n"
+                "\n    LOOP\n";
+            if (!mapas.empty())
+                fmt +=
+                "        IF (pl_dentro) y = 0.0 - 50000.0; FRAME; CONTINUE; END   // dentro de un mapa 2.5D juega el heroe 2D: este se aparta de la vista\n"
+                "        IF (pl_sal_ok)   // el heroe 2D salio por la puerta del mapa: el jugador reaparece delante de ella\n"
+                "            g3d_char_set_position(ch, pl_sal_x, pl_sal_y, pl_sal_z);\n"
+                "            x = pl_sal_x; y = pl_sal_y; z = pl_sal_z; pl_sal_ok = 0;\n"
+                "        END\n";
+            fmt +=
                 "        prevx = g3d_char_x(ch); prevz = g3d_char_z(ch);\n\n";
             if (fps_look) {
                 char lk[1024];
@@ -3786,9 +3909,23 @@ int main(int, char**) {
                 "        IF (key(_SPACE)) g3d_char_jump(ch, %.3f); END\n"
                 "        g3d_char_update(ch, dt);\n\n"
                 "        px = g3d_char_x(ch); py = g3d_char_y(ch); pz = g3d_char_z(ch);\n";
+            float ws_ = o.walk_speed, rs_ = o.run_speed, jf_ = o.jump_force;
+            if (!mapas.empty()) {   // con mapas 2.5D el jugador se mueve IGUAL que el heroe de los niveles (misma velocidad y mismo salto)
+                PlatCfg pcj; if (!pcj.load(project_dir + "/plataformas.cfg")) pcj.defaults();
+                ws_ = pcj.run; rs_ = pcj.run; jf_ = pcj.jump;
+            }
             snprintf(b, sizeof(b), fmt.c_str(),
-                o.x, o.y, o.z, o.char_radius, o.char_height, o.walk_speed, o.run_speed, o.jump_force);
+                o.x, o.y, o.z, o.char_radius, o.char_height, ws_, rs_, jf_);
             s += b;
+            if (!mapas.empty()) {   // disparar: J / X / Z lanza una bola hacia donde mira (como en los niveles)
+                s += "\n        // ---------- DISPARO (J / X / Z) ----------\n"
+                     "        IF (cd > 0) cd = cd - 1; tsh = tsh + dt; ELSE tsh = 0.0; END\n"
+                     "        IF ((key(_J) OR key(_X) OR key(_Z) OR joy_getbutton(JOY_BUTTON_X)) AND NOT fprev AND cd == 0)\n"
+                     "            jug_bala(px, py + 1.4, pz, sin(facing), cos(facing));\n"
+                     "            cd = 14;\n"
+                     "        END\n"
+                     "        fprev = key(_J) OR key(_X) OR key(_Z) OR joy_getbutton(JOY_BUTTON_X);\n";
+            }
 
             {
                 // Nado + ondas en el agua que haya DEBAJO (mar, lago o rio). Cada
@@ -3825,7 +3962,7 @@ int main(int, char**) {
 
             s += "\n        // vars nativas: el motor coloca el modelo al hacer FRAME (sin set_position)\n"
                  "        x = px; y = py; z = pz;\n"
-                 "        angle_y = facing;\n"
+                 "        angle_y = facing" + (o.ry != 0.0f ? " + (" + std::to_string((int)(o.ry * 57.29578f * 1000.0f)) + ")" : std::string()) + ";   // + el giro de correccion del modelo (rotacion Y del objeto)\n"
                  "        jug_x = px; jug_y = py; jug_z = pz;   // lo leen los NPC y los objetos\n";
 
             void* mm = load_model(o.asset);
@@ -3837,15 +3974,20 @@ int main(int, char**) {
                     "        IF (gnd == 0)\n"
                     "            g3d_model_animate(modelo, %d, t, 1);          // saltando\n"
                     "        ELSE\n"
+                    "%s"
                     "            IF (wl > 0.001)\n"
                     "                IF (key(_L_SHIFT) OR key(_R_SHIFT)) g3d_model_animate(modelo, %d, t, 1);   // corriendo\n"
                     "                ELSE g3d_model_animate(modelo, %d, t, 1); END                              // andando\n"
                     "            ELSE\n"
                     "                g3d_model_animate(modelo, %d, t, 1);      // quieto\n"
                     "            END\n"
+                    "%s"
                     "        END\n%s",
                     (o.anim_swim >= 0) ? "        IF (inw == 0)\n" : "",
-                    o.anim_jump, o.anim_run, o.anim_walk, o.anim_idle,
+                    o.anim_jump,
+                    (!mapas.empty() && o.anim_shoot >= 0) ? ("            IF (cd > 0 AND wl < 0.001)\n                g3d_model_animate(modelo, " + std::to_string(o.anim_shoot) + ", tsh, 0);   // disparando parado: el canon sube poco a poco\n            ELSE\n").c_str() : "",
+                    o.anim_run, o.anim_walk, o.anim_idle,
+                    (!mapas.empty() && o.anim_shoot >= 0) ? "            END\n" : "",
                     (o.anim_swim >= 0) ? "        END\n" : "");
                 s += b;
                 if (o.anim_swim >= 0) {
@@ -4111,6 +4253,7 @@ int main(int, char**) {
         FILE* f = fopen(path.c_str(), "w");
         if (!f) { status = "ERROR guardando escena"; return; }
         fputs("# escena del editor BennuGD2\n", f);
+        fprintf(f, "TERRAINSIZE %d %.1f\n", terr_grid, terr_size);
         for (auto& c : cuerdas)
             fprintf(f, "CUERDA %.4f %.4f %.4f %.4f %.4f %.4f %d %.4f %.4f %d %d %.3f %.3f %.3f %.3f|%s|%s\n",
                     c.ax, c.ay, c.az, c.bx, c.by, c.bz, c.segmentos, c.grosor, c.holgura,
@@ -4178,6 +4321,13 @@ int main(int, char**) {
                     w.top[0], w.top[1], w.top[2], w.base[0], w.base[1], w.base[2], w.width,
                     w.fx.tex, w.fx.speed, w.fx.foam, w.fx.color[0], w.fx.color[1], w.fx.color[2], w.arc);
         }
+        for (auto& m : mapas) {
+            fprintf(f, "MAPA %s %.4f %.4f %.4f %.4f %d %d", m.nivel.c_str(), m.x, m.y, m.z, m.yaw, m.modo, m.puerta);
+            if (!m.ev_pulsar.empty()) fprintf(f, " PULSAR=%s", m.ev_pulsar.c_str());
+            if (!m.ev_abrir.empty())  fprintf(f, " ABRIR=%s", m.ev_abrir.c_str());
+            if (!m.ev_entrar.empty()) fprintf(f, " ENTRAR=%s", m.ev_entrar.c_str());
+            fputc('\n', f);
+        }
         for (auto& o : objects) {
             /* 'MUEVETELAS' va aparte y al final: asi las escenas viejas se leen
                igual y las nuevas no rompen a un editor anterior. */
@@ -4189,6 +4339,7 @@ int main(int, char**) {
                         o.walk_speed, o.run_speed, o.jump_force,
                         o.anim_idle, o.anim_walk, o.anim_run, o.anim_jump, o.anim_swim,
                         o.char_radius, o.char_height);
+            if (o.is_player && o.anim_shoot >= 0) fprintf(f, " ASHOOT %d", o.anim_shoot);
             if (o.zone_layer >= 0)
                 fprintf(f, " ZONELAYER %d", o.zone_layer);
             // ATTACH va al final: el nombre del hueso ocupa el resto de la linea
@@ -4301,11 +4452,15 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         FILE* f = fopen(path.c_str(), "r");
         if (!f) { status = "No pude abrir la escena"; return; }
         scene_path = path;
+        {   // el terreno de esta escena puede ser de otro tamano
+            int gr = 160; float sz = terreno_tam_de(path, &gr);
+            if (gr != terr_grid || fabsf(sz - terr_size) > 0.01f) terrain_resize(gr, sz);
+        }
         // Cargar es empezar de cero: la pila de deshacer de la escena anterior no
         // vale, y si se dejara, un Ctrl+Z de mas restauraria un estado vacio.
         undo_reset();
         for (auto& o : objects) if (o.entity >= 0) g3d_entity_impl_destroy(o.entity);
-        objects.clear(); obj_sel = -1;
+        objects.clear(); obj_sel = -1; mapas.clear(); mapas_sucios = true;
         hud.clear(); hud_sel = -1;   // el HUD tambien es de la escena
         for (auto& sp : sprites) if (sp.entity >= 0) g3d_sprite_destroy(sp.entity);
         sprites.clear(); spr_sel = -1; spr_follow = -1;
@@ -4330,7 +4485,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             g3d_instances_set_lod_distance(sc_lod);
         }
         g3d_editor_paint_load((path + ".paint.png").c_str());
-        if (!g3d_zone_load((path + ".zones").c_str())) g3d_zone_init(161, 400.0f);  // zonas (o limpia)
+        if (!g3d_zone_load((path + ".zones").c_str())) g3d_zone_init(terr_grid + 1, terr_size);  // zonas (o limpia)
         char line[512], asset[256], name[256];
         while (fgets(line, sizeof(line), f)) {
             // ---- SPRITES 2D del mundo ----
@@ -4664,6 +4819,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                         if (n >= 10) { o.char_radius=cr; o.char_height=chh; }
                     }
                 }
+                if (const char* as = strstr(line, " ASHOOT ")) o.anim_shoot = atoi(as + 8);
                 if (strstr(line, " MUEVETELAS 1")) o.mueve_telas = 1;
                 const char* zl = strstr(line, " ZONELAYER ");
                 if (zl) { int z; if (sscanf(zl, " ZONELAYER %d", &z) == 1) o.zone_layer = z; }
@@ -4691,6 +4847,16 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 a.tipo = 0; a.archivo = p6[4]; a.proc = p6[5];
                 r.acciones.push_back(a);
                 objects.back().reglas.push_back(r);
+                continue;
+            }
+            if (!strncmp(line, "MAPA ", 5)) {
+                MapaObj m; char nv[256] = {0};
+                if (sscanf(line, "MAPA %255s %f %f %f %f %d %d", nv, &m.x, &m.y, &m.z, &m.yaw, &m.modo, &m.puerta) >= 4) {
+                    m.nivel = nv;
+                    auto tok = [&](const char* k, std::string& dst) { const char* q = strstr(line, k); if (q) { q += strlen(k); const char* e2 = q; while (*e2 && *e2 != ' ' && *e2 != '\n' && *e2 != '\r') e2++; dst.assign(q, e2 - q); } };
+                    tok(" PULSAR=", m.ev_pulsar); tok(" ABRIR=", m.ev_abrir); tok(" ENTRAR=", m.ev_entrar);
+                    mapas.push_back(m);
+                }
                 continue;
             }
             if (!strncmp(line, "OBJREGLA ", 9) && !objects.empty()) {
@@ -4854,6 +5020,12 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
     // El .bgd2 guarda el nombre y la escena principal (relativa a la carpeta).
     auto apply_project = [&](const std::string& dir, const std::string& pname) {
         project_dir = dir; project_name = pname;
+        te.inited = false;   // el modo Plataformas relee las carpetas del proyecto nuevo
+        // el circuito abierto era del proyecto anterior: si se queda, Guardar y Probar escriben en la carpeta vieja y el juego sale sin circuito
+        if (kre.cargado && kre.sucio) kre.guardar();
+        kre.inited = false; kre.cargado = false; kre.sucio = false; kre.nombre.clear(); kre.c = kr::Circuito();
+        kre.deshacer.clear(); kre.rehacer.clear(); kre.prev_sucia = true;
+        if (kre_prev_ent >= 0) { g3d_entity_impl_destroy_tree(kre_prev_ent, 0); kre_prev_ent = -1; }
         assets_dir  = dir + "/Assets";
         /* El sembrado carga sus modelos relativos a ESTE directorio. Sin volver a
            fijarlo, seguia buscandolos en el proyecto anterior: los assets con el
@@ -5395,6 +5567,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         /* Procesos que son del JUEGO y no de una escena (el cartelito de las
            reglas, el contador de FPS, el motor de fisica): se escriben una sola
            vez aunque haya diez escenas. */
+        bool hay_plat = false;   // el proyecto usa la biblioteca de plataformas (una escena .plat o un mapa dentro de un mundo)
         std::vector<std::string> proc_comun;
         std::set<std::string>    proc_comun_set;
         /* Los #include tambien son del juego: dos escenas pueden llamar al mismo
@@ -5408,11 +5581,29 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         auto add_proc_comun = [&](const std::string& nombre, const std::string& texto) {
             if (proc_comun_set.insert(nombre).second) proc_comun.push_back(texto);
         };
+        // plataformas.prg + pasillo.prg viajan con el proyecto (se reescriben cada vez que generas; no se editan a mano)
+        auto plat_biblioteca = [&]() {
+            add_include("Scripts/plataformas.prg");
+            std::string src = ruta_util("runtime/plataformas.prg", PLAT_RUNTIME_PATH), txt;
+            if (leer_todo(src, txt)) escribir_todo(scripts_dir + "/plataformas.prg", txt);
+            else console_add("AVISO: no encuentro runtime/plataformas.prg junto al editor\n");
+            add_include("Scripts/pasillo.prg");   // detras de plataformas.prg: reutiliza su tileset y su heroe
+            std::string ps = ruta_util("runtime/pasillo.prg", PASILLO_RUNTIME_PATH), t2;
+            if (leer_todo(ps, t2)) escribir_todo(scripts_dir + "/pasillo.prg", t2);
+            else console_add("AVISO: no encuentro runtime/pasillo.prg junto al editor\n");
+        };
         /* Siempre declaradas, aunque el juego no tenga guardado: el proceso del
            jugador las mira al nacer y si no existen no compila. */
         add_global("    // de donde viene el jugador al cargar una partida (0 = empieza donde toca)\n"
                    "    float volver_x; float volver_y; float volver_z; float volver_a;\n"
                    "    int hay_vuelta;\n");
+        /* Entrar a un mapa 2.5D desde el mundo 3D y volver: la accion "Ir a una escena" con "recordar donde estoy" guarda aqui la escena y la
+           posicion del jugador; un portal 'Salir al mundo 3D' del mapa (pl_salto = "@exterior") lo trae de vuelta justo ahi. */
+        add_global("    // de donde se entro a otra escena, para poder volver (vuelta_cd: un segundo sin volver a disparar la misma puerta)\n"
+                   "    int vuelta_ok; int vuelta_escena; int vuelta_cd; float vuelta_x; float vuelta_y; float vuelta_z;\n");
+        add_global("    // mapa 2.5D dentro del mundo: pl_dentro = el jugador esta dentro de el (lo juega el heroe 2D); al salir reaparece en pl_sal_*\n"
+                   "    int pl_dentro; float pl_sal_x; float pl_sal_y; float pl_sal_z; int pl_sal_ok; float pl_cwp[6]; float pl_cwo[6]; float pl_cmix;\n");
+        add_global("    int escena_terreno_ent;   // la entidad del terreno de la ultima escena montada (un circuito puede ocultarla)\n");
         add_global("int scene; int camera; int light;\n"
                    "    float escena_pitch;   // hacia donde mira en vertical (FPS)\n"
                    "    float escena_yaw;     // hacia donde mira en horizontal (FPS)\n");
@@ -5532,6 +5723,13 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             // El sonido de un lago tambien necesita saber donde esta el jugador.
             if (!zsonidos.empty()) hay_jug = true;
             if (n_lamb > 0) hay_jug = true;
+            if (!mapas.empty()) hay_jug = true;
+            /* plataformas.prg (pl_mundo_vigila) lee jug_x/jug_y/jug_z siempre: si el
+               proyecto tiene algun nivel .plat hacen falta aunque la escena 3D abierta
+               no tenga jugador ni mapas (si no: "Unknown identifier JUG_X"). */
+            for (auto& e : escenas_del_proyecto()) if (fs::path(e).extension() == ".plat") hay_jug = true;
+            for (auto& o : objects) for (auto& r : o.reglas) for (auto& a : r.acciones) if (a.tipo == 5 && a.ranura == 2) hay_jug = true;
+            for (auto& sp : sprites) for (auto& r : sp.reglas) for (auto& a : r.acciones) if (a.tipo == 5 && a.ranura == 2) hay_jug = true;
             /* escena_dt se declara AQUI y no mas abajo con los demas: las reglas y
                el cartelito la usan, y en BennuGD2 un GLOBAL tiene que estar por
                encima del codigo que lo lee -- incluidos los #include. */
@@ -6027,7 +6225,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             std::string cp =
                 "PROCESS " + pref + "_camara(int cam)\n"
                 "PRIVATE float tx; float ty; float tz; float dist; float libre;\n"
-                "        float ax; float ay; float az; float alen;\nEND\n"
+                "        float ax; float ay; float az; float alen; float mixe;\nEND\n"
                 "BEGIN\n"
                 "    ctype = C_3D; csubtype = C3D_CAMERA;\n"
                 "    entity = cam;\n";
@@ -6053,6 +6251,20 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             if (follow && cam_mode == 1) { snprintf(b, sizeof(b),
                     "    dist = %.3f;   // el brazo empieza entero\n", armlen); cp += b; }
             cp += "    LOOP\n";
+            if (!mapas.empty()) cp +=
+                "        // transicion suave entre la camara del mundo (pl_cwo, la ultima que se calculo) y la del mapa 2.5D (pl_cwp, la calcula pl_camara)\n"
+                "        IF (pl_dentro)\n"
+                "            pl_cmix = pl_cmix + 0.016; IF (pl_cmix > 1.0) pl_cmix = 1.0; END\n"
+                "        ELSE\n"
+                "            IF (pl_cmix > 0.0) pl_cmix = pl_cmix - 0.016; IF (pl_cmix < 0.0) pl_cmix = 0.0; END END\n"
+                "        END\n"
+                "        IF (pl_cmix > 0.0)\n"
+                "            mixe = pl_cmix * pl_cmix * (3.0 - 2.0 * pl_cmix);\n"
+                "            x = pl_cwo[0] + (pl_cwp[0] - pl_cwo[0]) * mixe; y = pl_cwo[1] + (pl_cwp[1] - pl_cwo[1]) * mixe; z = pl_cwo[2] + (pl_cwp[2] - pl_cwo[2]) * mixe;\n"
+                "            target_x = pl_cwo[3] + (pl_cwp[3] - pl_cwo[3]) * mixe; target_y = pl_cwo[4] + (pl_cwp[4] - pl_cwo[4]) * mixe; target_z = pl_cwo[5] + (pl_cwp[5] - pl_cwo[5]) * mixe;\n"
+                "            g3d_camera_set_fov(cam, 75.0 - 37.0 * mixe);   // 75 el del mundo, 38 el del mapa 2.5D\n"
+                "            FRAME; CONTINUE;\n"
+                "        END\n";
             if (follow) {
                 cp += "        g3d_entity_get_position(follow_ent, &tx, &ty, &tz);\n";
                 if (cam_mode == 1 && cam_girable) {
@@ -6116,6 +6328,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 }
                 cp += b;
             }
+            if (!mapas.empty()) cp += "        pl_cwo[0] = x; pl_cwo[1] = y; pl_cwo[2] = z; pl_cwo[3] = target_x; pl_cwo[4] = target_y; pl_cwo[5] = target_z;\n";
             cp += "        FRAME;\n    END\nEND\n\n";
             fputs(cp.c_str(), f);
         }
@@ -6890,7 +7103,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         fputs("    g3d_sky_set_gradient(0.35,0.55,0.85, 0.82,0.88,0.96); g3d_sky_enable(1);\n", f);
         // terreno: mismo grid/worldsize que el editor (160 / 400), plano y luego
         // se le aplica el relieve esculpido y el pintado guardados en la escena.
-        fputs("    m = g3d_primitive_terrain(160, 400.0, 0.0, 1.0, 1); e = g3d_entity_spawn(scene,0,0,0,0); g3d_entity_set_mesh(e, m);\n", f);
+        fprintf(f, "    m = g3d_primitive_terrain(%d, %.1f, 0.0, 1.0, 1); e = g3d_entity_spawn(scene,0,0,0,0); g3d_entity_set_mesh(e, m); escena_terreno_ent = e;\n", terr_grid, terr_size);
         fprintf(f, "    g3d_terrain_load(m, \"%s\");\n", rel_relief.c_str());
         fputs("    g3d_set_terrain_collider(m);   // fisica: los cuerpos se apoyan en el relieve\n", f);
         fputs("    g3d_collider_clear();   // limpia muros invisibles previos\n", f);
@@ -7090,6 +7303,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 if (s) { fclose(s);
                     fprintf(f, "    m = %s(\"Assets/%s\"); %s(m);\n",
                             loader, ruta_asset(o.asset).c_str(), o.name.c_str());
+                    lanzados.push_back(o.name);   // para matarlo al cambiar de escena (si no, sus reglas siguen disparando en la otra escena)
                 }
                 continue;
             }
@@ -7146,6 +7360,67 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         // ---- CAMARA: se lanza su proceso (definido arriba). follow_ent ya esta
         //      puesto (el jugador se spawnea antes), asi que la camara ve al
         //      objetivo desde su primer frame. ----
+        // ---- MAPAS 2.5D colocados en este mundo: se construyen aqui, con su configuracion de personajes ----
+        if (!mapas.empty()) {
+            hay_plat = true; plat_biblioteca();
+            PlatCfg pc; if (!pc.load(project_dir + "/plataformas.cfg")) pc.defaults();
+            fputs(pc.emit().c_str(), f);
+            fprintf(f, "    g3d_physics_set_gravity(%.1f);   // misma gravedad que los niveles: el jugador salta y cae igual en el mundo y en los mapas\n", pc.grav);
+            add_global("    int jb_mesh; int jb_mat;   // los disparos del jugador en el mundo 3D\n");
+            add_proc_comun("jug_bala",
+                "// Disparo del jugador en el mundo 3D (J / X / Z): una bola brillante que sale hacia donde mira.\n"
+                "PROCESS jug_bala(float bx, float by, float bz, float ddx, float ddz)\n"
+                "PRIVATE int e; int vida = 80;\n"
+                "BEGIN\n"
+                "    IF (jb_mesh == 0)\n"
+                "        jb_mesh = g3d_primitive_sphere(10); jb_mat = g3d_material_create(); g3d_material_set_color(jb_mat, 1.0, 0.9, 0.3, 1.0);\n"
+                "    END\n"
+                "    e = g3d_entity_spawn(scene, 0, bx, by, bz);\n"
+                "    g3d_entity_set_mesh(e, jb_mesh); g3d_entity_set_material(e, jb_mat); g3d_entity_set_scale(e, 0.45, 0.45, 0.45);\n"
+                "    g3d_entity_set_blend(e, 2);\n"
+                "    WHILE (vida > 0)\n"
+                "        bx = bx + ddx * 0.45; bz = bz + ddz * 0.45;\n"
+                "        g3d_entity_set_position(e, bx, by, bz);\n"
+                "        vida = vida - 1;\n"
+                "        FRAME;\n"
+                "    END\n"
+                "    g3d_entity_destroy(e);\n"
+                "END\n\n");
+            lanzados.push_back("jug_bala");
+            bool hay_fachada = false; int fachada_n = 0; std::vector<MapaObj> fev;
+            for (auto& m : mapas) {
+                fprintf(f, "    pl_levelfile = \"Assets/Levels/%s.png\"; pl_tilesetfile = \"Assets/Tiles/tileset.def\"; pl_dirfondos = \"Assets/Backgrounds/\";\n", m.nivel.c_str());
+                if (m.modo == 0) {   // fachada: solo se ve por fuera; la puerta lleva a la escena propia del mapa (<nivel>.plat) y al salir se vuelve aqui
+                    int ie = indice_escena(m.nivel + ".plat");
+                    if (ie < 0) { console_add("AVISO: el mapa '" + m.nivel + "' no tiene escena (" + m.nivel + ".plat): abrelo en el modo Plataformas y guardalo\n"); continue; }
+                    fprintf(f, "    pl_montar_fachada(%.3f, %.3f, %.3f, %.3f, %d, %d);   // fachada de '%s' (la puerta lleva a su escena)\n", m.x, m.y, m.z, m.yaw, ie, m.puerta ? 1 : 0, m.nivel.c_str());
+                    hay_fachada = true; fachada_n++;
+                    fev.push_back(m);
+                } else
+                fprintf(f, "    pl_montar_mundo(%.3f, %.3f, %.3f, %.3f);   // el mapa '%s' en el mundo\n", m.x, m.y, m.z, m.yaw, m.nivel.c_str());
+            }
+            if (hay_fachada) {
+                fputs("    pl_fachada_vigila();\n", f); lanzados.push_back("pl_fachada_vigila");
+                bool con_ev = false; for (auto& m : fev) if (!m.ev_pulsar.empty() || !m.ev_abrir.empty() || !m.ev_entrar.empty()) con_ev = true;
+                if (con_ev) {   // los eventos del interruptor, de la puerta y de entrar: llaman a TUS procesos (si existen en el proyecto)
+                    for (auto& m : fev) for (const std::string* nm : { &m.ev_pulsar, &m.ev_abrir, &m.ev_entrar })   // su codigo: Scripts/<nombre>.prg si existe
+                        if (!nm->empty() && fs::exists(scripts_dir + "/" + *nm + ".prg")) add_include("Scripts/" + *nm + ".prg");
+                    std::string ep = "// Eventos de las fachadas del mundo: al pulsar el interruptor, al abrirse la puerta del todo y al entrar. Llaman a tus PROCESS.\nPROCESS fachada_eventos()\nBEGIN\n    LOOP\n";
+                    for (size_t q = 0; q < fev.size(); q++) {
+                        const char* nombres[3] = { fev[q].ev_pulsar.c_str(), fev[q].ev_abrir.c_str(), fev[q].ev_entrar.c_str() };
+                        const char* flags[3] = { "pl_ev_pulsar", "pl_ev_abrir", "pl_ev_entrar" };
+                        for (int w = 0; w < 3; w++) if (nombres[w][0])
+                            ep += std::string("        IF (") + flags[w] + "[" + std::to_string(q) + "]) " + flags[w] + "[" + std::to_string(q) + "] = 0; " + nombres[w] + "(); END\n";
+                    }
+                    ep += "        FRAME;\n    END\nEND\n\n";
+                    add_proc_comun("fachada_eventos", ep);
+                    fputs("    fachada_eventos();\n", f); lanzados.push_back("fachada_eventos");
+                }
+            }
+            for (const char* n : { "pl_heroe", "pl_camara", "pl_tirador", "pl_perseguidor", "pl_bala_heroe", "pl_bala_enemigo", "pl_fondo", "pl_circuitos",
+                                   "pl_liquidos", "pl_plataforma", "pl_hmodelo", "pl_mundo_vigila" })
+                lanzados.push_back(n);
+        }
         fprintf(f, "    %s_camara(camera);\n", pref.c_str());
         lanzados.push_back(pref + "_camara");
         if (hay_aviso)
@@ -7198,25 +7473,141 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         fputs("    RETURN;\nEND\n\n", f);
         };
 
+        /* ================= ESCENAS DE PLATAFORMAS (.plat) =================
+           Un nivel de plataformas es una escena mas: su montaje es una funcion
+           <pref>_montar() igual que las demas, pero por dentro rellena la
+           configuracion de la biblioteca Scripts/plataformas.prg (personajes,
+           nivel, tileset) y llama a pl_montar(). Los procesos de la biblioteca
+           se matan por su nombre al cambiar de escena, como los de cualquier otra. */
+        bool es_pasillo_ult = false;
+        auto generar_escena_plat = [&](const std::string& ruta) {
+            hay_plat = true;
+            std::string nivel = "Assets/Levels/level1.png";
+            bool pasillo = false;                           // tipo=pasillo: tramo en profundidad estilo Crash (pasillo.prg)
+            { std::ifstream in(ruta); std::string ln;
+              while (std::getline(in, ln)) {
+                  if (!ln.empty() && ln.back() == '\r') ln.pop_back();
+                  if (ln.compare(0, 6, "nivel=") == 0) nivel = ln.substr(6);
+                  if (ln == "tipo=pasillo") pasillo = true;
+              } }
+            PlatCfg pc; if (!pc.load(project_dir + "/plataformas.cfg")) pc.defaults();
+            lanzados.clear();
+            fprintf(f, "// Nivel de plataformas 2.5D: %s\n", nivel.c_str());
+            fprintf(f, "FUNCTION %s_montar()\nBEGIN\n", pref.c_str());
+            fputs("    set_mode(1280,720); set_fps(60,0); window_set_title(\"EDITOR_PLAY\");\n", f);
+            fputs(pc.emit().c_str(), f);
+            fprintf(f, "    pl_levelfile = \"%s\"; pl_tilesetfile = \"Assets/Tiles/tileset.def\"; pl_dirfondos = \"Assets/Backgrounds/\";\n", nivel.c_str());
+            fputs(pasillo ? "    ps_montar();\n    RETURN;\nEND\n\n" : "    pl_montar();\n    RETURN;\nEND\n\n", f);
+            if (pasillo) { lanzados.push_back("ps_heroe"); lanzados.push_back("ps_camara"); es_pasillo_ult = true; } else es_pasillo_ult = false;
+            for (const char* n : { "pl_heroe", "pl_camara", "pl_tirador", "pl_perseguidor", "pl_bala_heroe", "pl_bala_enemigo",
+                                   "pl_fondo", "pl_circuitos", "pl_liquidos", "pl_plataforma", "pl_cambio_plano", "ps_gestor", "ps_heroe", "ps_enemigo", "ps_mecanismos", "pl_hmodelo", "ps_bala" })
+                lanzados.push_back(n);
+            plat_biblioteca();
+        };
+
+        std::vector<std::string> esc_ruta, esc_pref, esc_nombre;
+        std::vector<std::vector<std::string>> esc_lanzados;
+        std::vector<char> esc_plat;   // 1 = escena de plataformas (.plat)
+        /* ================= ESCENAS DE CARRERAS (.kart) =================
+           Un circuito de karts: se (re)escribe su pista 3D (Assets/Models/<n>_pista.glb)
+           desde el .kart y su montaje rellena la configuracion de la biblioteca
+           Scripts/carreras.prg y llama a kr_montar(). */
+        auto generar_escena_kart = [&](const std::string& ruta) {
+            kr::Circuito kc;
+            std::string nombre = fs::path(ruta).stem().string(), rel, err, aviso;
+            if (!kc.load(ruta)) console_add("AVISO: el circuito " + ruta + " no tiene 3 puntos\n");
+            if (!kc.escena.empty()) { std::string sf = (fs::path(project_dir) / kc.escena).string(); kc.usar_terreno_fichero(sf + ".terrain", terreno_tam_de(sf, nullptr)); }   // la carretera sigue al relieve guardado
+            if (!kc.exportar(project_dir, nombre, ruta_util("runtime/carreras", KART_TEX_PATH), rel, err, &aviso))
+                console_add("AVISO: circuito '" + nombre + "': " + err + "\n");
+            if (!aviso.empty()) console_add("AVISO: circuito '" + nombre + "': " + aviso);
+            lanzados.clear();
+            // escena 3D vinculada (terreno, objetos...): ya se ha generado (las .kart van las ultimas)
+            std::string comp_pref;
+            std::vector<std::string> comp_camaras, comp_soles;   // la camara y el sol de la escena vinculada
+            if (!kc.escena.empty()) {
+                std::string cr = (fs::path(project_dir) / kc.escena).string();
+                for (size_t q = 0; q < esc_ruta.size(); q++)
+                    if (fs::path(esc_ruta[q]) == fs::path(cr)) {
+                        comp_pref = esc_pref[q];
+                        for (auto& n : esc_lanzados[q]) {
+                            lanzados.push_back(n);                                    // sus procesos tambien se matan al salir
+                            if (n.size() > 7 && n.compare(n.size() - 7, 7, "_camara") == 0) comp_camaras.push_back(n);
+                            if (n.size() > 4 && n.compare(n.size() - 4, 4, "_sol") == 0) comp_soles.push_back(n);
+                        }
+                    }
+                if (comp_pref.empty()) console_add("AVISO: la escena vinculada '" + kc.escena + "' no existe: el circuito usara cesped plano\n");
+            }
+            fprintf(f, "// Circuito de karts: %s (vuelta de %.0f m)\n", nombre.c_str(), kc.vuelta);
+            fprintf(f, "FUNCTION %s_montar()\nBEGIN\n", pref.c_str());
+            fputs("    set_mode(1280,720); set_fps(60,0); window_set_title(\"EDITOR_PLAY\");\n", f);
+            if (!comp_pref.empty()) {
+                fprintf(f, "    %s_montar();   // el terreno y los objetos del circuito\n", comp_pref.c_str());
+                for (auto& n : comp_camaras) fprintf(f, "    signal(TYPE %s, S_KILL);   // su camara fija pisaria a la del kart\n", n.c_str());
+                if (kc.sin_terreno) fputs("    IF (escena_terreno_ent > 0) g3d_entity_set_position(escena_terreno_ent, 0.0, -100000.0, 0.0); END   // sin terreno visible (la pista propia ya es el suelo)\n", f);
+                fputs("    kr_ext_light = light;\n", f);
+                if (kc.amb_modo != 0) for (auto& n : comp_soles) fprintf(f, "    signal(TYPE %s, S_KILL);   // la hora la lleva el circuito\n", n.c_str());
+                fputs("    kr_externa = 1; kr_ext_scene = scene; kr_ext_camera = camera;\n", f);
+            } else fputs("    kr_externa = 0;\n", f);
+            fprintf(f, "    kr_pista = \"%s\"; kr_kart_modelo = \"%s\"; kr_kart_tam = %.3f;\n", rel.c_str(), kc.kart.c_str(), kc.kart_tam);
+            for (int i = 0; i < kr::N_SUP; i++)
+                fprintf(f, "    kr_ef_ag[%d] = %.3f; kr_ef_vel[%d] = %.3f; kr_ef_acel[%d] = %.3f;\n", i, kc.sup_ef[i].agarre, i, kc.sup_ef[i].vel, i, kc.sup_ef[i].acel);
+            for (int i = 0; i < 4; i++)
+                fprintf(f, "    kr_zn_on[%d] = %d; kr_zn_ag[%d] = %.3f; kr_zn_vel[%d] = %.3f; kr_zn_acel[%d] = %.3f;\n", i, kc.zona_on[i], i, kc.zona_ef[i].agarre, i, kc.zona_ef[i].vel, i, kc.zona_ef[i].acel);
+            fputs("    kr_ef_ok = 1;\n", f);
+            fprintf(f, "    kr_extra_vis = \"%s\"; kr_extra_col = \"%s\";\n", kc.ex_vis.c_str(), kc.ex_col.c_str());
+            if (!kc.pista_glb.empty()) fprintf(f, "    kr_pista_x = %.3f; kr_pista_y = %.3f; kr_pista_z = %.3f; kr_pista_esc = %.4f; kr_pista_yaw = %.2f;\n", kc.pista_x, kc.pista_y, kc.pista_z, kc.pista_esc, kc.pista_yaw);
+            fprintf(f, "    kr_salida_x = %.3f; kr_salida_y = %.3f; kr_salida_z = %.3f; kr_salida_yaw = %.3f;\n", kc.sx, kc.salida_y, kc.sz, kc.salida_yaw);
+            fprintf(f, "    kr_lim_x0 = %.3f; kr_lim_x1 = %.3f; kr_lim_z0 = %.3f; kr_lim_z1 = %.3f;\n", kc.gx0, kc.gx1, kc.gz0, kc.gz1);
+            fputs("    kr_n_tramp = 0;\n", f);
+            for (auto& t : kc.tramps)
+                fprintf(f, "    kr_trampolin_add(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n", t.x0, t.y0, t.z0, t.x1, t.y1, t.z1, t.fuerza);
+            fprintf(f, "    kr_vueltas = %d; kr_paso = %.3f;\n", kc.vueltas, kc.paso);
+            fprintf(f, "    kr_amb_modo = %d; kr_amb_hora = %.2f; kr_amb_dur = %.1f; kr_faros = %d;\n", kc.amb_modo, kc.amb_hora, kc.amb_dur, kc.faros);
+            fputs("    kr_n_luz = 0;\n", f);
+            for (auto& l : kc.luces)
+                fprintf(f, "    kr_luz_add(%.2f, %.2f, %.2f, %.3f, %.3f, %.3f, %.2f, %.1f, %d, %d);\n", l.x, l.z, l.y, l.r, l.g, l.b, l.inten, l.radio, l.noche, l.poste);
+            fputs("    kr_n_turbo = 0; kr_n_lago = 0; kr_n_cp = 0; kr_n_ar = 0;\n", f);
+            for (auto& z : kc.turbo_z)
+                fprintf(f, "    kr_turbo_add(%.3f, %.3f, %.3f, %.3f, %.3f, %.3f);\n", z.x0, z.y0, z.z0, z.x1, z.y1, z.z1);
+            if (comp_pref.empty()) for (auto& l : kc.lagos)
+                fprintf(f, "    kr_lago_add(%.3f, %.3f, %.3f, %.3f, %.3f, %d);\n", l.cx, l.cz, l.w, l.h, l.prof, l.mortal);
+            for (auto& cp : kc.cps)
+                fprintf(f, "    kr_cp_add(%.2f, %.2f, %.2f, %.2f, %.2f, %d);\n", cp.x, cp.y, cp.z, cp.yaw, cp.hw, cp.sup);
+            for (auto& cp : kc.alt)
+                fprintf(f, "    kr_ar_add(%.2f, %.2f, %.2f, %.2f, %.2f, %d);\n", cp.x, cp.y, cp.z, cp.yaw, cp.hw, cp.sup);
+            fputs("    kr_n_obj = 0;\n", f);
+            for (auto& o : kc.objetos)   // se montan dentro de kr_montar, con la escena ya creada
+                fprintf(f, "    kr_objeto_add(\"%s\", %.3f, %.3f, %.3f, %.2f, %.3f, %d);\n",
+                        o.modelo.c_str(), o.x, o.base + o.y, o.z, o.yaw, o.alto, o.colision);
+            fputs("    kr_montar();\n    RETURN;\nEND\n\n", f);
+            for (const char* n : { "kr_kart", "kr_camara", "kr_control", "kr_notify_toast", "kr_semaforo" }) lanzados.push_back(n);
+            add_include("Scripts/carreras.prg");
+            std::string src = ruta_util("runtime/carreras.prg", KART_RUNTIME_PATH), txt;
+            if (leer_todo(src, txt)) escribir_todo(scripts_dir + "/carreras.prg", txt);
+            else console_add("AVISO: no encuentro runtime/carreras.prg junto al editor\n");
+        };
+
         /* ================= UNA PASADA POR ESCENA =================
            Cada .scene del proyecto se carga, se genera su cuerpo y se apunta lo que
            lanza. Al acabar se vuelve a la que estabas editando. */
-        std::vector<std::string> esc_ruta, esc_pref, esc_nombre;
-        std::vector<std::vector<std::string>> esc_lanzados;
         {
             std::string volver_a = scene_path;
             std::vector<std::string> rutas;
             { std::error_code ec;
               for (auto& e : fs::directory_iterator(scenes_dir, ec)) {
                   if (!e.is_regular_file(ec)) continue;
-                  if (e.path().extension() != ".scene") continue;
+                  if (e.path().extension() != ".scene" && e.path().extension() != ".plat" && e.path().extension() != ".kart") continue;
                   rutas.push_back(e.path().string());
               }
-              std::sort(rutas.begin(), rutas.end()); }
+              std::sort(rutas.begin(), rutas.end());
+              std::stable_partition(rutas.begin(), rutas.end(), [](const std::string& r) { return fs::path(r).extension() != ".kart"; }); }
             if (rutas.empty()) rutas.push_back(scene_path);
             std::set<std::string> prefs_usados;
             std::map<std::string, std::string> nombre_visto;   // proceso -> escena donde esta
             for (auto& ruta : rutas) {
+                bool es_kart = fs::path(ruta).extension() == ".kart";
+                bool es_plat = fs::path(ruta).extension() == ".plat" || es_kart;
+                if (!es_plat) {
                 if (ruta != scene_path) load_scene(ruta);
                 scene_path = ruta;
                 // las rutas de relieve, pintado y zonas son de ESTA escena
@@ -7230,6 +7621,17 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 prefs_usados.insert(p2);
                 pref = p2;
                 generar_escena();
+                } else {
+                    // escena de plataformas: la genera la biblioteca plataformas.prg, no el motor de escenas
+                    std::string base = ident_bgd(fs::path(ruta).stem().string(), "esc");
+                    std::string p2 = base;
+                    for (int k = 2; k < 100 && prefs_usados.count(p2); k++) p2 = base + "_" + std::to_string(k);
+                    prefs_usados.insert(p2);
+                    pref = p2;
+                    if (es_kart) generar_escena_kart(ruta);
+                    else generar_escena_plat(ruta);
+                }
+                esc_plat.push_back(!es_plat ? 0 : es_kart ? 3 : es_pasillo_ult ? 2 : 1);
                 esc_ruta.push_back(ruta);
                 esc_pref.push_back(pref);
                 esc_nombre.push_back(fs::path(ruta).stem().string());
@@ -7237,7 +7639,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 /* Dos escenas no pueden tener un objeto con el mismo nombre: cada
                    uno es un PROCESS, y dos PROCESS iguales no compilan. Se avisa
                    aqui, que es cuando se sabe, y no con un error de bgdc. */
-                for (auto& n : lanzados) {
+                if (!es_plat) for (auto& n : lanzados) {
                     auto it = nombre_visto.find(n);
                     if (it != nombre_visto.end() && it->second != esc_nombre.back())
                         console_add("AVISO: '" + n + "' esta en '" + it->second + "' y en '" +
@@ -7973,6 +8375,9 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 fprintf(f, "    IF (escena_actual == %d)\n", (int)i);
                 for (auto& n : esc_lanzados[i])
                     fprintf(f, "        signal(TYPE %s, S_KILL);\n", n.c_str());
+                if (esc_plat[i] == 1) fputs("        pl_descargar();\n", f);
+                if (esc_plat[i] == 2) fputs("        ps_descargar();\n", f);
+                if (esc_plat[i] == 3) fputs("        kr_descargar();\n", f);
                 fputs("    END\n", f);
             }
             fputs("    // y lo que guarda el motor de esa escena\n"
@@ -8006,15 +8411,44 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                       "    opciones_aplicar();\n", f);
             fputs("    RETURN;\nEND\n\n", f);
 
+            fputs("/* Velo negro del fundido entre escenas: un grafico a pantalla completa cuyo alfa sigue a escena_fade_a. */\n"
+                  "PROCESS escena_fade()\n"
+                  "PRIVATE int gf;\n"
+                  "BEGIN\n"
+                  "    gf = map_new(1280, 720, 32); map_clear(0, gf, rgba(0, 0, 0, 255));\n"
+                  "    graph = gf; x = 640; y = 360; z = -1000; alpha = 0;\n"
+                  "    LOOP alpha = escena_fade_a; FRAME; END\n"
+                  "END\n\n", f);
             fputs("/* Vigila las peticiones de cambio de escena. No se cambia en el sitio\n"
                   "   donde se pide (una regla de un objeto) porque ese objeto es de la\n"
                   "   escena que se va: se moriria a media faena. */\n"
                   "PROCESS escena_gestor()\n"
                   "BEGIN\n"
-                  "    LOOP\n"
+                  "    LOOP\n", f);
+            if (hay_plat) {
+                // un portal de nivel (o el final de un pasillo) pide un nivel por su nombre: aqui se pasa al numero de escena
+                fputs("        IF (vuelta_cd > 0) vuelta_cd = vuelta_cd - 1; END\n", f);
+                fputs("        IF (pl_salto == \"@exterior\")   // salir de un mapa 2.5D al mundo 3D del que se vino\n"
+                      "            IF (vuelta_ok)\n"
+                      "                escena_pedida = vuelta_escena; volver_x = vuelta_x; volver_y = vuelta_y; volver_z = vuelta_z; hay_vuelta = 1;\n"
+                      "                vuelta_ok = 0; vuelta_cd = 90;\n"
+                      "            END\n"
+                      "            pl_salto = \"\";\n"
+                      "        END\n", f);
+                fputs("        IF (pl_salto != \"\")\n", f);
+                for (size_t i = 0; i < esc_plat.size(); i++)
+                    if (esc_plat[i] == 1 || esc_plat[i] == 2) fprintf(f, "            IF (pl_salto == \"%s\") escena_pedida = %d; END\n", esc_nombre[i].c_str(), (int)i);
+                fputs("            pl_salto = \"\";\n        END\n", f);
+            }
+            fputs(
                   "        IF (escena_pedida >= 0)\n"
+                  "            FOR (escena_fade_a = 0; escena_fade_a < 255; escena_fade_a = escena_fade_a + 26) FRAME; END\n"       // se oscurece
+                  "            escena_fade_a = 255;\n"
                   "            escena_cargar(escena_pedida);\n"
                   "            escena_pedida = -1;\n"
+                  "            FRAME; FRAME;\n"
+                  "            FOR (escena_fade_a = 255; escena_fade_a > 0; escena_fade_a = escena_fade_a - 26) FRAME; END\n"      // y se aclara
+                  "            escena_fade_a = 0;\n"
                   "        END\n"
                   "        FRAME;\n"
                   "    END\n"
@@ -8040,6 +8474,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 fputs("    opciones_cargar();   // volumen, pantalla y demas, como los dejaste\n", f);
             if (hay_aviso_juego) fputs("    escena_aviso();   // el cartelito de las reglas\n", f);
             fprintf(f, "    escena_cargar(%d);\n"
+                       "    escena_fade();   // el velo del fundido\n"
                        "    escena_gestor();   // atiende los cambios de escena\n", inicial);
             for (auto& m : menus) {
                 if (m.opciones.empty()) continue;
@@ -8058,7 +8493,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
            procesos comunes, y al final el cuerpo de cada escena. */
         std::string setup = "GLOBAL\n";
         for (auto& l : glob_lin) setup += l + "\n";
-        setup += "    int escena_actual; int escena_pedida;   // que escena esta puesta / cual se pide\n";
+        setup += "    int escena_actual; int escena_pedida;   // que escena esta puesta / cual se pide\n    int escena_fade_a;   // oscuridad del fundido entre escenas (0..255)\n";
         if (max_reglas > 0) {
             std::string n = std::to_string(max_reglas);
             setup += "    // el estado de las reglas (el mayor numero de reglas de una escena)\n";
@@ -8429,7 +8864,9 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
 
         // DEPURACION: EDITOR_AUTOPLAY=1 lanza Play solo (para reproducir fallos sin GUI)
         { static int ap = 0;
-          if (getenv("EDITOR_AUTOPLAY")) {
+          { static int cc = 0; const char* cp = getenv("EDITOR_COLOR_PROJECT");
+      if (cp) { cc++; if (cc == 15) { open_project(cp); tool = T_CLOTH; tela_sel = 0; } } }
+        if (getenv("EDITOR_AUTOPLAY")) {
               ap++;
               if (ap == 10) {
                   const char* prj = getenv("EDITOR_AUTOPLAY_PROJECT");
@@ -8466,7 +8903,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         if (vp_hovered && io2.MouseWheel != 0.0f) {
             cam_dist -= io2.MouseWheel * (cam_dist * 0.1f + 0.5f);
             if (cam_dist < 1.0f)   cam_dist = 1.0f;
-            if (cam_dist > 400.0f) cam_dist = 400.0f;
+            if (cam_dist > std::max(400.0f, terr_size)) cam_dist = std::max(400.0f, terr_size);
         }
         // vector "hacia delante" horizontal segun el yaw (el que mira la camara)
         float fwx = -sinf(cam_yaw), fwz = -cosf(cam_yaw);   // desde la camara hacia el pivote
@@ -8547,7 +8984,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             }
             if (ImGui::BeginMenu("Ventana")) {
                 ImGui::TextDisabled("MODO DE TRABAJO");
-                const char* nm[] = { "Escena", "Terreno", "Personajes", "Interfaz", "Codigo" };
+                const char* nm[] = { "Escena", "Terreno", "Personajes", "Interfaz", "Codigo", "Plataformas 2.5D", "Carreras" };
                 for (int i = 0; i < M_NUM; i++)
                     if (ImGui::MenuItem(nm[i], nullptr, modo == i)) modo = i;
                 ImGui::Separator();
@@ -8558,6 +8995,8 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                    detras de otra pestania, no se ve nada y parece que no responde. */
                 if (ImGui::MenuItem(ICON_FA_LAYER_GROUP "  Escenas del proyecto", nullptr, &show_escenas))
                     { if (show_escenas) enfocar_panel = "Escenas del proyecto"; }
+                if (ImGui::MenuItem(ICON_FA_CUBES "  Mapas 2.5D del mundo", nullptr, &show_mapas))
+                    { if (show_mapas) enfocar_panel = "Mapas 2.5D del mundo"; }
                 if (ImGui::MenuItem(ICON_FA_BARS "  Menus del juego", nullptr, &show_menus))
                     { if (show_menus) enfocar_panel = "Menus del juego"; }
                 if (ImGui::MenuItem(ICON_FA_COMMENT "  Dialogos", nullptr, &show_dialogos))
@@ -8720,8 +9159,11 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                     { ICON_FA_PERSON_RUNNING,  "Personajes", "Sprites 3D, hojas y animaciones" },
                     { ICON_FA_FONT,            "Interfaz",   "HUD 2D y menus del juego" },
                     { ICON_FA_CODE,            "Codigo",     "Scripts, variables y consola" },
+                    { ICON_FA_TABLE_CELLS,     "Plataformas","Pintar niveles 2.5D por tiles con textura" },
+                    { ICON_FA_FLAG_CHECKERED,  "Carreras",   "Circuitos de karts: carretera, salida, rampas y kart" },
                 };
                 for (int i = 0; i < M_NUM; i++) {
+                    if (i == M_CARRERAS && modo != M_CARRERAS) continue;   // los circuitos se hacen en Terreno (herramienta Carretera)
                     bool on = (modo == i);
                     /* El modo activo va en ambar con el texto oscuro encima: se lee
                        de un vistazo cual esta puesto. Ojo con el equilibrio de
@@ -8828,6 +9270,11 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             ImGui::DockBuilderDockWindow(ICON_FA_LIGHTBULB "  Luces", right);
             ImGui::DockBuilderDockWindow(ICON_FA_PERSON_RUNNING "  Sprites 3D", bottom);
             ImGui::DockBuilderDockWindow("Editor de codigo", center);
+            ImGui::DockBuilderDockWindow(TM_WIN_MAP, center);
+            ImGui::DockBuilderDockWindow(TM_WIN_SET, left);
+            ImGui::DockBuilderDockWindow(TM_WIN_PROPS, right);
+            ImGui::DockBuilderDockWindow(TM_WIN_BG, right);
+            ImGui::DockBuilderDockWindow(TM_WIN_CHAR, right);
             ImGui::DockBuilderFinish(ds);
             // las ventanas que ese modo necesita, abiertas
             if (modo == M_PERSONAJES) show_spr_win = true;
@@ -8892,6 +9339,9 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 btn(ICON_FA_WATER,               T_RIVER,       "Rio",       "Clic para el cauce, doble clic para acabar");
                 btn(ICON_FA_ANGLES_DOWN,         T_WATERFALL,   "Cascada",   "Clic arriba (el borde) y clic abajo (la poza)");
                 btn(ICON_FA_FAUCET_DRIP,         T_WATERSOURCE, "Manantial", "Una fuente: el agua fluye sola");
+                grupo("CIRCUITO");
+                btn(ICON_FA_ROAD,                T_ROAD,    "Carretera", "Trazar un circuito de karts sobre el terreno: la carretera sigue al relieve");
+                btn(ICON_FA_DRAW_POLYGON,        T_ZONE,    "Zonas de efecto", "Pintar zonas del terreno que cambian la conduccion (barro, turbo, hielo)");
             } else if (modo == M_PERSONAJES) {
                 grupo("PERSONAJES");
                 {
@@ -8914,6 +9364,14 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Menu principal, de pausa y de opciones");
                 if (ImGui::Button(ICON_FA_COMMENT "   Dialogos", ImVec2(-1, 0))) { show_dialogos = true; enfocar_panel = "Dialogos del juego"; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lo que dice la gente: bocadillos, paginas y respuestas");
+            } else if (modo == M_PLATAFORMAS) {
+                grupo("PLATAFORMAS");
+                ImGui::TextWrapped("Pinta el nivel en 'Mapa de tiles'. B lapiz, E goma, R rectangulo, F relleno, I cuentagotas. 1/2/3 cambian de capa.");
+                ImGui::Spacing();
+                ImGui::TextDisabled("Rueda: zoom. Boton central o Espacio+arrastrar: mover. Ctrl+Z / Ctrl+Y: deshacer.");
+            } else if (modo == M_CARRERAS) {
+                grupo("CARRERAS");
+                ImGui::TextWrapped("Traza el circuito en la ventana 'Circuito de karts': puntos de la carretera, salida y rampas. Guardar escribe la pista 3D; Probar la juega.");
             } else if (modo == M_CODIGO) {
                 grupo("CODIGO");
                 if (ImGui::Button(ICON_FA_FILE_CODE "   main.prg", ImVec2(-1, 0))) open_main_script();
@@ -8925,9 +9383,779 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Puntos, vida, llaves... salen como GLOBAL");
                 grupo("DEL PROYECTO");
                 if (ImGui::Button(ICON_FA_LAYER_GROUP "   Escenas", ImVec2(-1, 0))) { show_escenas = true; enfocar_panel = "Escenas del proyecto"; }
+                if (ImGui::Button(ICON_FA_CUBES "   Mapas 2.5D", ImVec2(-1, 0))) { show_mapas = true; enfocar_panel = "Mapas 2.5D del mundo"; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Colocar niveles de plataformas / pasillos Crash dentro de este mundo 3D");
                 if (ImGui::Button(ICON_FA_BARS "   Menus", ImVec2(-1, 0)))          show_menus = true;
             }
             ImGui::End();
+        }
+
+        if (mapas_sucios) mapas_reconstruir();
+        { static bool una = true; if (una && getenv("EDITOR_MAPAS")) show_mapas = true;
+          if (una && getenv("EDITOR_ABRIR")) { std::string r = scenes_dir + "/" + getenv("EDITOR_ABRIR"); load_scene(r); scene_path = r; }
+          una = false; }   // pruebas
+
+        /* ---- MODO PLATAFORMAS 2.5D: mapa, paleta y propiedades (tilemap.h) ---- */
+        if (modo == M_PLATAFORMAS) {
+            if (!te.inited) {
+                std::string bgdc_ = ruta_util("lib/bgdc", BGDC_PATH);
+                te.bgdc = bgdc_; te.bgdi = bgdc_.substr(0, bgdc_.rfind('/')) + "/bgdi";
+                const char* home = getenv("HOME");
+                (void)home;
+                te.starter_dir = ruta_util("runtime/starter", PLAT_STARTER_PATH);
+                te.on_created = [&](const std::string& nivel) { escena_inicial = "Scenes/" + nivel + ".plat"; write_manifest(); };
+                te.on_play = [&](const std::string& nivel) {
+                    // Probar = generar el juego empezando por ese nivel (sin cambiar la escena inicial del proyecto)
+                    std::string antes = escena_inicial;
+                    escena_inicial = "Scenes/" + nivel + ".plat";
+                    generate_game(true);
+                    escena_inicial = antes;
+                };
+                te.init(project_dir);
+                // Pruebas sin GUI: EDITOR_GENERAR=1 (con EDITOR_MODO=5) crea el ejemplo si falta, genera main.prg, compila y sale
+                if (getenv("EDITOR_GENERAR")) {
+                    if (!te.dir_ok()) te.crear_ejemplo();
+                    escena_inicial = getenv("EDITOR_ESCENA") ? std::string(getenv("EDITOR_ESCENA")) : "Scenes/" + std::string(getenv("EDITOR_NIVEL") ? getenv("EDITOR_NIVEL") : te.level.c_str()) + ".plat";   // en pruebas no se lee el .bgd2: se empieza por el nivel abierto
+                    generate_game(false);
+                    printf("EDITOR_GENERAR: %s\n", last_compile_ok ? "compilado" : "FALLO");
+                    return last_compile_ok ? 0 : 1;
+                }
+            }
+            te.draw_map(); te.draw_links(); te.draw_tileset(); te.draw_props(); te.draw_bg(); te.draw_chars();
+        }
+
+        /* ---- CARRERAS + TERRENO 3D ----
+           El circuito se puede vincular a una escena .scene: su terreno, su vegetacion, su agua y sus
+           objetos se editan con los modos Terreno y Escena de siempre, con la carretera a la vista. */
+        auto kre_ruta_escena = [&]() { return kre.c.escena.empty() ? std::string() : project_dir + "/" + kre.c.escena; };
+        auto kre_abrir_escena = [&]() -> bool {
+            std::string r = kre_ruta_escena();
+            if (r.empty() || !fs::exists(r)) { status = "La escena vinculada no existe"; return false; }
+            if (fs::path(scene_path) != fs::path(r)) { save_scene(scene_path); load_scene(r); scene_path = r; }
+            return true;
+        };
+        auto kre_ir_3d = [&]() { if (kre_abrir_escena()) { kre.prev_sucia = true; modo = M_TERRENO; } };
+        // Nivela el terreno bajo la carretera (terraplen o desmonte); los saltos no se tocan
+        auto kre_adaptar = [&]() {
+            if (!kre_abrir_escena()) return;
+            if (!terrain) { status = "Esta escena no tiene terreno"; return; }
+            // el terreno mide 400 m (de -200 a 200): si el circuito no cabe donde esta, se centra (y se avisa si es mas grande)
+            {
+                float x0, x1, z0, z1;
+                if (kre.c.limites_nodos(x0, x1, z0, z1)) { if (getenv("EDITOR_KR_DEBUG")) printf("ADAPTAR limites %.0f %.0f %.0f %.0f\n", x0, x1, z0, z1);
+                    const float L = terr_size * 0.5f - 25.0f;
+                    if (x0 < -L || x1 > L || z0 < -L || z1 > L) {
+                        float dx = -(x0 + x1) * 0.5f, dz = -(z0 + z1) * 0.5f;
+                        kre.c.desplazar(dx, dz);
+                        console_add("Circuito: movido al centro del terreno (" + std::to_string((int)dx) + ", " + std::to_string((int)dz) + " m)\n");
+                        if (x1 - x0 > 2 * L || z1 - z0 > 2 * L) console_add("AVISO: el circuito es mas grande que el terreno (400 m); parte quedara fuera\n");
+                    }
+                }
+            }
+            kre.c.calcular();
+            auto cortes = kre.c.cortes();
+            // de mas alto a mas bajo: el ultimo en aplicarse manda, y asi el terreno queda por DEBAJO de la carretera
+            std::sort(cortes.begin(), cortes.end(), [](const kr::Circuito::Corte& p, const kr::Circuito::Corte& q) { return p.y > q.y; });
+            for (int pasada = 0; pasada < 2; pasada++)                 // dos pasadas: las orillas convergen despacio
+                for (auto& k : cortes) {
+                    // cuanto mas hay que cortar, mas ancho el desmonte (si no, las paredes quedan casi verticales)
+                    float th = g3d_editor_terrain_height(terrain, k.x, k.z);
+                    float r = std::min(45.0f, k.r + 0.7f * std::max(0.0f, th - k.y));
+                    g3d_editor_terrain_flatten_to(terrain, k.x, k.z, r, k.y, 1.0f);
+                }
+            save_scene(scene_path);
+            kre.prev_sucia = true;
+            status = "Terreno adaptado a la carretera";
+            console_add("Circuito: terreno adaptado a la carretera (" + std::to_string(cortes.size()) + " puntos)\n");
+        };
+        auto kre_iniciar = [&]() {
+                kre.lista_escenas = [&]() { std::vector<std::string> v; for (auto& e : escenas_del_proyecto()) if (fs::path(e).extension() == ".scene") v.push_back(e); return v; };
+                kre.crear_escena = [&](const std::string& nombre) -> std::string {
+                    std::string nom = ident_bgd(nombre, "escena"), ruta = scenes_dir + "/" + nom + ".scene";
+                    if (!fs::exists(ruta)) {
+                        FILE* f = fopen(ruta.c_str(), "w"); if (!f) return "";
+                        fputs("# escena del editor BennuGD2 (terreno de un circuito de karts)\n", f); fclose(f);
+                        // se abre y se guarda una vez: asi existen ya su terreno y su pintado (si no, el juego saldria sin textura)
+                        if (fs::path(scene_path) != fs::path(ruta)) { save_scene(scene_path); load_scene(ruta); }
+                        save_scene(ruta);
+                    }
+                    return "Scenes/" + nom + ".scene";
+                };
+                kre.editar_3d = [&]() { kre_ir_3d(); };
+                kre.adaptar_terreno = [&]() { kre_adaptar(); };
+                kre.tex_src = ruta_util("runtime/carreras", KART_TEX_PATH);
+                kre.on_created = [&](const std::string& n) {
+                    // un circuito nuevo solo pasa a ser la escena inicial si el proyecto no tiene otra
+                    if (escenas_del_proyecto().size() <= 1) { escena_inicial = "Scenes/" + n + ".kart"; write_manifest(); }
+                };
+                kre.on_play = [&](const std::string& n) {
+                    // Probar = generar el juego empezando por este circuito (sin cambiar la escena inicial)
+                    std::string antes = escena_inicial;
+                    escena_inicial = "Scenes/" + n + ".kart";
+                    generate_game(true);
+                    escena_inicial = antes;
+                };
+                kre.asset_ruta = [&](int i) { return (i >= 0 && i < (int)assets.size()) ? "Assets/" + assets[i] : std::string(); };
+                kre.init(project_dir);
+                if (modo != M_CARRERAS) { kre.cargado = false; kre.nombre.clear(); kre.c = kr::Circuito(); }   // init cargaba el primer .kart que hubiera
+        };
+
+        // ---- el circuito de la escena abierta (modo Terreno): se busca el .kart que la vincula, o se crea al poner el primer punto ----
+        auto kre_escena_rel = [&]() { return fs::path(scene_path).lexically_relative(project_dir).generic_string(); };
+        auto kre_terreno_sync = [&]() {
+            static int estado = -1; static std::string clave;
+            if (!kre.cargado || kre.c.escena.empty()) { kre.c.terreno_h = nullptr; estado = -1; return; }
+            std::string comp = kre_ruta_escena();
+            bool vivo = terrain && fs::path(scene_path) == fs::path(comp);
+            bool cambio = false;
+            if (vivo) {
+                kre.c.terreno_h = [&](float x, float z) { return g3d_editor_terrain_height(terrain, x, z); };
+                if (estado != 1 || clave != comp) { estado = 1; clave = comp; cambio = true; }
+            } else if (estado != 0 || clave != comp) {
+                kre.c.usar_terreno_fichero(comp + ".terrain", terreno_tam_de(comp, nullptr)); estado = 0; clave = comp; cambio = true;
+            }
+            if (cambio) { kre.c.calcular(); kre.prev_sucia = true; }
+        };
+        auto kre_vincular = [&](bool crear) -> bool {
+            if (!kre.inited) kre_iniciar();
+            std::string rel = kre_escena_rel();
+            if (kre.cargado && kre.c.escena == rel) return true;
+            static int vinc_n = 0; if (!crear && (vinc_n++ % 90) != 0) return false;   // sin circuito, no se vuelve a buscar en disco en cada fotograma
+            std::error_code ec;
+            for (auto& e : fs::directory_iterator(scenes_dir, ec)) {
+                if (e.path().extension() != ".kart") continue;
+                kr::Circuito t; t.load(e.path().string());
+                if (t.escena != rel) continue;
+                if (kre.cargado && kre.sucio) kre.guardar();
+                kre.nombre = e.path().stem().string(); kre.c.load(e.path().string()); kre.cargado = true; kre.sucio = false;
+                kre.deshacer.clear(); kre.rehacer.clear();
+                kre.c.calcular(); kre.prev_sucia = true;
+                return true;
+            }
+            if (!crear) return false;
+            if (kre.cargado && kre.sucio) kre.guardar();
+            kre.nombre = ident_bgd(fs::path(scene_path).stem().string(), "circuito");
+            kre.c = kr::Circuito(); kre.c.escena = rel;
+            kr::Camino cm; cm.nombre = "camino0"; cm.cerrado = false; cm.principal = true; kre.c.caminos.push_back(cm);   // abierto: se cierra al volver al primer punto
+            kre.c.kart = "Assets/Models/kart.glb";
+            kre.cargado = true; kre.sucio = true; kre.deshacer.clear(); kre.rehacer.clear();
+            return true;
+        };
+        // borra el circuito abierto: su .kart y su pista 3D; el terreno y los objetos de la escena no se tocan
+        auto kre_eliminar = [&]() {
+            std::error_code ec; std::string nom = kre.nombre, esc_rel = kre.c.escena;
+            fs::remove(kre.ruta(), ec);
+            fs::remove(fs::path(project_dir) / "Assets" / "Models" / (nom + "_pista.glb"), ec);
+            if (escena_inicial == "Scenes/" + nom + ".kart") { escena_inicial = esc_rel; write_manifest(); }
+            kre.cargado = false; kre.sucio = false; kre.nombre.clear(); kre.c = kr::Circuito();
+            kre.deshacer.clear(); kre.rehacer.clear(); road_nodo_sel = -1; kre.prev_sucia = true;
+            if (kre_prev_ent >= 0) { g3d_entity_impl_destroy_tree(kre_prev_ent, 0); kre_prev_ent = -1; }
+            status = ec ? "No se pudo borrar el circuito: " + ec.message() : "Circuito '" + nom + "' eliminado";
+            console_add(status + "\n");
+        };
+        // abrir un circuito (.kart): su escena 3D en Terreno con la herramienta Carretera; los antiguos sin escena se migran
+        auto kre_abrir_kart = [&](const std::string& nombre) {
+            if (!kre.inited) kre_iniciar();
+            if (kre.cargado && kre.sucio) kre.guardar();
+            kre.nombre = nombre; kre.deshacer.clear(); kre.rehacer.clear();
+            if (!kre.c.load(kre.ruta()) ) { status = "No se pudo abrir el circuito"; return; }
+            kre.cargado = true; kre.sucio = false;
+            if (kre.c.escena.empty()) {                      // circuito antiguo: se le crea su escena y se centra en el terreno
+                std::string esc = kre.crear_escena(nombre + "_mundo");
+                if (esc.empty()) { status = "No se pudo crear la escena del circuito"; return; }
+                kre.c.escena = esc;
+                float x0, x1, z0, z1;
+                if (kre.c.limites_nodos(x0, x1, z0, z1)) kre.c.desplazar(-(x0 + x1) * 0.5f, -(z0 + z1) * 0.5f);
+                kre.c.save(kre.ruta());
+                console_add("Circuito '" + nombre + "': migrado a una escena con terreno (" + esc + ")\n");
+            }
+            kre.c.calcular(); kre.prev_sucia = true;
+            if (kre_abrir_escena()) { modo = M_TERRENO; tool = T_ROAD; }
+        };
+        /* ---- MODO CARRERAS: circuitos de karts (carreras.h) ---- */
+        kre_terreno_sync();
+        {   // si el .kart se borra de la carpeta, el circuito en memoria se olvida (si no, el siguiente cambio lo volveria a crear)
+            static int kre_chk = 0;
+            if (modo != M_CARRERAS && kre.cargado && !kre.nombre.empty() && (++kre_chk % 45) == 0 && !fs::exists(kre.ruta())) {
+                console_add("El circuito '" + kre.nombre + "' ya no esta en la carpeta: se descarta\n");
+                kre.cargado = false; kre.sucio = false; kre.nombre.clear(); kre.c = kr::Circuito(); kre.deshacer.clear(); kre.rehacer.clear();
+                road_nodo_sel = -1; kre.prev_sucia = true;
+                if (kre_prev_ent >= 0) { g3d_entity_impl_destroy_tree(kre_prev_ent, 0); kre_prev_ent = -1; }
+            }
+        }
+        if (modo == M_CARRERAS) {
+            bool kre_primera = !kre.inited;
+            if (kre_primera) kre_iniciar();
+            if (kre_primera) {
+                if (getenv("EDITOR_KR_3D")) { kre_ir_3d(); if (getenv("EDITOR_KR_ROADTOOL")) tool = T_ROAD; }           // prueba: empieza ya en el visor 3D
+                // Pruebas sin GUI: EDITOR_MODO=6 EDITOR_GENERAR=1 crea un circuito de ejemplo si no hay, guarda, genera, compila y sale
+                if (getenv("EDITOR_GENERAR")) {
+                    if (!kre.cargado) kre.nuevo("circuito1");
+                    else kre.guardar();
+                    if (const char* ne = getenv("EDITOR_KR_NUEVAESCENA")) { std::string r = kre.crear_escena(ne); printf("EDITOR_KR_NUEVAESCENA: %s\n", r.c_str()); kre.c.escena = r; kre.guardar(); }
+                    if (getenv("EDITOR_KR_TESTBORRAR")) {      // prueba de la goma, quitar tramo y deshacer (solo en memoria: no se guarda)
+                        auto est = [&](const char* et) {
+                            std::string cs; for (auto& cm : kre.c.caminos) cs += std::to_string(cm.nodos.size()) + (cm.cerrado ? "c " : "a ");
+                            printf("BORRAR %-34s caminos=%d [%s] objetos=%d rampas=%d turbos=%d lagos=%d muestras=%d deshacer=%d rehacer=%d\n", et, (int)kre.c.caminos.size(), cs.c_str(),
+                                   (int)kre.c.objetos.size(), (int)kre.c.rampas.size(), (int)kre.c.turbos.size(), (int)kre.c.lagos.size(), (int)kre.c.m.size(), (int)kre.deshacer.size(), (int)kre.rehacer.size());
+                        };
+                        kre.c.calcular(); est("inicio");
+                        kre.push_undo(); kre.eliminar_tramo(0, 3); est("quitar tramo 3 (cerrado -> abierto)");
+                        kre.push_undo(); kre.eliminar_tramo(0, 4); est("quitar tramo 4 (abierto -> dos)");
+                        kre.gom_car = false; kre.gom_obj = false;                          // solo rampas/turbos/lagos
+                        float tx = kre.c.turbos.empty() ? 0 : kre.c.turbos[0].x, tz = kre.c.turbos.empty() ? 0 : kre.c.turbos[0].z;
+                        bool b1 = kre.borrar_en(tx, tz, 3.0f); est(b1 ? "goma sobre un turbo" : "goma sobre un turbo (nada)");
+                        kre.trazo_snap = false; kre.gom_car = true;
+                        float nx = kre.c.caminos[0].nodos[1].x, nz = kre.c.caminos[0].nodos[1].z;
+                        bool b2 = kre.borrar_en(nx, nz, 4.0f); est(b2 ? "goma sobre un nodo" : "goma sobre un nodo (nada)");
+                        kre.do_undo(); est("deshacer 1"); kre.do_undo(); est("deshacer 2"); kre.do_undo(); est("deshacer 3"); kre.do_undo(); est("deshacer 4");
+                        kre.do_redo(); est("rehacer 1");
+                    }
+                    if (const char* mg = getenv("EDITOR_KR_MIGRAR")) {      // prueba: abrir un circuito antiguo (lo migra a una escena)
+                        kre_abrir_kart(mg);
+                        printf("EDITOR_KR_MIGRAR: escena=%s modo=%d herramienta=%d nodo0=%.1f,%.1f\n", kre.c.escena.c_str(), (int)modo, (int)tool,
+                               kre.c.caminos.empty() ? 0.0f : kre.c.caminos[0].nodos[0].x, kre.c.caminos.empty() ? 0.0f : kre.c.caminos[0].nodos[0].z);
+                        modo = M_CARRERAS;
+                    }
+                    if (const char* ts = getenv("EDITOR_TERRSIZE")) {       // prueba: cambia el tamano del terreno de la escena y lo guarda
+                        int g = 160; float s = 400.0f; sscanf(ts, "%d %f", &g, &s);
+                        if (kre_abrir_escena()) {
+                            printf("EDITOR_TERRSIZE: antes %d celdas, %.0f m\n", terr_grid, terr_size);
+                            terrain_resize(g, s);
+                            g3d_editor_terrain_raise(terrain, 0.45f * s, 0.30f * s, 40.0f, 25.0f);
+                            printf("EDITOR_TERRSIZE: ahora %d celdas, %.0f m; altura en (%.0f,%.0f) = %.1f\n", terr_grid, terr_size, 0.45f * s, 0.30f * s, g3d_editor_terrain_height(terrain, 0.45f * s, 0.30f * s));
+                            save_scene(scene_path);
+                        }
+                    }
+                    if (const char* pg = getenv("EDITOR_KR_PISTA")) {       // prueba: circuito con pista propia (.glb), sin trazado
+                        kre.c.caminos.clear(); kre.c.rampas.clear(); kre.c.turbos.clear(); kre.c.lagos.clear(); kre.c.objetos.clear(); kre.c.cruces.clear();
+                        kre.c.pista_glb = pg; kre.c.sx = 0; kre.c.sz = -40; kre.c.sy_manual = 1.0f; kre.c.syaw_manual = 0;
+                        if (const char* p3 = getenv("EDITOR_KR_PISTA3D")) { float a=0,b=0,c=0,d=1,e=0,f=0,g=-40,h=0; sscanf(p3, "%f %f %f %f %f %f %f %f", &a,&b,&c,&d,&e,&f,&g,&h); kre.c.pista_x=a; kre.c.pista_y=b; kre.c.pista_z=c; kre.c.pista_esc=d; kre.c.pista_yaw=e; kre.c.sx=f; kre.c.sz=g; kre.c.syaw_manual=h; }
+                        kre.c.escena.clear();
+                        if (getenv("EDITOR_KR_PISTA_NODOS")) {      // el trazado de prueba.glb (los puntos de control con que se genero) + un turbo y una rampa
+                            const float P[13][3] = { {0,0,-80},{0,0,0},{0,0,80},{30,0,130},{90,0,148},{140,0,110},{160,6,50},{160,10,-10},{150,2,-70},{110,0,-115},{65,0,-105},{35,0,-145},{5,0,-125} };
+                            kr::Camino cm; cm.nombre = "camino0"; cm.cerrado = true; cm.principal = true;
+                            for (int q = 0; q < 13; q++) { kr::Nodo n; n.x = P[q][0]; n.y = P[q][1]; n.z = P[q][2]; n.sigue = 0; n.dy = 0; n.ancho = q >= 6 && q <= 8 ? 13.0f : (q >= 9 && q <= 11 ? 9.0f : 14.0f);
+                                kr::Tramo t; t.muro_izq = t.muro_der = 1; cm.nodos.push_back(n); cm.tramos.push_back(t); }
+                            kre.c.caminos.push_back(cm);
+                            kr::Turbo tb; tb.x = 0; tb.z = 45; kre.c.turbos.push_back(tb);
+                            kr::Rampa rp; rp.x = 0; rp.z = 20; kre.c.rampas.push_back(rp);
+                            kre.c.sx = 0; kre.c.sz = -70;
+                        }
+                        kre.c.calcular(); kre.guardar();
+                        printf("EDITOR_KR_PISTA: %s\n", kre.msg.c_str());
+                    }
+                    if (getenv("EDITOR_KR_ROAD")) {          // prueba: circuito nuevo sobre el terreno (con colinas), pegado al relieve
+                        if (kre_abrir_escena() && terrain) {
+                            for (int q = 0; q < 6; q++) { float a = q * 1.047f; g3d_editor_terrain_raise(terrain, cosf(a) * 90.0f, sinf(a) * 70.0f, 30.0f, (q % 2 ? 4.0f : -1.0f)); }
+                            kre.c.caminos.clear();
+                            kr::Camino cm; cm.nombre = "camino0"; cm.cerrado = true; cm.principal = true;
+                            for (int q = 0; q < 10; q++) {
+                                float a = q * 6.2832f / 10; kr::Nodo n; n.x = cosf(a) * 100.0f; n.z = sinf(a) * 70.0f; n.sigue = 1; n.dy = getenv("EDITOR_KR_DY") ? (float)atof(getenv("EDITOR_KR_DY")) : 0.15f;
+                                kr::Tramo t; t.muro_izq = 1; t.muro_der = 1; cm.nodos.push_back(n); cm.tramos.push_back(t);
+                            }
+                            kre.c.caminos.push_back(cm); kre.c.rampas.clear(); kre.c.turbos.clear(); kre.c.lagos.clear(); kre.c.objetos.clear(); kre.c.cruces.clear();
+                            kre.c.sx = 100; kre.c.sz = 0;
+                            if (getenv("EDITOR_KR_EFX")) {      // prueba: barro en los 3 primeros tramos y una zona de turbo pintada mas adelante
+                                for (int q = 0; q < 3; q++) kre.c.caminos[0].tramos[q].sup = 3;
+                                kre.c.zona_on[1] = 1;
+                                g3d_zone_paint(cosf(5 * 0.6283f) * 100.0f, sinf(5 * 0.6283f) * 70.0f, 25.0f, 1, 1);
+                            }
+                            save_scene(scene_path);
+                            kre.c.calcular(); kre.guardar();
+                            printf("EDITOR_KR_ROAD: %.0f m, %d checkpoints\n", kre.c.vuelta, (int)kre.c.cps.size());
+                        }
+                    }
+                    if (getenv("EDITOR_KR_ADAPTAR")) {      // prueba: levanta una colina bajo la carretera, adapta el terreno y mide
+                        if (kre_abrir_escena() && terrain) {
+                            kre.c.calcular();
+                            auto cortes = kre.c.cortes();
+                            if (getenv("EDITOR_KR_COLINA") && !cortes.empty()) { const auto& k = cortes[cortes.size() / 3]; g3d_editor_terrain_raise(terrain, k.x, k.z, 70.0f, 25.0f); }
+                            auto mide = [&](const char* et) {
+                                int mal = 0; float peor = 0;
+                                for (auto& k : cortes) {
+                                    float hs[3] = { g3d_editor_terrain_height(terrain, k.x, k.z) - k.cy, g3d_editor_terrain_height(terrain, k.rx, k.rz) - k.ry, g3d_editor_terrain_height(terrain, k.lx, k.lz) - k.ly };
+                                    float m = std::max(hs[0], std::max(hs[1], hs[2]));
+                                    if (m > 0.02f) { mal++; peor = std::max(peor, m);
+                                        if (getenv("EDITOR_KR_DEBUG") && mal <= 6) printf("   mal (%.1f,%.1f) road c=%.2f r=%.2f l=%.2f target=%.2f radio=%.1f terreno c=%.2f r=%.2f l=%.2f\n", k.x, k.z, k.cy, k.ry, k.ly, k.y, k.r,
+                                            g3d_editor_terrain_height(terrain, k.x, k.z), g3d_editor_terrain_height(terrain, k.rx, k.rz), g3d_editor_terrain_height(terrain, k.lx, k.lz)); }
+                                }
+                                printf("EDITOR_KR_ADAPTAR %s: %d de %d puntos con el terreno por encima de la carretera (peor %.2f m)\n", et, mal, (int)cortes.size(), peor);
+                            };
+                            mide("antes");
+                            kre_adaptar(); kre.guardar();
+                            mide("despues");
+                        }
+                    }
+                    printf("EDITOR_GENERAR (carreras): %s\n", kre.msg.c_str());
+                    escena_inicial = "Scenes/" + kre.nombre + ".kart";
+                    generate_game(false);
+                    printf("EDITOR_GENERAR: %s\n", last_compile_ok ? "compilado" : "FALLO");
+                    return last_compile_ok ? 0 : 1;
+                }
+            }
+            kre.draw();
+        }
+        /* ---- la carretera en el visor 3D (modos Terreno/Escena con la escena vinculada abierta) ---- */
+        {
+            std::string comp = kre_ruta_escena();
+            // el circuito NO se carga solo al abrir el editor o una escena: se carga al elegir la herramienta Carretera o al abrir su .kart
+            comp = kre_ruta_escena();
+            bool quiere = kre.inited && kre.cargado && (!kre.c.m.empty() || !kre.c.pista_glb.empty()) && !comp.empty() && modo != M_CARRERAS && fs::path(scene_path) == fs::path(comp);
+            if (!quiere && kre_prev_ent >= 0) { g3d_entity_impl_destroy_tree(kre_prev_ent, 0); kre_prev_ent = -1; }
+            if (getenv("EDITOR_KR_BORRAR")) {        // prueba: elimina el circuito a los 150 fotogramas y a los 250 empieza otro nuevo
+                static int fr2 = 0; ++fr2;
+                if (fr2 == 140) { printf("EDITOR_KR_BORRAR: entidades antes %d (preview %d)\n", g3d_editor_count_entities(), kre_prev_ent); fflush(stdout); }
+                if (fr2 == 150 && kre.cargado) { kre_eliminar(); printf("EDITOR_KR_BORRAR: hecho; entidades %d (preview %d)\n", g3d_editor_count_entities(), kre_prev_ent); fflush(stdout); }
+                if (fr2 == 400) { printf("EDITOR_KR_BORRAR: entidades al final %d (preview %d)\n", g3d_editor_count_entities(), kre_prev_ent); fflush(stdout); }
+                if (fr2 == 250) {
+                    kre_vincular(true);
+                    kr::Camino& c0 = kre.c.caminos[0];
+                    for (int q = 0; q < 5; q++) { kr::Nodo n; float a = q * 1.2566f; n.x = cosf(a) * 40.0f; n.z = sinf(a) * 40.0f; n.sigue = 1; kr::Tramo t; t.muro_izq = t.muro_der = 1; c0.nodos.push_back(n); c0.tramos.push_back(t); }
+                    c0.cerrado = true; kre.c.sx = 40; kre.c.sz = 0; kre.tocar(); kre.c.save(kre.ruta());
+                    printf("EDITOR_KR_BORRAR: circuito nuevo con %d nodos, vuelta %.0f m\n", (int)c0.nodos.size(), kre.c.vuelta); fflush(stdout);
+                }
+            }
+            if (getenv("EDITOR_KR_NODOSMAL") && quiere && !kre.c.pista_glb.empty() && !kre.c.caminos.empty()) {   // prueba: que superficies hay bajo cada punto del trazado
+                static int frn = 0; if (++frn == 120) {
+                    g3d_gltf_set_recenter(0); void* pm = g3d_gltf_load((project_dir + "/" + kre.c.pista_glb).c_str()); g3d_gltf_set_recenter(1);
+                    for (size_t i = 0; i < kre.c.caminos[0].nodos.size() && i < 16; i++) {
+                        const kr::Nodo& n = kre.c.caminos[0].nodos[i]; float hs[96];
+                        int nh = g3d_editor_model_ray_all(pm, n.x, n.y + 200.0f, n.z, 0, -1, 0, kre.c.pista_x, kre.c.pista_y, kre.c.pista_z, kre.c.pista_esc, kre.c.pista_yaw, hs, 32);
+                        printf("EDITOR_KR_NODOSMAL punto %zu y=%.1f superficies:", i + 1, n.y);
+                        for (int q = 0; q < nh; q++) printf(" %.1f", hs[3 * q + 1]);
+                        printf("\n");
+                    }
+                    fflush(stdout);
+                }
+            }
+            if (getenv("EDITOR_KR_PICKTEST")) { static int fq = 0; if (++fq == 100) { printf("EDITOR_KR_PICKTEST estado: quiere=%d cargado=%d inited=%d pista=%s comp=%s escena=%s modo=%d\n", (int)quiere, (int)kre.cargado, (int)kre.inited, kre.c.pista_glb.c_str(), comp.c_str(), scene_path.c_str(), (int)modo); fflush(stdout); } }
+            if (getenv("EDITOR_KR_PICKTEST") && quiere && !kre.c.pista_glb.empty()) {   // prueba del rayo contra la malla de la pista propia
+                static int frp = 0; frp++;
+                if (frp == 150) {
+                    g3d_gltf_set_recenter(0); void* pm = g3d_gltf_load((project_dir + "/" + kre.c.pista_glb).c_str()); g3d_gltf_set_recenter(1);
+                    { float bb[6]; if (g3d_editor_model_bounds(pm, bb)) { printf("EDITOR_KR_PICKTEST caja: x %.1f..%.1f  y %.1f..%.1f  z %.1f..%.1f\n", bb[0], bb[3], bb[1], bb[4], bb[2], bb[5]); fflush(stdout); } }
+                    int nh = 0; float o3[3], sy = 0, sxm = 0, szm = 0;
+                    for (int iy = 0; iy < 30; iy++) for (int ix = 0; ix < 40; ix++)
+                        if (g3d_editor_model_pick(ix * 20.0f + 10.0f, iy * 20.0f + 10.0f, 800.0f, 600.0f, pm, kre.c.pista_x, kre.c.pista_y, kre.c.pista_z, kre.c.pista_esc, kre.c.pista_yaw, o3)) { nh++; sy += o3[1]; sxm += o3[0]; szm += o3[2]; }
+                    printf("EDITOR_KR_PICKTEST: %d aciertos de 1200; y media %.2f (pista y=%.1f esc=%.2f) centro %.1f,%.1f\n", nh, nh ? sy / nh : 0, kre.c.pista_y, kre.c.pista_esc, nh ? sxm / nh : 0, nh ? szm / nh : 0); fflush(stdout);
+                }
+            }
+            if (getenv("EDITOR_KR_SCULPT") && quiere && terrain) {      // prueba: sube el terreno bajo el 5o punto y comprueba que la carretera lo sigue
+                static int fr = 0; fr++;
+                if (fr == 150 && !kre.c.caminos.empty() && kre.c.caminos[0].nodos.size() > 5) {
+                    const kr::Nodo& n = kre.c.caminos[0].nodos[5];
+                    int si0 = kre.c.muestra_cercana(n.x, n.z); float y0 = kre.c.m[si0].c.y, t0 = g3d_editor_terrain_height(terrain, n.x, n.z);
+                    for (int q = 0; q < 6; q++) g3d_editor_terrain_raise(terrain, n.x, n.z, 25.0f, 4.0f);
+                    kre.c.calcular(); kre.prev_sucia = true;
+                    int si1 = kre.c.muestra_cercana(n.x, n.z);
+                    printf("EDITOR_KR_SCULPT: terreno %.2f -> %.2f ; carretera %.2f -> %.2f en %.0f,%.0f\n", t0, g3d_editor_terrain_height(terrain, n.x, n.z), y0, kre.c.m[si1].c.y, n.x, n.z); fflush(stdout);
+                }
+            }
+            // en tiempo real: mientras se arrastra o se mueve un deslizador la carretera se rehace como mucho ~7 veces por segundo
+            static uint32_t prev_t0 = 0; uint32_t prev_ahora = SDL_GetTicks();
+            static std::string pista_cargada;
+            static int prev_extra[2] = { -1, -1 };                 // turbos/rampas puestos sobre una pista propia
+            static void* extra_viejo[2] = { nullptr, nullptr };
+            auto quitar_extras = [&]() { for (int q = 0; q < 2; q++) if (prev_extra[q] >= 0) { g3d_entity_impl_destroy_tree(prev_extra[q], 0); prev_extra[q] = -1; } };
+            if (!quiere) quitar_extras();
+            if (quiere && (kre_prev_ent < 0 || (kre.prev_sucia && prev_ahora - prev_t0 > 300))) {
+                bool pista_nueva = pista_cargada != kre.c.pista_glb;
+                pista_cargada = kre.c.pista_glb;
+                prev_t0 = prev_ahora;
+                kre.prev_sucia = false;
+                std::string rel, err; uint32_t t_a = SDL_GetTicks();
+                if (!kre.c.pista_glb.empty()) {                    // pista propia: su .glb tal cual (no cambia: la cache del motor sirve) + los turbos y rampas encima
+                    if (kre_prev_ent < 0 || pista_nueva) {
+                        if (kre_prev_ent >= 0) { g3d_entity_impl_destroy_tree(kre_prev_ent, 0); kre_prev_ent = -1; }
+                        g3d_gltf_set_recenter(0);
+                        void* mdl = g3d_gltf_load((project_dir + "/" + kre.c.pista_glb).c_str());
+                        g3d_gltf_set_recenter(1);
+                        if (mdl) kre_prev_ent = g3d_model_spawn(scene, mdl, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+                        else console_add("AVISO: no se pudo cargar la pista " + kre.c.pista_glb + "\n");
+                    }
+                    quitar_extras();
+                    std::string rel2, err2;
+                    if (kre.c.exportar(project_dir, "_kart_preview", kre.tex_src, rel2, err2)) {
+                        const std::string* rutas[2] = { &kre.c.ex_vis, &kre.c.ex_col };
+                        for (int q = 0; q < 2; q++) {
+                            if (rutas[q]->empty()) continue;
+                            std::string fq = project_dir + "/" + *rutas[q];
+                            g3d_gltf_set_recenter(0);
+                            void* mp = g3d_gltf_unshare(fq.c_str());
+                            if (extra_viejo[q]) { g3d_gltf_free(extra_viejo[q]); extra_viejo[q] = nullptr; }
+                            extra_viejo[q] = mp;
+                            void* mdl = g3d_gltf_load(fq.c_str());
+                            g3d_gltf_set_recenter(1);
+                            if (mdl) prev_extra[q] = g3d_model_spawn(scene, mdl, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+                        }
+                    }
+                } else {
+                    if (kre_prev_ent >= 0) { g3d_entity_impl_destroy_tree(kre_prev_ent, 0); kre_prev_ent = -1; }
+                    quitar_extras();
+                    if (kre.c.exportar(project_dir, "_kart_preview", kre.tex_src, rel, err)) {
+                        g3d_gltf_set_recenter(0);                       // coordenadas tal cual: la carretera donde esta
+                        // el motor guarda los modelos por ruta: sin sacarlo de su cache, cargar el mismo .glb devolveria SIEMPRE el primero (la carretera vieja)
+                        static void* mdl_viejo = nullptr;
+                        void* mdl_prev = g3d_gltf_unshare((project_dir + "/" + rel).c_str());
+                        if (mdl_viejo) { g3d_gltf_free(mdl_viejo); mdl_viejo = nullptr; }     // el de hace una vez: ya no lo usa ninguna entidad
+                        mdl_viejo = mdl_prev;
+                        void* mdl = g3d_gltf_load((project_dir + "/" + rel).c_str());
+                        g3d_gltf_set_recenter(1);
+                        if (getenv("EDITOR_KR_TIEMPOS")) { printf("EDITOR_KR_TIEMPOS: exportar+cargar %u ms\n", SDL_GetTicks() - t_a); fflush(stdout); }
+                        if (mdl) kre_prev_ent = g3d_model_spawn(scene, mdl, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+                    } else console_add("AVISO: no se pudo preparar la vista previa del circuito: " + err + "\n");
+                }
+            }
+            if (quiere && !kre.c.pista_glb.empty() && kre_prev_ent >= 0) {     // pista propia: su colocacion (posicion, giro, escala) en vivo
+                g3d_entity_impl_set_position(kre_prev_ent, kre.c.pista_x, kre.c.pista_y, kre.c.pista_z);
+                g3d_entity_impl_set_rotation(kre_prev_ent, 0.0f, kre.c.pista_yaw * 0.0174533f, 0.0f);
+                g3d_entity_impl_set_scale(kre_prev_ent, kre.c.pista_esc, kre.c.pista_esc, kre.c.pista_esc);
+            }
+            // el KART sobre la linea de salida, como vista previa (se rehace si cambia el modelo, el tamano o la salida)
+            {
+                static int kart_ent = -1; static std::string kart_clave; static std::map<std::string, void*> kart_mdl;
+                std::string clave;
+                if (quiere && kre.c.ps >= 0 && !kre.c.kart.empty() && kre.c.salida_i < (int)kre.c.m.size()) {
+                    char b[64]; snprintf(b, sizeof b, "|%.2f|%.2f|%.2f|%.1f", kre.c.kart_tam, kre.c.sx, kre.c.sz, kre.c.m[kre.c.salida_i].c.y);
+                    clave = kre.c.kart + b + "|" + std::to_string(kre.c.salida_i) + "|" + std::to_string(kre.c.salida_yaw);
+                }
+                if (clave != kart_clave) {
+                    kart_clave = clave;
+                    if (kart_ent >= 0) { g3d_entity_impl_destroy_tree(kart_ent, 0); kart_ent = -1; }
+                    if (!clave.empty()) {
+                        void*& mdl = kart_mdl[kre.c.kart];
+                        std::string rk = (fs::path(kre.c.kart).is_absolute() ? kre.c.kart : project_dir + "/" + kre.c.kart);
+                        if (!mdl && fs::exists(rk)) mdl = g3d_gltf_load(rk.c_str());
+                        if (mdl) {
+                            const kr::Muestra& s = kre.c.m[kre.c.salida_i];
+                            kart_ent = g3d_model_spawn(scene, mdl, s.c.x, s.c.y + 0.05f, s.c.z, kre.c.kart_tam, kre.c.salida_yaw * 0.0174533f);
+                        }
+                    }
+                }
+            }
+            if (quiere && tool != T_ROAD) {
+                const ImGuiViewport* vp = ImGui::GetMainViewport();
+                ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + 8), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.0f));
+                if (ImGui::Begin("Circuito (3D)", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) {
+                    ImGui::Text("Circuito: %s   (%.0f m)", kre.nombre.c_str(), kre.c.vuelta);
+                    if (ImGui::Button("Editar la carretera")) { tool = T_ROAD; }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Adaptar el terreno a la carretera")) kre_adaptar();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Actualizar la carretera")) kre.prev_sucia = true;
+                    ImGui::TextDisabled("Elige \"Carretera\" en Terreno para editarla.");
+                }
+                ImGui::End();
+            }
+        }
+
+        /* ---- panel de la herramienta Carretera (modo Terreno) ---- */
+        if (modo == M_TERRENO && (tool == T_ROAD || tool == T_ZONE) && kre.inited) {
+            const ImGuiViewport* vp = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 20, vp->WorkPos.y + 120), ImGuiCond_FirstUseEver, ImVec2(1.0f, 0.0f));
+            ImGui::SetNextWindowSize(ImVec2(330, 0), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Carretera", nullptr, ImGuiWindowFlags_NoCollapse)) {
+                bool mio = kre.cargado && kre.c.escena == kre_escena_rel();
+                kr::Camino* cm = nullptr;
+                if (mio) { for (auto& c : kre.c.caminos) if (c.principal) { cm = &c; break; } if (!cm && !kre.c.caminos.empty()) cm = &kre.c.caminos[0]; }
+                if (!cm && tool == T_ZONE) {
+                    ImGui::TextWrapped("Primero traza el circuito con la herramienta Carretera: las zonas son de su circuito.");
+                } else if (!cm) {
+                    ImGui::TextWrapped("Haz clic en el terreno para poner el primer punto del circuito de esta escena.");
+                    if (ImGui::Button("Crear circuito vacio (para usar una pista propia .glb)")) { kre_vincular(true); if (kre.cargado) { kre.sucio = true; kre.c.save(kre.ruta()); } }
+                    ImGui::TextDisabled("La carretera sigue al relieve: si subes o bajas el terreno, se adapta sola.");
+                } else {
+                    auto cambio = [&]() { kre.tocar(); kre.c.save(kre.ruta()); };
+                    ImGui::Text("%s  -  %d puntos  -  %.0f m", kre.nombre.c_str(), (int)cm->nodos.size(), kre.c.vuelta);
+                    auto efecto_ui = [&](const char* id, kr::Efecto& e) -> bool {
+                        bool c = false; ImGui::PushID(id);
+                        ImGui::SetNextItemWidth(70); c |= ImGui::DragFloat("##ag", &e.agarre, 0.01f, 0.0f, 2.0f, "agarre %.2f"); ImGui::SameLine();
+                        ImGui::SetNextItemWidth(70); c |= ImGui::DragFloat("##ve", &e.vel, 0.01f, 0.1f, 3.0f, "veloc. %.2f"); ImGui::SameLine();
+                        ImGui::SetNextItemWidth(70); c |= ImGui::DragFloat("##ac", &e.acel, 0.01f, 0.1f, 3.0f, "acel. %.2f");
+                        ImGui::PopID(); return c;
+                    };
+                    if (tool == T_ZONE) {
+                        ImGui::SeparatorText("Zonas de efecto");
+                        ImGui::TextWrapped("Pinta con el raton: el kart que pase por esa parte del terreno cambia de agarre, velocidad y aceleracion (1 = normal).");
+                        ImGui::Combo("Capa a pintar", &zone_layer, kr::ZONA_NOMBRE, 4);
+                        ImGui::SliderFloat("Radio", &brush_r, 3.0f, 120.0f, "%.0f");
+                        ImGui::Checkbox("Borrar (en vez de pintar)", &zone_erase);
+                        for (int i = 0; i < 4; i++) {
+                            ImGui::PushID(i);
+                            bool on = kre.c.zona_on[i] != 0;
+                            char nm[48]; snprintf(nm, sizeof nm, "%s", kre.c.zona_nom[i].c_str());
+                            if (ImGui::Checkbox("##on", &on)) { kre.c.zona_on[i] = on; cambio(); }
+                            ImGui::SameLine(); ImGui::SetNextItemWidth(110);
+                            if (ImGui::InputText("##nm", nm, sizeof nm)) { kre.c.zona_nom[i] = nm; cambio(); }
+                            ImGui::SameLine(); ImGui::TextDisabled("%s", i == zone_layer ? "<" : "");
+                            if (efecto_ui("ef", kre.c.zona_ef[i])) cambio();
+                            ImGui::PopID();
+                        }
+                        ImGui::TextDisabled("Las zonas solo valen si estan marcadas.");
+                        ImGui::End();
+                        goto fin_panel_carretera;
+                    }
+                    if (ImGui::CollapsingHeader("Efecto de cada superficie")) {
+                        for (int i = 0; i < kr::N_SUP; i++) { ImGui::TextUnformatted(kr::SUP_NOMBRE[i]); if (efecto_ui(kr::SUP_NOMBRE[i], kre.c.sup_ef[i])) cambio(); }
+                        ImGui::TextDisabled("Multiplicadores: agarre, velocidad maxima, aceleracion.");
+                    }
+                    if (ImGui::CollapsingHeader("Ancho y tramos")) {
+                        static float ancho_todo = 14.0f;
+                        ImGui::SliderFloat("Ancho", &ancho_todo, 6.0f, 40.0f, "%.1f m");
+                        if (ImGui::Button("Ancho a todos los puntos")) { kre.push_undo(); for (auto& n : cm->nodos) n.ancho = ancho_todo; cambio(); }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Suavizar ancho")) {
+                            kre.push_undo(); int nn = (int)cm->nodos.size(); std::vector<float> w(nn);
+                            for (int i = 0; i < nn; i++) {
+                                int a = cm->cerrado ? (i - 1 + nn) % nn : std::max(0, i - 1), d = cm->cerrado ? (i + 1) % nn : std::min(nn - 1, i + 1);
+                                w[i] = 0.25f * cm->nodos[a].ancho + 0.5f * cm->nodos[i].ancho + 0.25f * cm->nodos[d].ancho;
+                            }
+                            for (int i = 0; i < nn; i++) cm->nodos[i].ancho = w[i];
+                            cambio();
+                        }
+                        ImGui::TextDisabled("Con un punto elegido, arrastra los cuadrados cian de los bordes para ensanchar o estrechar.");
+                        if (road_nodo_sel >= 0 && road_nodo_sel < (int)cm->tramos.size()) {
+                            if (ImGui::Button("Superficie y muros de este tramo a todos")) {
+                                kre.push_undo(); const kr::Tramo t0 = cm->tramos[road_nodo_sel];
+                                for (auto& t : cm->tramos) { t.sup = t0.sup; t.muro_izq = t0.muro_izq; t.muro_der = t0.muro_der; }
+                                cambio();
+                            }
+                            if (ImGui::Button("Suavizar la altura del tramo (perfil suave)")) { kre.push_undo(); for (auto& t : cm->tramos) t.suave = 1; cambio(); }
+                        }
+                    }
+                    if (ImGui::CollapsingHeader("Peralte de las curvas")) {
+                        static float per_k = 18.0f, per_max = 25.0f;
+                        ImGui::SliderFloat("Fuerza", &per_k, 4.0f, 40.0f, "%.0f");
+                        ImGui::SliderFloat("Maximo", &per_max, 5.0f, 35.0f, "%.0f grados");
+                        int ci = int(cm - kre.c.caminos.data());
+                        if (ImGui::Button("Automatico")) { kre.push_undo(); kre.c.peralte_auto(ci, per_k, per_max); cambio(); }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Suavizar")) { kre.push_undo(); kre.c.peralte_suavizar(ci); cambio(); }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Quitar todo")) { kre.push_undo(); for (auto& n : cm->nodos) n.peralte = 0; cambio(); }
+                        ImGui::TextDisabled("Automatico inclina cada curva hacia dentro segun lo cerrada que sea. Luego se afina punto a punto (deslizador Peralte).");
+                    }
+                    if (ImGui::Checkbox("Circuito cerrado (da vueltas)", &cm->cerrado)) cambio();
+                    if (!cm->cerrado && cm->nodos.size() >= 2) {
+                        if (ImGui::Button("Autocompletar y cerrar")) {
+                            // vuelve al primer punto con dos puntos intermedios que siguen la direccion de salida y de llegada
+                            kre.push_undo();
+                            kr::Nodo L = cm->nodos.back(), P = cm->nodos[cm->nodos.size() - 2], S = cm->nodos[0], S2 = cm->nodos[1];
+                            float dx = S.x - L.x, dz = S.z - L.z, dist = std::hypot(dx, dz);
+                            if (dist > 24.0f) {
+                                auto unit = [](float x, float z, float& ox, float& oz) { float l = std::hypot(x, z); if (l < 1e-4f) { ox = 1; oz = 0; } else { ox = x / l; oz = z / l; } };
+                                float ax, az, bx, bz; unit(L.x - P.x, L.z - P.z, ax, az); unit(S2.x - S.x, S2.z - S.z, bx, bz);
+                                float k = dist / 3.0f;
+                                kr::Nodo a = L, b = S; a.x = L.x + ax * k; a.z = L.z + az * k; b.x = S.x - bx * k; b.z = S.z - bz * k;
+                                a.sigue = b.sigue = 1; a.y = L.y; b.y = S.y;
+                                kr::Tramo t = cm->tramos.back();
+                                cm->nodos.push_back(a); cm->tramos.push_back(t); cm->nodos.push_back(b); cm->tramos.push_back(t);
+                            }
+                            cm->cerrado = true; road_nodo_sel = -1; cambio();
+                        }
+                        ImGui::TextDisabled("O haz clic en el primer punto (verde) para cerrarlo tal cual.");
+                    }
+                    if (ImGui::SliderInt("Vueltas", &kre.c.vueltas, 1, 10)) cambio();
+                    int rn = road_nodo_sel;
+                    if (rn >= 0 && rn < (int)cm->nodos.size()) {
+                        kr::Nodo& n = cm->nodos[rn]; kr::Tramo& t = cm->tramos[rn];
+                        ImGui::Separator();
+                        ImGui::Text("Punto %d%s", rn + 1, rn == 0 ? " (salida)" : "");
+                        if (ImGui::SliderFloat("Ancho", &n.ancho, 6.0f, 30.0f, "%.1f m")) cambio();
+                        if (ImGui::SliderFloat("Peralte", &n.peralte, -35.0f, 35.0f, "%.0f grados")) cambio();
+                        bool sg = n.sigue != 0;
+                        if (ImGui::Checkbox("Sigue al terreno", &sg)) { n.sigue = sg; if (!sg) n.y = std::max(0.0f, g3d_editor_terrain_height(terrain, n.x, n.z) + n.dy); cambio(); }
+                        if (n.sigue) { if (ImGui::SliderFloat("Sobre el terreno", &n.dy, 0.0f, 60.0f, "%.1f m")) cambio(); }
+                        else         { if (ImGui::SliderFloat("Altura", &n.y, 0.0f, 80.0f, "%.1f m")) cambio(); }
+                        ImGui::TextDisabled("Tramo hasta el punto siguiente");
+                        if (ImGui::Combo("Tipo", &t.tipo, kr::TIPO_NOMBRE, 3)) cambio();
+                        if (ImGui::Combo("Superficie", &t.sup, kr::SUP_NOMBRE, kr::N_SUP)) cambio();
+                        bool mi = t.muro_izq != 0, md = t.muro_der != 0;
+                        if (ImGui::Checkbox("Muro izquierdo", &mi)) { t.muro_izq = mi; cambio(); }
+                        ImGui::SameLine();
+                        if (ImGui::Checkbox("Muro derecho", &md)) { t.muro_der = md; cambio(); }
+                        if (t.tipo == kr::T_SALTO && ImGui::SliderFloat("Fuerza del salto", &t.fuerza, 5.0f, 40.0f)) cambio();
+                    } else ImGui::TextDisabled("Elige un punto para cambiar su ancho, altura o tramo.");
+                    ImGui::Separator();
+                    if (ImGui::CollapsingHeader("Poner sobre el circuito")) {
+                        const char* pn[] = { "Puntos de la carretera", "Placas de turbo", "Rampas", "Farolas", "Linea de salida y meta" };
+                        for (int i = 0; i < 5; i++) { if (ImGui::RadioButton(pn[i], road_poner == i)) road_poner = i; }
+                        ImGui::TextDisabled("Con cualquiera menos la primera, cada clic en el terreno lo coloca ahi (la salida se pega a la carretera).");
+                        auto lista = [&](const char* tit, int n, std::function<void(int)> quitar) {
+                            if (n == 0) return;
+                            ImGui::Text("%s: %d", tit, n); ImGui::SameLine();
+                            char id[32]; snprintf(id, sizeof id, "Quitar ultimo##%s", tit);
+                            if (ImGui::SmallButton(id)) { kre.push_undo(); quitar(n - 1); cambio(); }
+                        };
+                        lista("Turbos", (int)kre.c.turbos.size(), [&](int i) { kre.c.turbos.erase(kre.c.turbos.begin() + i); });
+                        lista("Rampas", (int)kre.c.rampas.size(), [&](int i) { kre.c.rampas.erase(kre.c.rampas.begin() + i); });
+                        lista("Farolas", (int)kre.c.luces.size(), [&](int i) { kre.c.luces.erase(kre.c.luces.begin() + i); });
+                        ImGui::TextDisabled("Objetos, arboles y demas: modo Escena (el kart choca con ellos).");
+                    }
+                    if (ImGui::CollapsingHeader("Pista propia (.glb de Blender...)", kre.c.pista_glb.empty() ? 0 : ImGuiTreeNodeFlags_DefaultOpen)) {
+                        if (kre.c.pista_glb.empty()) ImGui::TextWrapped("Ahora la carretera se genera con el trazado. Elige un modelo y se usara ESE: se ve y colisiona tal cual, sin generar carretera.");
+                        else ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.6f, 1.0f), "Pista: %s", kre.c.pista_glb.c_str());
+                        static char fp[48] = "";
+                        if (ImGui::BeginCombo("Modelo de la pista", "elegir...")) {
+                            ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##fp", "buscar...", fp, sizeof fp);
+                            for (auto& a : assets) {
+                                std::string ext = fs::path(a).extension().string();
+                                if (ext != ".glb" && ext != ".gltf") continue;
+                                if (a.find("_pista.glb") != std::string::npos) continue;
+                                if (fp[0] && a.find(fp) == std::string::npos) continue;
+                                if (ImGui::Selectable(a.c_str(), kre.c.pista_glb == "Assets/" + a)) { kre.push_undo(); kre.c.pista_glb = "Assets/" + a; cambio(); }
+                            }
+                            ImGui::EndCombo();
+                        }
+                        if (!kre.c.pista_glb.empty()) {
+                            { bool st = kre.c.sin_terreno; if (ImGui::Checkbox("Ocultar el terreno de la escena en el juego", &st)) { kre.c.sin_terreno = st; cambio(); } }
+                            ImGui::TextDisabled("Si la pista queda tapada por el terreno (a la misma altura), marcalo o baja el terreno bajo ella.");
+                            if (ImGui::Button("Volver a la carretera generada")) { kre.push_undo(); kre.c.pista_glb.clear(); cambio(); }
+                            if (!cm->nodos.empty()) {
+                                ImGui::SeparatorText("Alturas del trazado");
+                                // el modelo bajo cada punto: si el trazado se clico sobre un techo (tunel, puente) y no sobre la carretera, el kart
+                                // reaparece encima del techo. Se mira cada punto con un rayo vertical y se avisa de los que no estan sobre una superficie.
+                                static std::string informe; static int n_mal = 0;
+                                auto superficies = [&](void* pm, const kr::Nodo& n, float* hs, int max) -> int {
+                                    return g3d_editor_model_ray_all(pm, n.x, n.y + 200.0f, n.z, 0, -1, 0, kre.c.pista_x, kre.c.pista_y, kre.c.pista_z, kre.c.pista_esc, kre.c.pista_yaw, hs, max);
+                                };
+                                if (ImGui::Button("Comprobar los puntos")) {
+                                    g3d_gltf_set_recenter(0); void* pm = g3d_gltf_load((project_dir + "/" + kre.c.pista_glb).c_str()); g3d_gltf_set_recenter(1);
+                                    informe.clear(); n_mal = 0;
+                                    if (pm) for (size_t i = 0; i < cm->nodos.size(); i++) {
+                                        float hs[3 * 32]; int nh = superficies(pm, cm->nodos[i], hs, 32);
+                                        float y = cm->nodos[i].y, mejor = 1e30f; int cuantas_arriba = 0;
+                                        for (int q = 0; q < nh; q++) { float dd = y - hs[3 * q + 1]; if (dd >= -0.5f && dd < mejor) mejor = dd; if (hs[3 * q + 1] > y + 0.5f) cuantas_arriba++; }
+                                        if (nh == 0 || mejor > 1.5f) { n_mal++; char b[160]; snprintf(b, sizeof b, "Punto %d: %s\n", (int)i + 1, nh == 0 ? "no hay pista debajo" : "flota sobre la pista"); informe += b; }
+                                        else if (cuantas_arriba > 0) { char b[160]; snprintf(b, sizeof b, "Punto %d: hay %d superficie(s) por ENCIMA (techo?)\n", (int)i + 1, cuantas_arriba); informe += b; }
+                                    }
+                                    if (informe.empty()) informe = "Todos los puntos estan sobre la pista y sin nada encima.\n";
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::Button("Bajar al suelo (continuo)")) {
+                                    // cada punto a la superficie mas cercana en altura a la del punto anterior (el primero, a la suya): sigue la carretera por un tunel
+                                    g3d_gltf_set_recenter(0); void* pm = g3d_gltf_load((project_dir + "/" + kre.c.pista_glb).c_str()); g3d_gltf_set_recenter(1);
+                                    if (pm) { kre.push_undo(); float ref = cm->nodos[0].y;
+                                        for (auto& n : cm->nodos) {
+                                            float hs[3 * 32]; int nh = superficies(pm, n, hs, 32);
+                                            if (nh <= 0) continue;
+                                            int k = 0; float mejor = 1e30f; for (int q = 0; q < nh; q++) { float dd = fabsf(hs[3 * q + 1] - ref); if (dd < mejor) { mejor = dd; k = q; } }
+                                            n.y = hs[3 * k + 1]; ref = n.y;
+                                        }
+                                        cambio(); informe = "Alturas ajustadas al suelo, siguiendo la carretera desde el primer punto.\n"; n_mal = 0; }
+                                }
+                                if (!informe.empty()) ImGui::TextWrapped("%s", informe.c_str());
+                            }
+                            ImGui::SeparatorText("Colocar la pista");
+                            ImGui::TextUnformatted("Gizmo en el visor:"); ImGui::SameLine();
+                            if (ImGui::RadioButton("No", road_pista_op == 0)) road_pista_op = 0; ImGui::SameLine();
+                            if (ImGui::RadioButton("Mover", road_pista_op == 1)) road_pista_op = 1; ImGui::SameLine();
+                            if (ImGui::RadioButton("Girar", road_pista_op == 2)) road_pista_op = 2; ImGui::SameLine();
+                            if (ImGui::RadioButton("Escalar", road_pista_op == 3)) road_pista_op = 3;
+                            bool cp = false;
+                            cp |= ImGui::DragFloat("Escala", &kre.c.pista_esc, 0.01f, 0.001f, 10000.0f, "%.3f", ImGuiSliderFlags_Logarithmic);
+                            if (ImGui::Button("x0.1")) { kre.c.pista_esc *= 0.1f; cp = true; } ImGui::SameLine();
+                            if (ImGui::Button("x0.5")) { kre.c.pista_esc *= 0.5f; cp = true; } ImGui::SameLine();
+                            if (ImGui::Button("x2")) { kre.c.pista_esc *= 2.0f; cp = true; } ImGui::SameLine();
+                            if (ImGui::Button("x10")) { kre.c.pista_esc *= 10.0f; cp = true; } ImGui::SameLine();
+                            if (ImGui::Button("x100")) { kre.c.pista_esc *= 100.0f; cp = true; }
+                            cp |= ImGui::SliderFloat("Giro", &kre.c.pista_yaw, -180.0f, 180.0f, "%.0f grados");
+                            if (ImGui::Button("-90")) { kre.c.pista_yaw -= 90.0f; cp = true; } ImGui::SameLine();
+                            if (ImGui::Button("+90")) { kre.c.pista_yaw += 90.0f; cp = true; } ImGui::SameLine();
+                            if (ImGui::Button("180")) { kre.c.pista_yaw += 180.0f; cp = true; }
+                            while (kre.c.pista_yaw > 180.0f) kre.c.pista_yaw -= 360.0f; while (kre.c.pista_yaw < -180.0f) kre.c.pista_yaw += 360.0f;
+                            cp |= ImGui::DragFloat("Pista X", &kre.c.pista_x, 0.2f); cp |= ImGui::DragFloat("Pista altura", &kre.c.pista_y, 0.2f); cp |= ImGui::DragFloat("Pista Z", &kre.c.pista_z, 0.2f);
+                            if (ImGui::Button("Centrar en el origen")) { kre.c.pista_x = kre.c.pista_y = kre.c.pista_z = 0; cp = true; }
+                            {   // un modelo de Blender suele salir diminuto o enorme: se ajusta a un largo en metros, centrado y apoyado en el suelo
+                                static float largo_obj = 300.0f;
+                                ImGui::DragFloat("Largo deseado", &largo_obj, 1.0f, 5.0f, 5000.0f, "%.0f m");
+                                float bb[6]; g3d_gltf_set_recenter(0); void* pm = g3d_gltf_load((project_dir + "/" + kre.c.pista_glb).c_str()); g3d_gltf_set_recenter(1);
+                                if (pm && g3d_editor_model_bounds(pm, bb)) {
+                                    float dx = bb[3] - bb[0], dz = bb[5] - bb[2];
+                                    ImGui::TextDisabled("El modelo mide %.1f x %.1f x %.1f (a escala 1)", dx, bb[4] - bb[1], dz);
+                                    if (ImGui::Button("Ajustar tamano y centrar")) {
+                                        float esc = largo_obj / std::max(std::max(dx, dz), 1e-3f);
+                                        float cx = (bb[0] + bb[3]) * 0.5f * esc, cz = (bb[2] + bb[5]) * 0.5f * esc, a = kre.c.pista_yaw * 0.0174533f;
+                                        kre.c.pista_esc = esc;
+                                        kre.c.pista_x = -(cx * cosf(a) + cz * sinf(a)); kre.c.pista_z = -(-cx * sinf(a) + cz * cosf(a)); kre.c.pista_y = -bb[1] * esc;
+                                        cp = true;
+                                    }
+                                }
+                            }
+                            if (cp) cambio();
+                            ImGui::SeparatorText("Salida (sin trazado)");
+                            bool ch = false;
+                            ch |= ImGui::DragFloat("Salida X", &kre.c.sx, 0.2f); ch |= ImGui::DragFloat("Salida Z", &kre.c.sz, 0.2f);
+                            ch |= ImGui::DragFloat("Salida altura", &kre.c.sy_manual, 0.1f); ch |= ImGui::DragFloat("Salida rumbo", &kre.c.syaw_manual, 1.0f, -360.0f, 360.0f, "%.0f grados");
+                            if (ch) cambio();
+                            ImGui::TextDisabled("El modelo se ve y colisiona tal cual (1 unidad = 1 m, Y hacia arriba). Los puntos del trazado seran las vueltas y checkpoints.");
+                        }
+                    }
+                    if (ImGui::CollapsingHeader("Kart y salida")) {
+                        ImGui::Text("Kart: %s", kre.c.kart.c_str());
+                        static char fk[48] = "";
+                        if (ImGui::BeginCombo("Modelo del kart", "elegir...")) {
+                            ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##fk", "buscar...", fk, sizeof fk);
+                            for (auto& a : assets) {
+                                std::string ext = fs::path(a).extension().string();
+                                if (ext != ".glb" && ext != ".gltf" && ext != ".fbx") continue;
+                                if (a.find("_pista.glb") != std::string::npos) continue;
+                                if (fk[0] && a.find(fk) == std::string::npos) continue;
+                                if (ImGui::Selectable(a.c_str(), kre.c.kart == "Assets/" + a)) { kre.c.kart = "Assets/" + a; cambio(); }
+                            }
+                            ImGui::EndCombo();
+                        }
+                        if (ImGui::SliderFloat("Tamano del kart", &kre.c.kart_tam, 0.5f, 4.0f, "%.2f m")) cambio();
+                        if (ImGui::Button("Colocar la salida con un clic")) road_poner = 4;
+                        ImGui::SameLine();
+                        if (ImGui::Button("Salida en el primer punto") && !cm->nodos.empty()) { kre.push_undo(); kre.c.sx = cm->nodos[0].x; kre.c.sz = cm->nodos[0].z; cambio(); }
+                        ImGui::TextDisabled("La linea a cuadros es la salida y la meta; la flecha verde, hacia donde mira el kart.");
+                    }
+                    if (ImGui::CollapsingHeader("Dia, noche y cruces")) {
+                        if (ImGui::Combo("Ambiente", &kre.c.amb_modo, kr::AMB_NOMBRE, 4)) cambio();
+                        if (kre.c.amb_modo != 0) {
+                            if (ImGui::SliderFloat("Hora de salida", &kre.c.amb_hora, 0.0f, 24.0f, "%.1f h")) cambio();
+                            if (kre.c.amb_modo == 3 && ImGui::SliderFloat("Duracion del dia", &kre.c.amb_dur, 30.0f, 900.0f, "%.0f s")) cambio();
+                        }
+                        bool fr = kre.c.faros != 0; if (ImGui::Checkbox("Faros del kart (de noche)", &fr)) { kre.c.faros = fr; cambio(); }
+                        for (size_t i = 0; i < kre.c.cruces.size(); i++) {
+                            ImGui::PushID((int)i + 500);
+                            char et[80]; snprintf(et, sizeof et, "Cruce %d", (int)i + 1);
+                            int tp = kre.c.cruces[i].tipo;
+                            if (ImGui::Combo(et, &tp, kr::CRUCE_NOMBRE, 2)) { kre.c.cruces[i].tipo = tp; cambio(); }
+                            ImGui::PopID();
+                        }
+                        if (kre.c.cruces.empty()) ImGui::TextDisabled("Sin cruces: aparecen donde dos carreteras de distinta altura se cruzan.");
+                    }
+                    if (ImGui::Button("Guardar")) { save_scene(scene_path); kre.guardar(); status = kre.msg; }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Probar") && !cm->cerrado) status = "Cierra el circuito antes de probarlo (clic en el primer punto o Autocompletar)";
+                    else if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+                        save_scene(scene_path);
+                        if (kre.guardar() && kre.on_play) kre.on_play(kre.nombre); else status = kre.msg;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Quitar el ultimo") && !cm->nodos.empty()) { kre.push_undo(); cm->nodos.pop_back(); cm->tramos.pop_back(); road_nodo_sel = -1; cambio(); }
+                    ImGui::SameLine();
+                    static bool confirmar_borrar = false;
+                    if (ImGui::Button("Eliminar circuito...")) confirmar_borrar = true;
+                    if (confirmar_borrar) {
+                        // confirmacion dentro del propio panel (un popup saldria como otra ventana del sistema, a veces escondida)
+                        ImGui::Separator();
+                        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.4f, 1.0f), "Se borra el circuito '%s' entero:", kre.nombre.c_str());
+                        ImGui::BulletText("su trazado y ajustes (Scenes/%s.kart)", kre.nombre.c_str());
+                        ImGui::BulletText("la pista 3D (Assets/Models/%s_pista.glb)", kre.nombre.c_str());
+                        ImGui::TextDisabled("El terreno y los objetos de la escena no se tocan.");
+                        if (ImGui::Button("Si, eliminar")) { kre_eliminar(); confirmar_borrar = false; }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Cancelar")) confirmar_borrar = false;
+                    }
+                    ImGui::TextDisabled("Objetos, luces y ambiente: modo Carreras (de momento).");
+                }
+            }
+            ImGui::End();
+            fin_panel_carretera:;
         }
 
         /* ---- LAS TELAS, ONDEANDO EN EL EDITOR ----
@@ -9077,6 +10305,25 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         ImGuizmo::SetDrawlist();
         ImGuizmo::SetRect(img_min.x, img_min.y, avail.x, avail.y);
         bool gizmo_tool = !playing && (tool == T_MOVE || tool == T_ROTATE || tool == T_SCALE);
+        // GIZMO de la pista propia: moverla, girarla y escalarla en el visor, como un objeto
+        if (!playing && tool == T_ROAD && road_pista_op > 0 && kre.cargado && !kre.c.pista_glb.empty() && modo == M_TERRENO) {
+            float view[16], proj[16], model[16];
+            g3d_editor_get_view(view); g3d_editor_get_proj(proj);
+            float t[3] = { kre.c.pista_x, kre.c.pista_y, kre.c.pista_z };
+            float r[3] = { 0.0f, kre.c.pista_yaw, 0.0f };
+            float s[3] = { kre.c.pista_esc, kre.c.pista_esc, kre.c.pista_esc };
+            ImGuizmo::RecomposeMatrixFromComponents(t, r, s, model);
+            ImGuizmo::OPERATION op = road_pista_op == 1 ? ImGuizmo::TRANSLATE : road_pista_op == 2 ? ImGuizmo::ROTATE_Y : ImGuizmo::SCALEU;
+            static bool pista_usando = false;
+            ImGuizmo::Manipulate(view, proj, op, ImGuizmo::WORLD, model);
+            if (ImGuizmo::IsUsing()) {
+                pista_usando = true;
+                ImGuizmo::DecomposeMatrixToComponents(model, t, r, s);
+                kre.c.pista_x = t[0]; kre.c.pista_y = t[1]; kre.c.pista_z = t[2];
+                kre.c.pista_yaw = r[1];
+                kre.c.pista_esc = std::max(0.001f, (s[0] + s[1] + s[2]) / 3.0f);
+            } else if (pista_usando) { pista_usando = false; kre.tocar(); kre.c.save(kre.ruta()); }
+        }
         if (gizmo_tool && obj_sel >= 0 && obj_sel < (int)objects.size()) {
             SObj& o = objects[obj_sel];
             float view[16], proj[16], model[16];
@@ -9383,7 +10630,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 const ImU32 lcol[4] = { IM_COL32(255,60,60,150), IM_COL32(80,220,90,150),
                                         IM_COL32(80,150,255,150), IM_COL32(240,220,60,150) };
-                int grid = zs - 1; float ws = 400.0f;
+                int grid = zs - 1; float ws = terr_size;
                 for (int iz = 0; iz <= grid; iz += 2)
                     for (int ix = 0; ix <= grid; ix += 2) {
                         float wx = ((float)ix / grid - 0.5f) * ws;
@@ -9728,15 +10975,210 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                                                  hit[0], hit[2], brush_r, paint_op);
                     if (tool == T_HOLE)
                         g3d_editor_terrain_hole(terrain, hit[0], hit[2], brush_r, hole_fill ? 0 : 1);
+                    {   // si la escena tiene circuito se carga (una sola vez por escena) para que siga al relieve al soltar el pincel
+                        static std::string intento; if (!kre.cargado && intento != scene_path) { intento = scene_path; kre_vincular(false); }
+                    }
                     if (tool == T_ZONE)
                         g3d_zone_paint(hit[0], hit[2], brush_r, zone_layer, zone_erase ? 0 : 1);
                 }
                 // al soltar una pincelada, si hay agua hay que rehacerla: sigue
                 // la forma del relieve y este acaba de cambiar.
                 if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                    if (kre.inited && kre.cargado && !kre.c.escena.empty() && fs::path(scene_path) == fs::path(kre_ruta_escena())) { kre.c.calcular(); kre.prev_sucia = true; }   // la carretera sigue al relieve nuevo
                     if (!lakes.empty() || !rivers.empty()) rebuild_water();
                     if (g3d_watersim_active()) watersim_sync(true);   // el agua sigue el relieve nuevo
                 }
+            } else if (tool == T_ROAD && terrain) {
+                // ---- CARRETERA: puntos sobre el terreno; la carretera los une y sigue el relieve ----
+                static int rc_n = -1; static bool rc_drag = false; static bool rc_hdrag = false; static float rc_h_y0 = 0, rc_h_v0 = 0, rc_ppm = 10; static bool rc_wdrag = false;
+                bool hay = kre_vincular(false);
+                // donde se traza: sobre el terreno, o sobre la malla de la pista propia si la hay
+                const bool sobre_pista = kre.cargado && !kre.c.pista_glb.empty();
+                void* pista_mdl = nullptr;
+                if (sobre_pista) { g3d_gltf_set_recenter(0); pista_mdl = g3d_gltf_load((project_dir + "/" + kre.c.pista_glb).c_str()); g3d_gltf_set_recenter(1); }
+                // Un tunel o un puente tiene varias superficies bajo el mismo clic (el techo y la carretera). Se elige la mas cercana
+                // en altura al punto anterior del trazado (el trazado es continuo); con Alt se baja a la siguiente superficie.
+                auto pick_road = [&](float* o3, float refy = NAN) -> bool {
+                    if (!sobre_pista) return g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, o3);
+                    if (!pista_mdl) return false;
+                    float hs[3 * 24];
+                    int nh = g3d_editor_model_pick_all(sx, sy, (float)vp.w, (float)vp.h, pista_mdl, kre.c.pista_x, kre.c.pista_y, kre.c.pista_z, kre.c.pista_esc, kre.c.pista_yaw, hs, 24);
+                    if (nh <= 0) return false;
+                    int k = 0;
+                    if (!std::isnan(refy)) { float mejor = 1e30f; for (int i = 0; i < nh; i++) { float dd = fabsf(hs[3 * i + 1] - refy); if (dd < mejor) { mejor = dd; k = i; } } }
+                    if (ImGui::GetIO().KeyAlt) k = std::min(k + 1, nh - 1);
+                    o3[0] = hs[3 * k]; o3[1] = hs[3 * k + 1]; o3[2] = hs[3 * k + 2];
+                    if (nh > 1) { static char b[128]; snprintf(b, sizeof b, "Superficie %d de %d en este punto (Alt = la de debajo)", k + 1, nh); status = b; }
+                    return true;
+                };
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                auto proy = [&](float wx, float wy, float wz, ImVec2& o) -> bool {
+                    float p2[2]; if (!g3d_editor_world_to_screen(wx, wy, wz, (float)vp.w, (float)vp.h, p2)) return false;
+                    o = ImVec2(img_min.x + p2[0], img_min.y + p2[1]); return true;
+                };
+                kr::Camino* cm = nullptr;
+                if (hay) { for (auto& c : kre.c.caminos) if (c.principal) { cm = &c; break; } if (!cm && !kre.c.caminos.empty()) cm = &kre.c.caminos[0]; }
+                if (hay && cm) {
+                    for (auto& s : kre.c.strips) {
+                        for (int i = s.ini; i < s.ini + s.n; i++) {
+                            int j = kre.c.sig(i); if (j < 0 || kre.c.m[i].hueco) continue;
+                            ImVec2 a, b;
+                            if (proy(kre.c.m[i].c.x, kre.c.m[i].c.y + 0.4f, kre.c.m[i].c.z, a) && proy(kre.c.m[j].c.x, kre.c.m[j].c.y + 0.4f, kre.c.m[j].c.z, b))
+                                dl->AddLine(a, b, IM_COL32(255, 210, 60, 255), 3.0f);
+                        }
+                    }
+                    int hov = -1; float mejor = 14.0f;
+                    for (int i = 0; i < (int)cm->nodos.size(); i++) {
+                        const kr::Nodo& n = cm->nodos[i];
+                        float gy = n.sigue ? g3d_editor_terrain_height(terrain, n.x, n.z) + n.dy : n.y;
+                        ImVec2 p; if (!proy(n.x, gy + 0.6f, n.z, p)) continue;
+                        float d = std::hypot(p.x - mp.x, p.y - mp.y); if (d < mejor) { mejor = d; hov = i; }
+                        dl->AddCircleFilled(p, i == rc_n ? 8.0f : 6.0f, i == rc_n ? IM_COL32(255, 255, 255, 255) : (i == 0 ? IM_COL32(80, 220, 120, 255) : IM_COL32(255, 140, 40, 255)));
+                        dl->AddCircle(p, i == rc_n ? 8.0f : 6.0f, IM_COL32(20, 20, 20, 255), 12, 2.0f);
+                        if (i == 0 && !cm->cerrado && cm->nodos.size() >= 3) dl->AddCircle(p, 12.0f, IM_COL32(80, 255, 140, 255), 20, 3.0f);   // clic aqui: cerrar
+                    }
+                    // ASA DE ALTURA del punto elegido: una linea vertical con un rombo; arrastrarlo arriba o abajo cambia la altura
+                    bool sobre_asa = false;
+                    if (rc_n >= 0 && rc_n < (int)cm->nodos.size() && road_poner == 0) {
+                        kr::Nodo& n = cm->nodos[rc_n];
+                        float th = g3d_editor_terrain_height(terrain, n.x, n.z), top = n.sigue ? th + n.dy : n.y;
+                        ImVec2 pg, pt, pu;
+                        if (proy(n.x, th, n.z, pg) && proy(n.x, top + 0.6f, n.z, pt) && proy(n.x, top + 1.6f, n.z, pu)) {
+                            float ppm = std::max(4.0f, std::fabs(pu.y - pt.y));
+                            ImVec2 asa(pt.x, pt.y - 38.0f);
+                            dl->AddLine(pg, pt, IM_COL32(255, 255, 255, 150), 2.0f);
+                            dl->AddLine(pt, asa, IM_COL32(255, 210, 60, 255), 2.0f);
+                            bool cerca = std::hypot(mp.x - asa.x, mp.y - asa.y) < 13.0f || rc_hdrag;
+                            ImU32 col = cerca ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 210, 60, 255);
+                            dl->AddQuadFilled(ImVec2(asa.x, asa.y - 9), ImVec2(asa.x + 8, asa.y), ImVec2(asa.x, asa.y + 9), ImVec2(asa.x - 8, asa.y), col);
+                            dl->AddQuad(ImVec2(asa.x, asa.y - 9), ImVec2(asa.x + 8, asa.y), ImVec2(asa.x, asa.y + 9), ImVec2(asa.x - 8, asa.y), IM_COL32(20, 20, 20, 255), 2.0f);
+                            char tx[40]; if (n.sigue) snprintf(tx, sizeof tx, "+%.1f m", n.dy); else snprintf(tx, sizeof tx, "%.1f m", n.y);
+                            dl->AddText(ImVec2(asa.x + 12, asa.y - 8), IM_COL32(255, 255, 255, 255), tx);
+                            if (cerca && !rc_hdrag) ImGui::SetTooltip("Arrastra arriba o abajo: altura del punto");
+                            if (!rc_hdrag && std::hypot(mp.x - asa.x, mp.y - asa.y) < 13.0f && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                                rc_hdrag = true; rc_h_y0 = mp.y; rc_h_v0 = n.sigue ? n.dy : n.y; rc_ppm = ppm; kre.push_undo();
+                            }
+                        }
+                    }
+                    if (rc_hdrag) {
+                        sobre_asa = true;
+                        if (rc_n >= 0 && rc_n < (int)cm->nodos.size() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                            kr::Nodo& n = cm->nodos[rc_n];
+                            float v = rc_h_v0 + (rc_h_y0 - mp.y) / rc_ppm;
+                            if (ImGui::GetIO().KeyShift) v = std::round(v);        // Mayus: de metro en metro
+                            if (n.sigue) n.dy = std::clamp(v, 0.0f, 60.0f); else n.y = std::clamp(v, 0.0f, 120.0f);
+                            kre.c.calcular(); kre.prev_sucia = true;
+                        } else { rc_hdrag = false; kre.tocar(); kre.c.save(kre.ruta()); }
+                    }
+                    // ASAS DE ANCHO del punto elegido: dos cuadrados en los bordes de la carretera; arrastrar uno la ensancha o la estrecha
+                    if (rc_n >= 0 && rc_n < (int)cm->nodos.size() && road_poner == 0 && !rc_hdrag && !kre.c.m.empty()) {
+                        kr::Nodo& n = cm->nodos[rc_n];
+                        const kr::Muestra& s = kre.c.m[kre.c.muestra_cercana(n.x, n.z)];
+                        ImVec2 pi, pd;
+                        if (proy(s.izq_borde.x, s.izq_borde.y + 0.6f, s.izq_borde.z, pi) && proy(s.der_borde.x, s.der_borde.y + 0.6f, s.der_borde.z, pd)) {
+                            bool ci = std::hypot(mp.x - pi.x, mp.y - pi.y) < 11.0f, cd = std::hypot(mp.x - pd.x, mp.y - pd.y) < 11.0f;
+                            for (int q = 0; q < 2; q++) {
+                                ImVec2 p = q ? pd : pi; bool c = (q ? cd : ci) || rc_wdrag;
+                                dl->AddRectFilled(ImVec2(p.x - 7, p.y - 7), ImVec2(p.x + 7, p.y + 7), c ? IM_COL32(255, 255, 255, 255) : IM_COL32(60, 220, 255, 255));
+                                dl->AddRect(ImVec2(p.x - 7, p.y - 7), ImVec2(p.x + 7, p.y + 7), IM_COL32(20, 20, 20, 255), 0, 0, 2.0f);
+                            }
+                            if ((ci || cd) && !rc_wdrag) ImGui::SetTooltip("Arrastra: ancho de la carretera (%.1f m)", n.ancho);
+                            if ((ci || cd) && !rc_wdrag && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) { rc_wdrag = true; kre.push_undo(); }
+                        }
+                    }
+                    if (rc_wdrag) {
+                        sobre_asa = true;
+                        if (rc_n >= 0 && rc_n < (int)cm->nodos.size() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                            if (pick_road(hit) && !kre.c.m.empty()) {
+                                kr::Nodo& n = cm->nodos[rc_n];
+                                const kr::Muestra& s = kre.c.m[kre.c.muestra_cercana(n.x, n.z)];
+                                float lat = std::fabs((hit[0] - n.x) * s.izq.x + (hit[2] - n.z) * s.izq.z);
+                                float w = std::clamp(2.0f * lat, 6.0f, 40.0f);
+                                if (ImGui::GetIO().KeyShift) w = std::round(w);
+                                n.ancho = w; kre.c.calcular(); kre.prev_sucia = true;
+                            }
+                        } else { rc_wdrag = false; kre.tocar(); kre.c.save(kre.ruta()); }
+                    }
+                    const bool bloquea = sobre_asa;
+                    // la salida: linea a cuadros de borde a borde de la carretera y una flecha hacia donde mira el kart
+                    if (kre.c.ps >= 0 && kre.c.salida_i >= 0 && kre.c.salida_i < (int)kre.c.m.size()) {
+                        const kr::Muestra& s = kre.c.m[kre.c.salida_i];
+                        ImVec2 a, b, c0, c1;
+                        if (proy(s.izq_borde.x, s.izq_borde.y + 0.4f, s.izq_borde.z, a) && proy(s.der_borde.x, s.der_borde.y + 0.4f, s.der_borde.z, b)) {
+                            for (int q = 0; q < 8; q++) {
+                                ImVec2 p0(a.x + (b.x - a.x) * q / 8.0f, a.y + (b.y - a.y) * q / 8.0f), p1(a.x + (b.x - a.x) * (q + 1) / 8.0f, a.y + (b.y - a.y) * (q + 1) / 8.0f);
+                                dl->AddLine(p0, p1, (q & 1) ? IM_COL32(20, 20, 20, 255) : IM_COL32(255, 255, 255, 255), 6.0f);
+                            }
+                        }
+                        float fx = s.t.x, fz = s.t.z, fl = std::hypot(fx, fz); if (fl < 1e-4f) fl = 1;
+                        fx /= fl; fz /= fl;
+                        if (proy(s.c.x, s.c.y + 0.6f, s.c.z, c0) && proy(s.c.x + fx * 9.0f, s.c.y + 0.6f, s.c.z + fz * 9.0f, c1)) {
+                            dl->AddLine(c0, c1, IM_COL32(80, 255, 140, 255), 4.0f);
+                            ImVec2 d(c1.x - c0.x, c1.y - c0.y); float dl2 = std::hypot(d.x, d.y); if (dl2 > 1) { d.x /= dl2; d.y /= dl2; }
+                            dl->AddTriangleFilled(ImVec2(c1.x + d.x * 10, c1.y + d.y * 10), ImVec2(c1.x - d.y * 7, c1.y + d.x * 7), ImVec2(c1.x + d.y * 7, c1.y - d.x * 7), IM_COL32(80, 255, 140, 255));
+                        }
+                    }
+                    // marcas de lo colocado sobre la carretera
+                    for (auto& t : kre.c.turbos) { ImVec2 p; if (proy(t.x, g3d_editor_terrain_height(terrain, t.x, t.z) + 1.0f, t.z, p)) { dl->AddRectFilled(ImVec2(p.x - 5, p.y - 5), ImVec2(p.x + 5, p.y + 5), IM_COL32(255, 230, 40, 255)); } }
+                    for (auto& t : kre.c.rampas) { ImVec2 p; if (proy(t.x, g3d_editor_terrain_height(terrain, t.x, t.z) + 1.0f, t.z, p)) { dl->AddTriangleFilled(ImVec2(p.x, p.y - 7), ImVec2(p.x - 7, p.y + 5), ImVec2(p.x + 7, p.y + 5), IM_COL32(60, 220, 255, 255)); } }
+                    for (auto& t : kre.c.luces) { ImVec2 p; if (proy(t.x, g3d_editor_terrain_height(terrain, t.x, t.z) + t.y, t.z, p)) { dl->AddCircleFilled(p, 5.0f, IM_COL32(255, 255, 200, 255)); dl->AddCircle(p, 8.0f, IM_COL32(255, 220, 80, 255), 12, 2.0f); } }
+                    if (bloquea) {
+                    } else if (road_poner != 0) {
+                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && pick_road(hit)) {
+                            kre.push_undo();
+                            // turbos y rampas van SOBRE la carretera: se pegan a su punto mas cercano (y si el clic cae lejos, no se ponen)
+                            int si = kre.c.m.empty() ? -1 : kre.c.muestra_cercana(hit[0], hit[2]);
+                            bool en_carretera = si >= 0 && std::hypot(kre.c.m[si].c.x - hit[0], kre.c.m[si].c.z - hit[2]) <= kre.c.m[si].ancho * 0.5f + 4.0f;
+                            if ((road_poner == 1 || road_poner == 2) && !en_carretera) status = "Haz clic sobre la carretera para poner el turbo o la rampa";
+                            else {
+                            if (road_poner == 1) { kr::Turbo t; t.x = kre.c.m[si].c.x; t.z = kre.c.m[si].c.z; kre.c.turbos.push_back(t); }
+                            if (road_poner == 2) { kr::Rampa t; t.x = kre.c.m[si].c.x; t.z = kre.c.m[si].c.z; kre.c.rampas.push_back(t); }
+                            if (road_poner == 3) { kr::Luz t; t.x = hit[0]; t.z = hit[2]; kre.c.luces.push_back(t); }
+                            if (road_poner == 4) { kre.c.sx = hit[0]; kre.c.sz = hit[2]; }          // linea de salida y meta
+                            }
+                            kre.tocar(); kre.c.save(kre.ruta());
+                        }
+                    } else
+                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hov == 0 && !cm->cerrado && cm->nodos.size() >= 3) {
+                        kre.push_undo(); cm->cerrado = true; rc_n = -1; kre.tocar(); kre.c.save(kre.ruta());        // clic en el primer punto: cierra el circuito
+                    }
+                    else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hov >= 0) { kre.push_undo(); rc_n = hov; rc_drag = true; }
+                    else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && sobre_pista && !pick_road(hit)) {
+                        status = "El clic no ha dado en la pista: pincha SOBRE el modelo (si se ve diminuto, usa 'Ajustar tamano y centrar' en Pista propia)";
+                    }
+                    else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && pick_road(hit, cm->nodos.empty() ? NAN : cm->nodos.back().y)) {
+                        kre.push_undo();
+                        kr::Nodo n; n.x = hit[0]; n.z = hit[2]; n.y = hit[1]; n.sigue = sobre_pista ? 0 : 1; if (sobre_pista) n.dy = 0.0f;
+                        kr::Tramo t; t.muro_izq = 1; t.muro_der = 1;
+                        if (!cm->nodos.empty()) { n.ancho = cm->nodos.back().ancho; t = cm->tramos.back(); }
+                        cm->cerrado = false;     // mientras se dibuja, el trazado no se cierra solo: lo cierras tu (clic en el primer punto)
+                        cm->nodos.push_back(n); cm->tramos.push_back(t);
+                        if (cm->nodos.size() == 1) { kre.c.sx = n.x; kre.c.sz = n.z; }
+                        rc_n = (int)cm->nodos.size() - 1;
+                        kre.tocar(); kre.c.save(kre.ruta());
+                    }
+                    if (road_poner == 0 && rc_drag && ImGui::IsMouseDown(ImGuiMouseButton_Left) && rc_n >= 0 && rc_n < (int)cm->nodos.size() &&
+                        pick_road(hit, cm->nodos[rc_n].y)) {
+                        cm->nodos[rc_n].x = hit[0]; cm->nodos[rc_n].z = hit[2]; if (sobre_pista) cm->nodos[rc_n].y = hit[1];
+                        kre.c.calcular(); kre.prev_sucia = true;
+                    }
+                    if (rc_drag && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) { rc_drag = false; kre.tocar(); kre.c.save(kre.ruta()); }
+                    if (rc_n >= 0 && rc_n < (int)cm->nodos.size() && ImGui::IsKeyPressed(ImGuiKey_Delete) && !ImGui::GetIO().WantTextInput) {
+                        kre.push_undo(); cm->nodos.erase(cm->nodos.begin() + rc_n); cm->tramos.erase(cm->tramos.begin() + rc_n);
+                        rc_n = -1; kre.tocar(); kre.c.save(kre.ruta());
+                    }
+                } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && pick_road(hit)) {
+                    // primer punto: se crea el circuito de esta escena
+                    kre_vincular(true);
+                    kr::Camino& c0 = kre.c.caminos[0];
+                    kr::Nodo n; n.x = hit[0]; n.z = hit[2]; n.y = hit[1]; n.sigue = 1;
+                    kr::Tramo t; t.muro_izq = 1; t.muro_der = 1;
+                    c0.nodos.push_back(n); c0.tramos.push_back(t);
+                    kre.c.sx = n.x; kre.c.sz = n.z; rc_n = 0;
+                    kre.tocar(); kre.c.save(kre.ruta());
+                }
+                road_nodo_sel = rc_n;
+                ImGui::SetTooltip("Clic: poner un punto  |  clic en el primero (verde): cerrar el circuito  |  arrastrar: mover  |  Supr: borrar");
             } else if (tool == T_SCATTER && terrain && asset_sel >= 0 &&
                        g3d_editor_terrain_pick(sx, sy, (float)vp.w, (float)vp.h, terrain, hit)) {
                 // ---- SEMBRAR ----
@@ -10595,7 +12037,51 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         // --- Panel: Assets (modelos del proyecto: <proyecto>/Assets) ---
         ImGui::Begin("Assets");
         ImGui::PushTextWrapPos(0.0f);   // que el texto se parta y no se corte
-        ImGui::TextDisabled("Proyecto/Assets  (%d)", (int)assets.size());
+        // El panel enseña SOLO lo que usa la herramienta elegida: texturas al pintar, modelos al colocar o sembrar
+        const bool assets_texturas = (tool == T_PAINT);
+        const bool assets_modelos  = (tool == T_PLACE || tool == T_SCATTER || tool == T_SELECT || tool == T_MOVE || tool == T_ROTATE || tool == T_SCALE);
+        if (assets_texturas) {
+            static kr::Miniaturas mini_tex; static char filtro_tex[48] = "";
+            mini_tex.frame();
+            ImGui::TextDisabled("Texturas del proyecto  (%d)", (int)paints.size());
+            if (ImGui::SmallButton("Refrescar")) {
+                for (auto& f : scan_textures(tex_dir)) {
+                    bool ya = false; for (auto& p : paints) if (p.file == f) { ya = true; break; }
+                    if (!ya) paints.push_back({ f, nullptr });
+                }
+            }
+            ImGui::SameLine(); ImGui::SetNextItemWidth(-1);
+            ImGui::InputTextWithHint("##ftex", "buscar...", filtro_tex, sizeof filtro_tex);
+            ImGui::TextDisabled("Clic en una textura y pinta en el terreno");
+            ImGui::BeginChild("lista_tex");
+            const float cell = 72.0f; int cols = std::max(1, (int)(ImGui::GetContentRegionAvail().x / (cell + 6)));
+            int n = 0;
+            for (int i = 0; i < (int)paints.size(); i++) {
+                if (filtro_tex[0] && paints[i].file.find(filtro_tex) == std::string::npos) continue;
+                if (n % cols) ImGui::SameLine(0, 6);
+                n++;
+                ImGui::PushID(i);
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                bool sel = (paint_sel == i);
+                if (ImGui::InvisibleButton("##t", ImVec2(cell, cell))) paint_sel = i;
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                dl->AddRectFilled(p, ImVec2(p.x + cell, p.y + cell), IM_COL32(30, 32, 38, 255));
+                if (H2Img* im = mini_tex.get(tex_dir + "/" + paints[i].file)) dl->AddImage((ImTextureID)(intptr_t)im->tex, ImVec2(p.x + 2, p.y + 2), ImVec2(p.x + cell - 2, p.y + cell - 2));
+                dl->AddRect(p, ImVec2(p.x + cell, p.y + cell), sel ? IM_COL32(242, 175, 66, 255) : IM_COL32(70, 74, 84, 255), 0, 0, sel ? 3.0f : 1.0f);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", paints[i].file.c_str());
+                ImGui::PopID();
+            }
+            if (paints.empty()) ImGui::TextWrapped("No hay texturas: pon imagenes (png/jpg) en Assets.");
+            ImGui::EndChild();
+            ImGui::PopTextWrapPos();
+            ImGui::End();
+        } else if (!assets_modelos) {
+            ImGui::TextWrapped("Esta herramienta no usa assets.");
+            ImGui::TextDisabled("Texturas: herramienta Textura. Modelos: Colocar, Vegetacion o el modo Escena.");
+            ImGui::PopTextWrapPos();
+            ImGui::End();
+        } else {
+        ImGui::TextDisabled("Modelos del proyecto  (%d)", (int)assets.size());
         if (ImGui::SmallButton("Refrescar")) { assets = scan_assets(assets_dir); asset_sel = -1; }
         ImGui::Separator();
         if (asset_sel >= 0) {
@@ -10623,6 +12109,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         ImGui::EndChild();
         ImGui::PopTextWrapPos();
         ImGui::End();
+        }
 
         // --- Panel: HUD 2D (graficos y textos de BennuGD2 sobre la escena) ---
         ImGui::Begin(ICON_FA_FONT "  HUD 2D");
@@ -11742,6 +13229,31 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         ImGui::Begin("Entorno");
         ImGui::PushTextWrapPos(0.0f);   // que el texto se parta y no se corte
         ImGui::TextDisabled("Terreno y agua auto: menu 'Terreno' (arriba).");
+        {   // TAMANO del terreno de esta escena (vale para todos los modos: Escena, Terreno y Carreras)
+            struct { const char* nombre; int grid; float size; } tam[] = {
+                { "400 m (celdas de 2,5 m)", 160, 400.0f }, { "800 m (3,1 m)", 256, 800.0f }, { "1600 m (5 m)", 320, 1600.0f },
+                { "3200 m (8 m)", 400, 3200.0f }, { "6400 m (16 m)", 400, 6400.0f } };
+            static int tam_sel = -1;
+            int actual = -1; for (int i = 0; i < 5; i++) if (tam[i].grid == terr_grid && fabsf(tam[i].size - terr_size) < 0.5f) actual = i;
+            if (tam_sel < 0 || tam_sel > 4) tam_sel = actual >= 0 ? actual : 0;
+            if (ImGui::CollapsingHeader(ICON_FA_EXPAND "  Tamano del terreno")) {
+                ImGui::Text("Ahora: %.0f m por lado (%d celdas)", terr_size, terr_grid);
+                if (ImGui::BeginCombo("Tamano", tam[tam_sel].nombre)) {
+                    for (int i = 0; i < 5; i++) if (ImGui::Selectable(tam[i].nombre, tam_sel == i)) tam_sel = i;
+                    ImGui::EndCombo();
+                }
+                bool cambia = !(tam[tam_sel].grid == terr_grid && fabsf(tam[tam_sel].size - terr_size) < 0.5f);
+                ImGui::BeginDisabled(!cambia);
+                if (ImGui::Button("Aplicar el tamano")) {
+                    save_scene(scene_path);
+                    terrain_resize(tam[tam_sel].grid, tam[tam_sel].size);
+                    if (!lakes.empty() || !rivers.empty()) rebuild_water();
+                    status = "Terreno de " + std::to_string((int)terr_size) + " m";
+                }
+                ImGui::EndDisabled();
+                ImGui::TextDisabled("El relieve se conserva (se remuestrea). El PINTADO del suelo y las zonas se pierden: depende del tamano. Mas grande = celdas mas gruesas.");
+            }
+        }
 
         /* ---- SONIDO de la escena ----
            La musica de fondo (una por escena: SDL_mixer solo toca una a la vez) y
@@ -12650,6 +14162,8 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                     ImGui::InputInt("Anim andar",  &o.anim_walk);
                     ImGui::InputInt("Anim correr", &o.anim_run);
                     ImGui::InputInt("Anim saltar", &o.anim_jump);
+                    ImGui::InputInt("Anim disparo (-1 = ninguna)", &o.anim_shoot);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Si el proyecto tiene mapas 2.5D, J / X / Z dispara tambien aqui, como en los niveles.");
                     ImGui::SliderFloat("Radio colision", &o.char_radius, 0.2f, 4.0f, "%.2f");
                     ImGui::SliderFloat("Altura / calado", &o.char_height, 0.3f, 6.0f, "%.2f");
                     ImGui::Checkbox("Flota / nada en agua", (bool*)&o.buoyant);
@@ -13587,6 +15101,63 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             ImGui::End();
         }
 
+        /* ---- MAPAS 2.5D colocados en el mundo ----
+           Un mapa (nivel de plataformas o pasillo Crash) se coloca en la escena 3D con una posicion y un giro; en el juego se ve de verdad
+           y se entra por su portal 'Salir al mundo 3D'. Aqui se ve en el editor y se coloca. */
+        if (show_mapas) {
+            ImGui::SetNextWindowSize(ImVec2(430, 330), ImGuiCond_FirstUseEver);
+            ImGui::Begin("Mapas 2.5D del mundo", &show_mapas);
+            ImGui::TextWrapped("Coloca aqui los niveles de plataformas dentro de esta escena 3D. Se ven en el editor como cajas con la textura de cada tile "
+                               "(capas: plano jugable, fondo y la fachada 'Exterior'). Pon el suelo del mapa a la altura del terreno: el suelo esta en Y = 4 del mapa, asi que Y = altura - 4.");
+            ImGui::Separator();
+            if (te.game_dir.empty()) te.game_dir = project_dir;
+            auto niveles = te.level_names();
+            bool cambio = false;
+            for (size_t i = 0; i < mapas.size(); i++) {
+                ImGui::PushID((int)i);
+                auto& m = mapas[i];
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::BeginCombo("##nivel", m.nivel.empty() ? "(elige un nivel)" : m.nivel.c_str())) {
+                    for (auto& n : niveles) if (ImGui::Selectable(n.c_str(), n == m.nivel)) { m.nivel = n; cambio = true; }
+                    ImGui::EndCombo();
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton(ICON_FA_TRASH)) { mapas.erase(mapas.begin() + i); cambio = true; ImGui::PopID(); break; }
+                float p[3] = { m.x, m.y, m.z };
+                { const char* mo[] = { "Fachada: la puerta te lleva a su escena (recomendado)", "Integrado: se juega dentro del mundo" };
+                  ImGui::SetNextItemWidth(330); if (ImGui::Combo("modo", &m.modo, mo, 2)) cambio = true;
+                  if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fachada: en el mundo se ve el edificio por fuera (capa 'Exterior') y, por la puerta y los huecos, lo que hay dentro; pero al cruzar la puerta pasas\na la escena del mapa, completa, con sus caidas y su fondo, y al salir por su portal vuelves donde estabas. Es lo mejor si el mapa tiene huecos por abajo.\nIntegrado: el mapa entero esta en el mundo y se juega ahi (lo que queda bajo el terreno no se ve)."); }
+                if (m.modo == 0) {
+                    { bool pu = m.puerta != 0; if (ImGui::Checkbox("Puerta con interruptor", &pu)) { m.puerta = pu ? 1 : 0; cambio = true; }
+                      if (ImGui::IsItemHovered()) ImGui::SetTooltip("La entrada lleva una puerta cerrada y un interruptor a su lado. Pulsa E junto al interruptor: la puerta sube poco a poco\ny, cuando esta abierta del todo, al entrar pasas a la escena del mapa (la carga no es abrupta)."); }
+                    if (m.puerta) {
+                        char b1[96], b2[96], b3[96]; snprintf(b1, sizeof b1, "%s", m.ev_pulsar.c_str()); snprintf(b2, sizeof b2, "%s", m.ev_abrir.c_str()); snprintf(b3, sizeof b3, "%s", m.ev_entrar.c_str());
+                        ImGui::SetNextItemWidth(200); if (ImGui::InputText("al pulsar (tu PROCESS)", b1, sizeof b1, ImGuiInputTextFlags_CharsNoBlank)) { m.ev_pulsar = b1; cambio = true; }
+                        ImGui::SetNextItemWidth(200); if (ImGui::InputText("al abrirse (tu PROCESS)", b2, sizeof b2, ImGuiInputTextFlags_CharsNoBlank)) { m.ev_abrir = b2; cambio = true; }
+                        ImGui::SetNextItemWidth(200); if (ImGui::InputText("al entrar (tu PROCESS)", b3, sizeof b3, ImGuiInputTextFlags_CharsNoBlank)) { m.ev_entrar = b3; cambio = true; }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Nombre de un PROCESS de tu codigo (sin parametros) que se llama en ese momento: un sonido, una luz, un aviso...\nTiene que existir en tu proyecto (si no, no compila).");
+                    }
+                }
+                ImGui::SetNextItemWidth(260);
+                if (ImGui::DragFloat3("posicion", p, 0.2f)) { m.x = p[0]; m.y = p[1]; m.z = p[2]; cambio = true; }
+                ImGui::SetNextItemWidth(260);
+                if (ImGui::DragFloat("giro (grados)", &m.yaw, 1.0f, -360.0f, 360.0f, "%.0f")) cambio = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("180 = el mapa mira hacia -Z (hacia la camara de un jugador que anda hacia +Z). El frente del mapa es su lado +Z.");
+                if (obj_sel >= 0 && obj_sel < (int)objects.size()) {
+                    if (ImGui::SmallButton("Poner en el objeto elegido")) { m.x = objects[obj_sel].x; m.y = objects[obj_sel].y - 4.0f; m.z = objects[obj_sel].z; cambio = true; }
+                }
+                ImGui::Separator();
+                ImGui::PopID();
+            }
+            if (ImGui::Button(ICON_FA_PLUS "  Anadir un mapa")) {
+                MapaObj m; m.nivel = niveles.empty() ? std::string() : niveles[0]; m.yaw = 180.0f;
+                if (obj_sel >= 0 && obj_sel < (int)objects.size()) { m.x = objects[obj_sel].x; m.y = objects[obj_sel].y - 4.0f; m.z = objects[obj_sel].z + 30.0f; }
+                mapas.push_back(m); cambio = true;
+            }
+            if (cambio) { mapas_sucios = true; status = "Mapas cambiados: guarda la escena (Ctrl+S) para conservarlos"; }
+            ImGui::End();
+        }
+
         /* ---- Las ESCENAS del proyecto ----
            Cada escena es su fichero en Scenes/. En el juego se montan una cada vez
            y se viaja de una a otra con la accion "Ir a otra escena" de una regla:
@@ -13613,12 +15184,17 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                     ImGui::SetTooltip(inicial ? "Es la escena inicial del juego"
                                               : "Hacer que el juego empiece por esta");
                 ImGui::SameLine();
-                if (ImGui::Selectable((e + (abierta ? "   (abierta)" : "")).c_str(), abierta)) {
-                    if (!abierta) { save_scene(scene_path); load_scene(ruta); scene_path = ruta; }
+                bool es_kart = fs::path(e).extension() == ".kart";
+                bool es_plat = fs::path(e).extension() == ".plat" || es_kart;
+                if (es_plat) abierta = false;
+                if (ImGui::Selectable((e + (abierta ? "   (abierta)" : es_kart ? "   (carreras)" : es_plat ? "   (plataformas)" : "")).c_str(), abierta)) {
+                    if (es_kart) kre_abrir_kart(fs::path(e).stem().string());
+                    else if (es_plat) { if (te.inited && te.map_dirty) te.save_level(); modo = M_PLATAFORMAS; te.level = fs::path(e).stem().string(); te.inited = false; }
+                    else if (!abierta) { save_scene(scene_path); load_scene(ruta); scene_path = ruta; }
                 }
                 if (ImGui::BeginPopupContextItem("ctx_esc")) {
                     esc_menu = e;
-                    if (ImGui::MenuItem("Abrir")) { save_scene(scene_path); load_scene(ruta); scene_path = ruta; }
+                    if (!es_plat && ImGui::MenuItem("Abrir")) { save_scene(scene_path); load_scene(ruta); scene_path = ruta; }
                     if (ImGui::MenuItem("Empezar el juego por esta")) { escena_inicial = "Scenes/" + e; write_manifest(); }
                     if (ImGui::MenuItem("Duplicar")) {
                         std::string base = fs::path(e).stem().string();
@@ -14533,8 +16109,13 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             case M_CODIGO:     ImGui::SetWindowFocus("Escenas del proyecto");
                                ImGui::SetWindowFocus("Variables del juego");
                                ImGui::SetWindowFocus("Editor de codigo"); break;
+            case M_PLATAFORMAS: ImGui::SetWindowFocus(TM_WIN_SET);
+                               ImGui::SetWindowFocus(TM_WIN_PROPS);
+                               ImGui::SetWindowFocus(TM_WIN_CHAR);
+                               if (getenv("EDITOR_FOCO_BG")) ImGui::SetWindowFocus(TM_WIN_BG);   // depuracion
+                               ImGui::SetWindowFocus(TM_WIN_MAP); break;
             }
-            ImGui::SetWindowFocus("Escena");   // la vista 3D, siempre en su sitio
+            if (modo != M_PLATAFORMAS) ImGui::SetWindowFocus("Escena");   // la vista 3D, siempre en su sitio
         }
         if (!enfocar_panel.empty()) {
             ImGui::SetWindowFocus(enfocar_panel.c_str());

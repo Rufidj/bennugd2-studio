@@ -138,6 +138,39 @@ static unsigned int upload_rgba(const unsigned char *rgba, int w, int h) {
 /*  Imagenes sueltas (PNG/JPG/...)                                              */
 /* --------------------------------------------------------------------------- */
 
+/* Miniatura: carga la imagen, la reduce para que su lado mayor sea max_lado y la sube. */
+int h2_load_thumb(const char *path, int max_lado, H2Img *out) {
+    SDL_Surface *s, *conv, *dst;
+    int tw, th, y;
+    unsigned char *tight;
+    if (!path || !out || max_lado < 4) return 0;
+    out->tex = 0; out->w = out->h = 0;
+    s = IMG_Load(path);
+    if (!s) return 0;
+    conv = SDL_ConvertSurfaceFormat(s, SDL_PIXELFORMAT_ABGR8888, 0);
+    SDL_FreeSurface(s);
+    if (!conv) return 0;
+    if (conv->w >= conv->h) { tw = max_lado; th = conv->h * max_lado / conv->w; }
+    else                    { th = max_lado; tw = conv->w * max_lado / conv->h; }
+    if (tw < 1) tw = 1;
+    if (th < 1) th = 1;
+    if (conv->w <= tw && conv->h <= th) { tw = conv->w; th = conv->h; }
+    dst = SDL_CreateRGBSurfaceWithFormat(0, tw, th, 32, SDL_PIXELFORMAT_ABGR8888);
+    if (!dst) { SDL_FreeSurface(conv); return 0; }
+    SDL_SetSurfaceBlendMode(conv, SDL_BLENDMODE_NONE);
+    SDL_BlitScaled(conv, NULL, dst, NULL);
+    SDL_FreeSurface(conv);
+    tight = (unsigned char *)malloc((size_t)tw * th * 4);
+    if (!tight) { SDL_FreeSurface(dst); return 0; }
+    for (y = 0; y < th; y++)
+        memcpy(tight + (size_t)y * tw * 4, (unsigned char *)dst->pixels + (size_t)y * dst->pitch, (size_t)tw * 4);
+    out->tex = upload_rgba(tight, tw, th);
+    out->w = tw; out->h = th;
+    free(tight);
+    SDL_FreeSurface(dst);
+    return out->tex != 0;
+}
+
 int h2_load_image(const char *path, H2Img *out) {
     SDL_Surface *s, *conv;
     if (!path || !out) return 0;

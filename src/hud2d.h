@@ -53,6 +53,7 @@ typedef struct {
 } H2Font;
 
 int  h2_load_image(const char *path, H2Img  *out);   /* png/jpg/bmp/tga... */
+int  h2_load_thumb(const char *path, int max_lado, H2Img *out);   /* igual, pero reducida (miniatura) */
 int  h2_load_fpg  (const char *path, H2Fpg  *out);   /* fpg / f16 / f32 */
 int  h2_load_fnt  (const char *path, H2Font *out);   /* fnt / fnx */
 

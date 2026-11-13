@@ -594,3 +594,27 @@ Por ahora el build está probado en **Linux**.
 
 En `imgui/`: Dear ImGui (docking) + backends SDL2/OpenGL3, ImGuizmo,
 ImGuiColorTextEdit y imfilebrowser. En `fonts/`: Font Awesome.
+
+## Modo Plataformas 2.5D (niveles por tiles con textura)
+
+Cuarto/quinto modo de la fila de arriba. Pinta niveles de plataformas que luego el juego convierte en 3D:
+
+- **Tileset** (panel izquierdo): una textura por tile, con su miniatura. `+ Tile` añade una textura nueva de la
+  carpeta `tiles/`; `Marcador...` añade inicio del heroe, Met, kaka o checkpoint.
+- **Mapa de tiles** (centro): lapiz (B), goma (E), rectangulo (R), relleno (F), cuentagotas (I). Boton derecho = borrar,
+  Alt+clic = cuentagotas, rueda = zoom, boton central o Espacio+arrastrar = mover, Ctrl+Z / Ctrl+Y, Ctrl+S.
+  Tres capas (teclas 1/2/3): **plano jugable**, **fondo** y **primer plano**. `Ajustar` encuadra el nivel.
+- **Propiedades del tile** (derecha): solido, una via, dano, resbala (hielo), rebota (trampolin), cinta
+  transportadora, se mueve (eje, recorrido, velocidad), forma (bloque o pinchos). Se guardan en `tiles/tileset.def`.
+- **Fondo y ambiente** (pestaña de la derecha): imagen de fondo con parallax, colores de cielo, niebla y luz, guardado en
+  `levels/<nivel>.level`. **Importar textura propia...** / **Importar fondo...** traen imagenes de cualquier carpeta.
+- **Rampas, puertas, botones, dianas y ascensores**: tambien en las propiedades del tile (canal, tiempo que sigue activo,
+  solo se mueve al pisarlo, pausa en los extremos). El fondo puede ponerse en mosaico (repetido).
+- **Liquidos**: en las propiedades de un tile, tipo agua/lava/acido/cieno, si se nada, lentitud y transparencia.
+- **Probar nivel**: guarda, compila el programa del juego y lo ejecuta con el nivel abierto (variable `NIVEL`).
+
+Los ficheros son los del juego (ver `levels/LEEME.md` de la carpeta del juego): `tiles/tileset.def`, `tiles/*.png`
+y `levels/*.png` (R = plano jugable, G = fondo, B = primer plano; el valor es el numero de tile). La carpeta
+del juego por defecto es `~/Escritorio/MegaHD2D`; se cambia con la variable `PLATAFORMAS_DIR` o desde el propio panel.
+Codigo: `src/tilemap.h` (todo el modo) con unas pocas lineas de enganche en `main.cpp`
+(`M_PLATAFORMAS`, `te.draw_map/draw_tileset/draw_props`). Los tiles no se borran para que los mapas guardados no cambien.

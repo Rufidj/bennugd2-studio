@@ -820,3 +820,196 @@ int g3d_model_spawn(int scene_id, void *model_ptr, float x, float y, float z,
     free(key_alb); free(key_nrm); free(key_met); free(key_rgh); free(key_mat); free(key_out);
     return root;
 }
+
+/* ---- vista previa de los mapas 2.5D colocados en un mundo (editor): cajas con la textura de cada tile, colgando de una entidad raiz ---- */
+static G3DMesh *g_prev_cube = NULL;
+static char g_prev_mat_path[96][512]; static int g_prev_mat_id[96]; static int g_prev_mat_n = 0;
+
+int g3d_editor_prev_group(int scene_id, float x, float y, float z, float yaw_rad) {
+    int e = g3d_entity_impl_spawn(scene_id, 0, x, y, z);
+    if (e >= 0) g3d_entity_impl_set_rotation(e, 0.0f, yaw_rad, 0.0f);
+    return e;
+}
+
+/* material con la textura del fichero (se reutiliza por ruta); ruta vacia = gris liso */
+int g3d_editor_prev_material(const char *path) {
+    for (int i = 0; i < g_prev_mat_n; i++) if (!strcmp(g_prev_mat_path[i], path)) return g_prev_mat_id[i];
+    int m = g3d_material_impl_create();
+    if (m < 0) return -1;
+    g3d_material_impl_set_color(m, 1.0f, 1.0f, 1.0f, 1.0f);
+    g3d_material_impl_set_roughness(m, 0.9f); g3d_material_impl_set_metallic(m, 0.0f);
+    if (path && path[0]) {
+        G3DTexture *tex = g3d_texture_load_impl(path);
+        if (tex) { g3d_texture_upload_gpu(tex); G3DMaterial *mm = g3d_material_impl_get(m); if (mm) { mm->albedo_texture = (void *)tex; mm->albedo_texture_id = 0; } }
+    } else g3d_material_impl_set_color(m, 0.6f, 0.6f, 0.65f, 1.0f);
+    if (g_prev_mat_n < 96) { snprintf(g_prev_mat_path[g_prev_mat_n], 512, "%s", path ? path : ""); g_prev_mat_id[g_prev_mat_n++] = m; }
+    return m;
+}
+
+int g3d_editor_prev_box(int scene_id, int parent, float cx, float cy, float cz, float sx, float sy, float sz, int mat) {
+    if (!g_prev_cube) { g_prev_cube = g3d_primitive_create_cube(); if (g_prev_cube) g3d_mesh_upload_gpu(g_prev_cube); }
+    int e = g3d_entity_impl_spawn(scene_id, 0, cx, cy, cz);
+    if (e < 0) return -1;
+    G3DEntity *en = g3d_entity_impl_get(e);
+    if (en) { en->mesh = (void *)g_prev_cube; en->model_id = 0; }
+    g3d_entity_impl_set_scale(e, sx, sy, sz);
+    if (mat >= 0) g3d_entity_impl_set_material(e, mat);
+    if (parent >= 0) g3d_entity_impl_set_parent(e, parent);
+    return e;
+}
+
+/* Depuracion del editor: cuantas entidades vivas hay (para detectar restos de vistas previas mal borradas) */
+int g3d_editor_count_entities(void) {
+    int n = 0;
+    for (int i = 0; i < 200000; i++) {
+        extern G3DEntity *g3d_entity_impl_get(int);
+        G3DEntity *e = g3d_entity_impl_get(i);
+        if (e) n++;
+        else if (i > 0 && !g3d_entity_impl_get(i + 1) && !g3d_entity_impl_get(i + 2) && i > 20000) break;
+    }
+    return n;
+}
+
+/* Punto de un MODELO bajo el raton (para trazar sobre una pista importada). El modelo esta colocado en (tx,ty,tz) con
+   escala 'scale' y girado yaw_deg grados alrededor de Y. Devuelve 1 si acierta y deja el punto del MUNDO en out[3]. */
+int g3d_editor_model_pick(float sx, float sy, float w, float h, void *model_ptr,
+                          float tx, float ty, float tz, float scale, float yaw_deg, float *out) {
+    G3DModel *model = (G3DModel *)model_ptr;
+    Vec3 o, d;
+    if (!model || !screen_ray_world(sx, sy, w, h, &o, &d)) return 0;
+    if (scale <= 1e-6f) scale = 1.0f;
+    /* el rayo al espacio del modelo: se deshace la traslacion, el giro y la escala */
+    float a = -yaw_deg * 0.017453292f, ca = cosf(a), sa = sinf(a);
+    float ox = o.x - tx, oy = o.y - ty, oz = o.z - tz;
+    float lox = (ox * ca + oz * sa) / scale, loy = oy / scale, loz = (-ox * sa + oz * ca) / scale;
+    float ldx = (d.x * ca + d.z * sa) / scale, ldy = d.y / scale, ldz = (-d.x * sa + d.z * ca) / scale;
+    float best = 1e30f; int hit = 0;
+    for (uint32_t mi = 0; mi < model->mesh_count; mi++) {
+        const G3DMesh *m = &model->meshes[mi];
+        if (!m->vertices || !m->indices) continue;
+        /* caja del mesh: si el rayo no la toca, no se miran sus triangulos */
+        {
+            float tmin = 0.0f, tmax = 1e30f; int ok = 1;
+            const float lo[3] = { m->aabb_min[0], m->aabb_min[1], m->aabb_min[2] }, hi[3] = { m->aabb_max[0], m->aabb_max[1], m->aabb_max[2] };
+            const float ro[3] = { lox, loy, loz }, rd[3] = { ldx, ldy, ldz };
+            for (int k = 0; k < 3 && ok; k++) {
+                if (fabsf(rd[k]) < 1e-9f) { if (ro[k] < lo[k] || ro[k] > hi[k]) ok = 0; }
+                else {
+                    float t1 = (lo[k] - ro[k]) / rd[k], t2 = (hi[k] - ro[k]) / rd[k];
+                    if (t1 > t2) { float t = t1; t1 = t2; t2 = t; }
+                    if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2;
+                    if (tmin > tmax) ok = 0;
+                }
+            }
+            if (!ok) continue;
+        }
+        for (uint32_t i = 0; i + 2 < m->index_count; i += 3) {
+            const float *p0 = m->vertices[m->indices[i]].position, *p1 = m->vertices[m->indices[i + 1]].position, *p2 = m->vertices[m->indices[i + 2]].position;
+            float e1x = p1[0] - p0[0], e1y = p1[1] - p0[1], e1z = p1[2] - p0[2];
+            float e2x = p2[0] - p0[0], e2y = p2[1] - p0[1], e2z = p2[2] - p0[2];
+            float px = ldy * e2z - ldz * e2y, py = ldz * e2x - ldx * e2z, pz = ldx * e2y - ldy * e2x;
+            float det = e1x * px + e1y * py + e1z * pz;
+            if (fabsf(det) < 1e-12f) continue;
+            float inv = 1.0f / det;
+            float tx_ = lox - p0[0], ty_ = loy - p0[1], tz_ = loz - p0[2];
+            float u = (tx_ * px + ty_ * py + tz_ * pz) * inv; if (u < 0.0f || u > 1.0f) continue;
+            float qx = ty_ * e1z - tz_ * e1y, qy = tz_ * e1x - tx_ * e1z, qz = tx_ * e1y - ty_ * e1x;
+            float v = (ldx * qx + ldy * qy + ldz * qz) * inv; if (v < 0.0f || u + v > 1.0f) continue;
+            float t = (e2x * qx + e2y * qy + e2z * qz) * inv;
+            if (t > 1e-4f && t < best) { best = t; hit = 1; }
+        }
+    }
+    if (!hit) return 0;
+    /* punto en el mundo: el del rayo original (la t es la misma en ambos espacios) */
+    out[0] = o.x + d.x * best; out[1] = o.y + d.y * best; out[2] = o.z + d.z * best;
+    return 1;
+}
+
+/* Quita el terreno del editor (para rehacerlo con otro tamano): su entidad deja de dibujarse. */
+void g3d_editor_terrain_destroy(void) {
+    if (g_terrain_entity >= 0) { g3d_entity_impl_destroy(g_terrain_entity); g_terrain_entity = -1; }
+}
+
+/* Caja de un modelo (min x,y,z, max x,y,z) calculada con sus vertices; 0 si no hay. */
+int g3d_editor_model_bounds(void *model_ptr, float *out6) {
+    G3DModel *model = (G3DModel *)model_ptr; if (!model) return 0;
+    float mn[3] = { 1e30f, 1e30f, 1e30f }, mx[3] = { -1e30f, -1e30f, -1e30f }; int any = 0;
+    for (uint32_t mi = 0; mi < model->mesh_count; mi++) {
+        const G3DMesh *m = &model->meshes[mi];
+        for (uint32_t i = 0; m->vertices && i < m->vertex_count; i++)
+            for (int k = 0; k < 3; k++) { float v = m->vertices[i].position[k]; if (v < mn[k]) mn[k] = v; if (v > mx[k]) mx[k] = v; any = 1; }
+    }
+    if (!any) return 0;
+    for (int k = 0; k < 3; k++) { out6[k] = mn[k]; out6[3 + k] = mx[k]; }
+    return 1;
+}
+
+/* Todas las superficies que atraviesa el rayo del raton sobre un MODELO, de la mas cercana a la mas lejana (un tunel tiene
+   techo Y suelo: el primer punto es el techo, y el que se quiere trazar es el de abajo). Devuelve cuantas hay (max) y deja
+   los puntos del MUNDO en out[3*i]. Misma colocacion que g3d_editor_model_pick. */
+static int model_ray_all_core(void *model_ptr, Vec3 o, Vec3 d, float tx, float ty, float tz, float scale, float yaw_deg, float *out, int max);
+int g3d_editor_model_pick_all(float sx, float sy, float w, float h, void *model_ptr,
+                              float tx, float ty, float tz, float scale, float yaw_deg, float *out, int max) {
+    Vec3 o, d;
+    if (!model_ptr || max <= 0 || !screen_ray_world(sx, sy, w, h, &o, &d)) return 0;
+    return model_ray_all_core(model_ptr, o, d, tx, ty, tz, scale, yaw_deg, out, max);
+}
+/* Igual con un rayo cualquiera del mundo (origen y direccion): para mirar que hay bajo un punto (rayo vertical). */
+int g3d_editor_model_ray_all(void *model_ptr, float ox_, float oy_, float oz_, float dx_, float dy_, float dz_,
+                             float tx, float ty, float tz, float scale, float yaw_deg, float *out, int max) {
+    Vec3 o = vec3_make(ox_, oy_, oz_), d = vec3_make(dx_, dy_, dz_);
+    return model_ray_all_core(model_ptr, o, d, tx, ty, tz, scale, yaw_deg, out, max);
+}
+static int model_ray_all_core(void *model_ptr, Vec3 o, Vec3 d, float tx, float ty, float tz, float scale, float yaw_deg, float *out, int max) {
+    G3DModel *model = (G3DModel *)model_ptr;
+    if (!model || max <= 0) return 0;
+    if (scale <= 1e-6f) scale = 1.0f;
+    float a = -yaw_deg * 0.017453292f, ca = cosf(a), sa = sinf(a);
+    float ox = o.x - tx, oy = o.y - ty, oz = o.z - tz;
+    float lox = (ox * ca + oz * sa) / scale, loy = oy / scale, loz = (-ox * sa + oz * ca) / scale;
+    float ldx = (d.x * ca + d.z * sa) / scale, ldy = d.y / scale, ldz = (-d.x * sa + d.z * ca) / scale;
+    enum { MAXH = 256 };
+    float ts[MAXH]; int n = 0;
+    for (uint32_t mi = 0; mi < model->mesh_count; mi++) {
+        const G3DMesh *m = &model->meshes[mi];
+        if (!m->vertices || !m->indices) continue;
+        {
+            float tmin = 0.0f, tmax = 1e30f; int ok = 1;
+            const float lo[3] = { m->aabb_min[0], m->aabb_min[1], m->aabb_min[2] }, hi[3] = { m->aabb_max[0], m->aabb_max[1], m->aabb_max[2] };
+            const float ro[3] = { lox, loy, loz }, rd[3] = { ldx, ldy, ldz };
+            for (int k = 0; k < 3 && ok; k++) {
+                if (fabsf(rd[k]) < 1e-9f) { if (ro[k] < lo[k] || ro[k] > hi[k]) ok = 0; }
+                else {
+                    float t1 = (lo[k] - ro[k]) / rd[k], t2 = (hi[k] - ro[k]) / rd[k];
+                    if (t1 > t2) { float t = t1; t1 = t2; t2 = t; }
+                    if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2;
+                    if (tmin > tmax) ok = 0;
+                }
+            }
+            if (!ok) continue;
+        }
+        for (uint32_t i = 0; i + 2 < m->index_count; i += 3) {
+            const float *p0 = m->vertices[m->indices[i]].position, *p1 = m->vertices[m->indices[i + 1]].position, *p2 = m->vertices[m->indices[i + 2]].position;
+            float e1x = p1[0] - p0[0], e1y = p1[1] - p0[1], e1z = p1[2] - p0[2];
+            float e2x = p2[0] - p0[0], e2y = p2[1] - p0[1], e2z = p2[2] - p0[2];
+            float px = ldy * e2z - ldz * e2y, py = ldz * e2x - ldx * e2z, pz = ldx * e2y - ldy * e2x;
+            float det = e1x * px + e1y * py + e1z * pz;
+            if (fabsf(det) < 1e-12f) continue;
+            float inv = 1.0f / det;
+            float tx_ = lox - p0[0], ty_ = loy - p0[1], tz_ = loz - p0[2];
+            float u = (tx_ * px + ty_ * py + tz_ * pz) * inv; if (u < 0.0f || u > 1.0f) continue;
+            float qx = ty_ * e1z - tz_ * e1y, qy = tz_ * e1x - tx_ * e1z, qz = tx_ * e1y - ty_ * e1x;
+            float v = (ldx * qx + ldy * qy + ldz * qz) * inv; if (v < 0.0f || u + v > 1.0f) continue;
+            float t = (e2x * qx + e2y * qy + e2z * qz) * inv;
+            if (t > 1e-4f && n < MAXH) ts[n++] = t;
+        }
+    }
+    /* ordenar y quitar los casi repetidos (la cara de arriba y la de abajo de una chapa fina son una sola superficie) */
+    for (int i = 1; i < n; i++) { float k = ts[i]; int j = i - 1; while (j >= 0 && ts[j] > k) { ts[j + 1] = ts[j]; j--; } ts[j + 1] = k; }
+    int c = 0;
+    for (int i = 0; i < n && c < max; i++) {
+        if (c > 0) { float prev = out[3 * (c - 1) + 1]; float wy = o.y + d.y * ts[i]; if (fabsf(wy - prev) < 0.15f) continue; }
+        out[3 * c] = o.x + d.x * ts[i]; out[3 * c + 1] = o.y + d.y * ts[i]; out[3 * c + 2] = o.z + d.z * ts[i]; c++;
+    }
+    return c;
+}

@@ -13,13 +13,15 @@ PRIVATE
     float tx; float tz; float usable; float lx; float lz; int look; int ci; int ci3; int ci11;
     float dif; float dif2; float dyaw; float curva; float off_ap; float peso_ap; float gom;
     int lanes; int lane_cur; int lane_new;
+    int tj; float tcx; float tcz; float tdx; float tdz; float talong; float tside; float tbest; int tsel; int der; int salto;
+    float wl; float wr; float wf; float wlen; float wx; float wz; float py;
     int rr; int jj; int rj; int rj3; int rj11; int rj14; int pasa; float pa; float dj0; float dj1; float bx; float bz; float byaw;
 BEGIN
     px = kr_k_x[kid]; pz = kr_k_z[kid]; yaw = kr_k_yaw[kid]; vf = kr_k_vel[kid]; cp_i = kr_k_cp[kid]; lap = kr_k_lap[kid]; fin = kr_k_fin[kid];
     skill = kr_p_skill[kid]; agr = kr_p_agr[kid]; vari = kr_p_var[kid]; st_vel = kr_p_vel[kid];
     fr_i = kr_k_fr_i[kid]; fr_d = kr_k_fr_d[kid]; fr_s = kr_k_fr_s[kid]; at_i = kr_k_at_i[kid]; at_d = kr_k_at_d[kid]; at_s = kr_k_at_s[kid];
     off = kr_ia_off[kid]; off_obj = kr_ia_off_obj[kid]; off_t = kr_ia_off_t[kid]; ruta = kr_ia_ruta[kid]; ruta_j = kr_ia_ruta_j[kid]; rt_hecho = kr_ia_rt_hecho[kid]; bhw = kr_ia_bhw[kid];
-    a_acel = 0.0; a_giro = 0.0;
+    a_acel = 0.0; a_giro = 0.0; salto = 0; der = kr_ia_der[kid]; py = kr_k_y[kid];
         IF (kr_n_cp > 4 AND !fin)
         off_t = off_t - 1;
         // carriles: la carretera se reparte en carriles de ~3,4 m y cada piloto se mueve de uno a otro (no en una linea unica)
@@ -99,10 +101,27 @@ BEGIN
         peso_ap = abs(curva) * (0.35 + 0.5 * skill);
         lx = cos(byaw * 1000); lz = -sin(byaw * 1000);
         tx = bx + lx * kr_mez(off, off_ap, peso_ap) * usable; tz = bz + lz * kr_mez(off, off_ap, peso_ap) * usable;
+        // placas de turbo: los que apuntan bien (y los agresivos) se desvian a pisarlas si estan cerca y delante
+        tsel = -1; tbest = 1.0e9;
+        FOR (tj = 0; tj < kr_n_turbo; tj = tj + 1)
+            tcx = (kr_tb_x0[tj] + kr_tb_x1[tj]) * 0.5; tcz = (kr_tb_z0[tj] + kr_tb_z1[tj]) * 0.5;
+            tdx = tcx - px; tdz = tcz - pz;
+            talong = tdx * sin(yaw * 1000) + tdz * cos(yaw * 1000); tside = tdx * cos(yaw * 1000) - tdz * sin(yaw * 1000);
+            IF (talong > 5.0 AND talong < 10.0 + vf * 1.4 AND abs(tside) < 2.0 + talong * 0.35 AND abs(py - kr_tb_y0[tj]) < 4.0 AND talong < tbest
+                AND (skill > 0.9 OR agr > 0.6 OR (kid + tj) % 3 != 0))
+                tbest = talong; tsel = tj; tx = tcx; tz = tcz;
+            END
+        END
         dif = atan2(tx - px, tz - pz) / 1000.0 - yaw;
         WHILE (dif > 180.0)  dif = dif - 360.0; END
         WHILE (dif < -180.0) dif = dif + 360.0; END
         a_giro = clamp(-dif / 15.0, -1.0, 1.0);
+        // paredes: tres rayos (izquierda, frente, derecha) contra la colision del nivel; se aparta del lado que se acerca
+        wlen = 5.0 + vf * 0.2;
+        wf = g3d_wall_ray(px, py + 0.7, pz, sin(yaw * 1000), 0.0, cos(yaw * 1000), wlen);
+        wl = g3d_wall_ray(px, py + 0.7, pz, sin(yaw * 1000) * 0.87 + cos(yaw * 1000) * 0.5, 0.0, cos(yaw * 1000) * 0.87 - sin(yaw * 1000) * 0.5, wlen);
+        wr = g3d_wall_ray(px, py + 0.7, pz, sin(yaw * 1000) * 0.87 - cos(yaw * 1000) * 0.5, 0.0, cos(yaw * 1000) * 0.87 + sin(yaw * 1000) * 0.5, wlen);
+        a_giro = clamp(a_giro + (clamp(1.0 - wl / 3.5, 0.0, 1.0) - clamp(1.0 - wr / 3.5, 0.0, 1.0)) * 0.8, -1.0, 1.0);
         IF (ruta >= 0) dif2 = atan2(kr_ar_x[rj14] - px, kr_ar_z[rj14] - pz) / 1000.0 - yaw;           // la curva que viene: soltar el gas o frenar
         ELSE
             ci = (cp_i + 14) % kr_n_cp;
@@ -116,6 +135,13 @@ BEGIN
         IF (vf > KR_PUNTA * st_vel * (skill + gom)) a_acel = 0.0; END
         IF (abs(dif2) > 30.0 AND vf > 24.0) a_acel = 0.0; END
         IF (abs(dif2) > 55.0 AND vf > 20.0) a_acel = -0.6; END
+        IF (wf < 4.5 AND vf > 14.0) a_acel = clamp(a_acel, -0.7, 0.0); END       // muro de frente: frena
+        // derrape con salto: los buenos pisan el salto en las curvas cerradas, derrapan y sueltan al salir (mini-turbo)
+        IF (kr_ia_derrapa AND (skill > 0.88 OR agr > 0.65))      // apagado por defecto: en el circuito de prueba los hace mas lentos; kr_ia_derrapa = 1 lo activa
+            IF (der AND abs(curva) < 0.4) der = 0; END
+            IF (!der AND abs(curva) > 0.85 AND abs(a_giro) > 0.5 AND vf > KR_DER_MIN + 3.0 AND wf > 12.0) der = 1; END
+            IF (der) salto = 1; END
+        ELSE der = 0; END
         IF (fr_i >= 0 AND agr < 0.6)                                  // prudente: no embiste al de delante
             IF (fr_d < 5.5 AND vf > kr_k_vel[fr_i] + 1.0) a_acel = clamp(a_acel, -0.3, 0.25); END
             IF (fr_d < 3.2) a_acel = clamp(a_acel, -0.5, 0.0); END
@@ -123,6 +149,6 @@ BEGIN
     END
     kr_ia_off[kid] = off; kr_ia_off_obj[kid] = off_obj; kr_ia_off_t[kid] = off_t; kr_ia_ruta[kid] = ruta; kr_ia_ruta_j[kid] = ruta_j; kr_ia_rt_hecho[kid] = rt_hecho; kr_ia_bhw[kid] = bhw;
     kr_k_off[kid] = off;
-    kr_ia_acel[kid] = a_acel; kr_ia_giro[kid] = a_giro; kr_ia_salto[kid] = 0;
+    kr_ia_acel[kid] = a_acel; kr_ia_giro[kid] = a_giro; kr_ia_salto[kid] = salto; kr_ia_der[kid] = der;
 END
 

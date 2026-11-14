@@ -21,3 +21,8 @@ Cada módulo de serie lleva comentarios; cópialo y cámbialo. La prueba `tools/
 
 En el editor: pestaña Carreras → Pilotos → "Modulos del sistema" (botón *Personalizar* copia el módulo de serie a
 `Scripts/carreras_usuario/`) y la casilla "IA propia" en cada rival (se guarda en `.kart` como `|1` tras el modelo).
+
+## IA de serie (kr_ia_defecto): comportamientos
+Carriles y trazada, reacción a vecinos, rutas, equilibrio, **placas de turbo a propósito** (se desvía a pisarlas), **muros**
+(3 rayos con `G3D_WALL_RAY`: se aparta del lado que se acerca y frena ante un muro de frente) y, experimental, **derrape con
+salto** en curvas cerradas (`kr_ia_derrapa = 1`; apagado por defecto porque en el circuito de prueba los frena).

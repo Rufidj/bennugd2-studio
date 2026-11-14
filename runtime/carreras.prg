@@ -199,6 +199,8 @@ GLOBAL
     int    kr_f_ch[7]; float kr_f_yaw[7]; float kr_f_vx[7]; float kr_f_vz[7]; float kr_f_vf[7]; float kr_f_px[7]; float kr_f_py[7]; float kr_f_pz[7];
     int    kr_f_suelo[7]; int kr_f_salto_ant[7]; int kr_f_der[7]; int kr_f_dir[7]; float kr_f_carga[7]; int kr_f_turbo[7]; int kr_f_surf[7]; int kr_f_slip[7];
     float  kr_f_acel[7]; float kr_f_giro[7]; int kr_f_salto[7];
+    int    kr_ia_derrapa;                      // 1 = la IA de serie derrapa a proposito en curvas cerradas (experimental)
+    int    kr_ia_der[7];                       // el piloto esta derrapando a proposito
     int    kr_p_ia[7];                      // conductor de cada piloto: 0 = la IA de serie, 1 = IA propia (kr_ia_usuario)
     // estado publico del kart
     float  kr_kart_x; float kr_kart_y; float kr_kart_z;
@@ -1054,6 +1056,12 @@ BEGIN
             kr_p_vel[i] = 1.0; kr_p_acel[i] = 1.0; kr_p_giro[i] = 1.0; kr_p_agarre[i] = 1.0; kr_p_peso[i] = 1.0;
         END
         kr_p_nom[0] = "Tu";
+    END
+    FOR (i = 1; i < 8; i = i + 1)           // hueco sin piloto declarado (p. ej. mas rivales por linea de comandos): de serie
+        IF (kr_p_vel[i] <= 0.0)
+            kr_p_nom[i] = "Rival " + i; kr_p_skill[i] = 0.92; kr_p_agr[i] = 0.4; kr_p_var[i] = 0.5;
+            kr_p_vel[i] = 1.0; kr_p_acel[i] = 1.0; kr_p_giro[i] = 1.0; kr_p_agarre[i] = 1.0; kr_p_peso[i] = 1.0;
+        END
     END
     kr_frame = 0;
     kr_fin = 0; kr_msg = ""; kr_msg_t = 0; kr_cuenta = 180;

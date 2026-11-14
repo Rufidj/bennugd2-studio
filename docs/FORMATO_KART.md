@@ -89,3 +89,23 @@ el cielo y el ambiente se oscurecen, y se encienden las luces "de noche" y los f
 reloj. Con una escena vinculada y modo distinto de 0, el circuito mata el proceso del sol de esa escena y lleva el su `light`.
 En modo 0 el cielo y el sol los lleva la escena y las luces solo de noche no se encienden (el circuito no sabe que hora es).
 Se prueba sin GUI con un `.kart` que lleve `ambiente=3 16.6 60 1` y `luz=...`, y `bgdi main.dcb bot`.
+
+## Pilotos y rivales
+
+Cada rival tiene su propia linea; el jugador tiene la suya (solo nombre y estadisticas). Las estadisticas son multiplicadores
+sobre el kart de serie (1 = igual) y la personalidad decide como conduce la IA.
+
+```
+piloto=habilidad agresividad variacion vel acel giro agarre peso tamano nombre|modelo
+jugador=vel acel giro agarre peso |nombre
+equilibrio=0.25
+```
+
+- `habilidad` (0.6..1.1): fraccion de la velocidad maxima que aprovecha. `agresividad` (0..1): cuanto adelanta, bloquea y arriesga
+  (los prudentes frenan antes de embestir). `variacion` (0..1): cuanto cambia de carril y de trazada.
+- `tamano` 0 = el del jugador; `modelo` vacio = el kart del jugador.
+- `equilibrio` (0..1): los rezagados aprietan y los que van muy por delante aflojan un poco.
+- El formato antiguo `rivales=n dificultad modelo` se convierte en pilotos al cargar.
+
+En el juego los datos viven en `kr_p_*` (indice 0 = jugador, 1..7 = rivales) y los rellena la escena generada antes de `kr_montar()`
+(`kr_p_ok = 1`). Un juego propio puede rellenarlos desde su codigo (otros modelos, equipos, campeonatos) sin pasar por el editor.

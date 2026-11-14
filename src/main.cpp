@@ -1546,6 +1546,7 @@ int main(int, char**) {
     int tool = T_SELECT;
     int road_nodo_sel = -1;   // T_ROAD: punto elegido del circuito
     bool road_sincol = false; // pista propia: clic en una pieza para quitarla de la colision / ponerla otra vez
+    int road_cam = 0;         // Carretera: camino que se esta editando (0..n; el principal es el que lleva las vueltas)
     int road_pista_op = 0;    // pista propia: gizmo en el visor (0 ninguno, 1 mover, 2 rotar, 3 escalar)
     int road_poner = 0;       // T_ROAD: que pone un clic (0 punto de la carretera, 1 placa de turbo, 2 rampa, 3 farola)
     int  zone_layer = 0;      // T_ZONE: capa (0..3) que se pinta
@@ -7581,7 +7582,17 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 fputs("    kr_externa = 1; kr_ext_scene = scene; kr_ext_camera = camera;\n", f);
             } else fputs("    kr_externa = 0;\n", f);
             fprintf(f, "    kr_pista = \"%s\"; kr_kart_modelo = \"%s\"; kr_kart_tam = %.3f;\n", rel.c_str(), kc.kart.c_str(), kc.kart_tam);
-            fprintf(f, "    kr_n_ia = %d; kr_ia_dif = %d; kr_ia_modelo = \"%s\";\n", kc.n_ia, kc.dif_ia, kc.ia_modelo.c_str());
+            {   // los pilotos: el 0 es el jugador, del 1 al 7 los rivales
+                auto emite = [&](int i, const kr::Piloto& p) {
+                    fprintf(f, "    kr_p_nom[%d] = \"%s\"; kr_p_mod[%d] = \"%s\"; kr_p_tam[%d] = %.2f;\n", i, p.nombre.c_str(), i, p.modelo.c_str(), i, p.tam);
+                    fprintf(f, "    kr_p_skill[%d] = %.3f; kr_p_agr[%d] = %.3f; kr_p_var[%d] = %.3f; kr_p_vel[%d] = %.3f; kr_p_acel[%d] = %.3f; kr_p_giro[%d] = %.3f; kr_p_agarre[%d] = %.3f; kr_p_peso[%d] = %.3f;\n",
+                            i, p.skill, i, p.agr, i, p.var, i, p.vel, i, p.acel, i, p.giro, i, p.agarre, i, p.peso);
+                };
+                emite(0, kc.jugador);
+                int np = std::min((int)kc.pilotos.size(), 7);
+                for (int i = 0; i < np; i++) emite(i + 1, kc.pilotos[i]);
+                fprintf(f, "    kr_n_ia = %d; kr_equilibrio = %.3f; kr_ia_ancho = %.3f; kr_p_ok = 1;\n", np, kc.equilibrio, kc.ia_ancho);
+            }
             for (int i = 0; i < kr::N_SUP; i++)
                 fprintf(f, "    kr_ef_ag[%d] = %.3f; kr_ef_vel[%d] = %.3f; kr_ef_acel[%d] = %.3f;\n", i, kc.sup_ef[i].agarre, i, kc.sup_ef[i].vel, i, kc.sup_ef[i].acel);
             for (int i = 0; i < 4; i++)
@@ -7608,12 +7619,15 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 fprintf(f, "    kr_cp_add(%.2f, %.2f, %.2f, %.2f, %.2f, %d);\n", cp.x, cp.y, cp.z, cp.yaw, cp.hw, cp.sup);
             for (auto& cp : kc.alt)
                 fprintf(f, "    kr_ar_add(%.2f, %.2f, %.2f, %.2f, %.2f, %d);\n", cp.x, cp.y, cp.z, cp.yaw, cp.hw, cp.sup);
+            fprintf(f, "    kr_n_rt = %d;\n", (int)kc.rutas.size());
+            for (size_t ri = 0; ri < kc.rutas.size(); ri++)
+                fprintf(f, "    kr_rt_ini[%d] = %d; kr_rt_n[%d] = %d; kr_rt_e[%d] = %d; kr_rt_x[%d] = %d;\n", (int)ri, kc.rutas[ri].ini, (int)ri, kc.rutas[ri].n, (int)ri, kc.rutas[ri].e, (int)ri, kc.rutas[ri].x);
             fputs("    kr_n_obj = 0;\n", f);
             for (auto& o : kc.objetos)   // se montan dentro de kr_montar, con la escena ya creada
                 fprintf(f, "    kr_objeto_add(\"%s\", %.3f, %.3f, %.3f, %.2f, %.3f, %d);\n",
                         o.modelo.c_str(), o.x, o.base + o.y, o.z, o.yaw, o.alto, o.colision);
             fputs("    kr_montar();\n    RETURN;\nEND\n\n", f);
-            for (const char* n : { "kr_kart", "kr_camara", "kr_control", "kr_notify_toast", "kr_semaforo", "kr_clasif" }) lanzados.push_back(n);
+            for (const char* n : { "kr_kart", "kr_camara", "kr_control", "kr_notify_toast", "kr_semaforo", "kr_clasif", "kr_tabla" }) lanzados.push_back(n);
             add_include("Scripts/carreras.prg");
             std::string src = ruta_util("runtime/carreras.prg", KART_RUNTIME_PATH), txt;
             if (leer_todo(src, txt)) escribir_todo(scripts_dir + "/carreras.prg", txt);
@@ -9779,6 +9793,15 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             if (getenv("EDITOR_KR_COLOPC") && quiere && !kre.c.pista_glb.empty()) {       // prueba: "alto sin techos" -> opciones de colision
                 static bool h2 = false; if (!h2) { h2 = true; float al = 0; int te = 0; sscanf(getenv("EDITOR_KR_COLOPC"), "%f %d", &al, &te); kre.c.col_alto = al; kre.c.col_sin_techos = te != 0; kre.tocar(); kre.c.save(kre.ruta()); kre.guardar(); printf("EDITOR_KR_COLOPC: alto %.2f techos %d\n", al, te); fflush(stdout); }
             }
+            if (getenv("EDITOR_KR_RUTAPRUEBA") && quiere && !kre.c.caminos.empty()) {   // prueba: una ruta alternativa paralela (7 puntos del principal desplazados) y guarda
+                static bool hr = false; if (!hr) { hr = true;
+                    int i0 = 20, n = 7; float dx = 3.0f; sscanf(getenv("EDITOR_KR_RUTAPRUEBA"), "%d %d %f", &i0, &n, &dx);
+                    kr::Camino nc; nc.nombre = "ruta1"; nc.cerrado = false; nc.principal = false; const kr::Camino& pr = kre.c.caminos[0];
+                    for (int q = 0; q < n && i0 + q < (int)pr.nodos.size(); q++) { kr::Nodo nn = pr.nodos[i0 + q]; nn.x += dx; nc.nodos.push_back(nn); nc.tramos.push_back(pr.tramos[i0 + q]); }
+                    kre.c.caminos.push_back(nc); kre.tocar(); kre.c.save(kre.ruta()); kre.guardar();
+                    printf("EDITOR_KR_RUTAPRUEBA: %d ruta(s) detectadas (e=%d x=%d)\n", (int)kre.c.rutas.size(), kre.c.rutas.empty() ? -1 : kre.c.rutas[0].e, kre.c.rutas.empty() ? -1 : kre.c.rutas[0].x); fflush(stdout);
+                }
+            }
             if (getenv("EDITOR_KR_QUITARIDS") && quiere && !kre.c.pista_glb.empty()) {     // prueba: quita estas piezas (ids separados por comas) de la colision y guarda
                 static bool hecho = false; if (!hecho) { hecho = true;
                     g3d_gltf_set_recenter(0); void* pm = g3d_gltf_load((project_dir + "/" + kre.c.pista_glb).c_str()); g3d_gltf_set_recenter(1);
@@ -9965,7 +9988,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             if (ImGui::Begin("Carretera", nullptr, ImGuiWindowFlags_NoCollapse)) {
                 bool mio = kre.cargado && kre.c.escena == kre_escena_rel();
                 kr::Camino* cm = nullptr;
-                if (mio) { for (auto& c : kre.c.caminos) if (c.principal) { cm = &c; break; } if (!cm && !kre.c.caminos.empty()) cm = &kre.c.caminos[0]; }
+                if (mio && !kre.c.caminos.empty()) { road_cam = std::clamp(road_cam, 0, (int)kre.c.caminos.size() - 1); cm = &kre.c.caminos[road_cam]; }
                 if (!cm && tool == T_ZONE) {
                     ImGui::TextWrapped("Primero traza el circuito con la herramienta Carretera: las zonas son de su circuito.");
                 } else if (!cm) {
@@ -10043,8 +10066,28 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                         if (ImGui::Button("Quitar todo")) { kre.push_undo(); for (auto& n : cm->nodos) n.peralte = 0; cambio(); }
                         ImGui::TextDisabled("Automatico inclina cada curva hacia dentro segun lo cerrada que sea. Luego se afina punto a punto (deslizador Peralte).");
                     }
-                    if (ImGui::Checkbox("Circuito cerrado (da vueltas)", &cm->cerrado)) cambio();
-                    if (!cm->cerrado && cm->nodos.size() >= 2) {
+                    if (ImGui::CollapsingHeader("Caminos (rutas alternativas)", kre.c.caminos.size() > 1 ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
+                        for (size_t ci2 = 0; ci2 < kre.c.caminos.size(); ci2++) {
+                            kr::Camino& cc = kre.c.caminos[ci2];
+                            ImGui::PushID((int)ci2 + 9000);
+                            char et[96]; snprintf(et, sizeof et, "%s  (%d puntos)%s", cc.principal ? "Principal" : cc.nombre.c_str(), (int)cc.nodos.size(), cc.principal ? "" : " - alternativa");
+                            if (ImGui::RadioButton(et, road_cam == (int)ci2)) { road_cam = (int)ci2; road_nodo_sel = -1; }
+                            ImGui::PopID();
+                        }
+                        if (ImGui::Button("+ Camino alternativo")) {
+                            kre.push_undo(); kr::Camino nc; nc.nombre = "ruta" + std::to_string(kre.c.caminos.size()); nc.cerrado = false; nc.principal = false;
+                            kre.c.caminos.push_back(nc); road_cam = (int)kre.c.caminos.size() - 1; road_nodo_sel = -1; cambio();
+                        }
+                        if (!cm->principal) {
+                            ImGui::SameLine();
+                            if (ImGui::Button("Eliminar este camino")) { kre.push_undo(); kre.c.caminos.erase(kre.c.caminos.begin() + road_cam); road_cam = 0; road_nodo_sel = -1; cambio(); }
+                        }
+                        ImGui::TextWrapped("Un camino alternativo sale del principal y vuelve a el (dos entradas de un tunel, las cabinas de un peaje, un atajo): empieza y acaba cerca de la carretera principal. Los rivales eligen por cual ir antes de cada bifurcacion; tu eliges con el volante. Se dibujan en cian.");
+                        for (auto& av : kre.c.avisos_ruta) ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", av.c_str());
+                        if (!kre.c.rutas.empty()) ImGui::TextDisabled("%d ruta(s) alternativa(s) enlazadas con el principal.", (int)kre.c.rutas.size());
+                    }
+                    if (cm->principal && ImGui::Checkbox("Circuito cerrado (da vueltas)", &cm->cerrado)) cambio();
+                    if (cm->principal && !cm->cerrado && cm->nodos.size() >= 2) {
                         if (ImGui::Button("Autocompletar y cerrar")) {
                             // vuelve al primer punto con dos puntos intermedios que siguen la direccion de salida y de llegada
                             kre.push_undo();
@@ -10259,26 +10302,81 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                             ImGui::EndCombo();
                         }
                         if (ImGui::SliderFloat("Tamano del kart", &kre.c.kart_tam, 0.5f, 4.0f, "%.2f m")) cambio();
-                        ImGui::SeparatorText("Rivales (IA)");
-                        if (ImGui::SliderInt("Rivales", &kre.c.n_ia, 0, 7)) cambio();
-                        if (kre.c.n_ia > 0) {
-                            const char* dn[] = { "Facil", "Normal", "Dificil" };
-                            if (ImGui::Combo("Dificultad", &kre.c.dif_ia, dn, 3)) cambio();
-                            ImGui::Text("Modelo de los rivales: %s", kre.c.ia_modelo.empty() ? "(el del jugador)" : kre.c.ia_modelo.c_str());
-                            static char fr[48] = "";
-                            if (ImGui::BeginCombo("Modelo rivales", "elegir...")) {
-                                if (ImGui::Selectable("(el del jugador)", kre.c.ia_modelo.empty())) { kre.c.ia_modelo.clear(); cambio(); }
-                                ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##fr", "buscar...", fr, sizeof fr);
-                                for (auto& a : assets) {
-                                    std::string ext = fs::path(a).extension().string();
-                                    if (ext != ".glb" && ext != ".gltf" && ext != ".fbx") continue;
-                                    if (a.find("_pista.glb") != std::string::npos || a.find("_col.glb") != std::string::npos || a.find("_extras.glb") != std::string::npos || a.find("_rampas.glb") != std::string::npos) continue;
-                                    if (fr[0] && a.find(fr) == std::string::npos) continue;
-                                    if (ImGui::Selectable(a.c_str(), kre.c.ia_modelo == "Assets/" + a)) { kre.c.ia_modelo = "Assets/" + a; cambio(); }
+                        ImGui::SeparatorText("Pilotos");
+                        {
+                            // selector de modelo de kart reutilizable (cadena vacia = el del jugador)
+                            auto modelo_combo = [&](const char* id, std::string& modelo) -> bool {
+                                bool ch = false; static char ff[48] = "";
+                                if (ImGui::BeginCombo(id, modelo.empty() ? "(el del jugador)" : fs::path(modelo).filename().string().c_str())) {
+                                    if (ImGui::Selectable("(el del jugador)", modelo.empty())) { modelo.clear(); ch = true; }
+                                    ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##ff", "buscar...", ff, sizeof ff);
+                                    for (auto& a : assets) {
+                                        std::string ext = fs::path(a).extension().string();
+                                        if (ext != ".glb" && ext != ".gltf" && ext != ".fbx") continue;
+                                        if (a.find("_pista.glb") != std::string::npos || a.find("_col.glb") != std::string::npos || a.find("_extras.glb") != std::string::npos || a.find("_rampas.glb") != std::string::npos) continue;
+                                        if (ff[0] && a.find(ff) == std::string::npos) continue;
+                                        if (ImGui::Selectable(a.c_str(), modelo == "Assets/" + a)) { modelo = "Assets/" + a; ch = true; }
+                                    }
+                                    ImGui::EndCombo();
                                 }
-                                ImGui::EndCombo();
+                                return ch;
+                            };
+                            auto estadisticas = [&](kr::Piloto& p) -> bool {
+                                bool ch = false;
+                                ch |= ImGui::SliderFloat("Velocidad maxima", &p.vel, 0.7f, 1.3f, "x%.2f");
+                                ch |= ImGui::SliderFloat("Aceleracion", &p.acel, 0.7f, 1.4f, "x%.2f");
+                                ch |= ImGui::SliderFloat("Giro", &p.giro, 0.7f, 1.4f, "x%.2f");
+                                ch |= ImGui::SliderFloat("Agarre", &p.agarre, 0.5f, 1.5f, "x%.2f");
+                                ch |= ImGui::SliderFloat("Peso (empuja / se deja empujar)", &p.peso, 0.5f, 2.0f, "x%.2f");
+                                return ch;
+                            };
+                            if (ImGui::TreeNode("Tu kart (jugador)")) {
+                                char nm[48]; snprintf(nm, sizeof nm, "%s", kre.c.jugador.nombre.c_str());
+                                if (ImGui::InputText("Nombre", nm, sizeof nm)) { kre.c.jugador.nombre = nm; cambio(); }
+                                if (estadisticas(kre.c.jugador)) cambio();
+                                ImGui::TreePop();
                             }
-                            ImGui::TextDisabled("Salen en una parrilla de dos columnas detras de tu kart, por carriles distintos. Con el trazado cerrado.");
+                            ImGui::SliderFloat("Equilibrio de la carrera", &kre.c.equilibrio, 0.0f, 1.0f, "%.2f");
+                            if (ImGui::IsItemDeactivatedAfterEdit()) cambio();
+                            ImGui::TextDisabled("0 = cada rival va a lo suyo. Mas = los que se quedan atras aprietan y los que van muy por delante aflojan un poco.");
+                            if (ImGui::SliderFloat("Ancho que usan los rivales", &kre.c.ia_ancho, 0.5f, 2.5f, "x%.2f del trazado")) cambio();
+                            ImGui::TextDisabled("La IA reparte la carretera en carriles de ~3,4 m segun el ancho del trazado. Si tu carretera es mas ancha que el trazado dibujado, sube este valor para que use todos los carriles.");
+                            ImGui::Text("Rivales: %d de 7", (int)kre.c.pilotos.size());
+                            ImGui::SameLine();
+                            if (kre.c.pilotos.size() < 7 && ImGui::SmallButton("+ Anadir")) {
+                                kre.push_undo(); kr::Piloto p; p.nombre = "Rival " + std::to_string(kre.c.pilotos.size() + 1);
+                                if (!kre.c.pilotos.empty()) { p = kre.c.pilotos.back(); p.nombre = "Rival " + std::to_string(kre.c.pilotos.size() + 1); }
+                                kre.c.pilotos.push_back(p); cambio();
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Facil")) { kre.push_undo(); for (auto& p : kre.c.pilotos) { p.skill = 0.78f + 0.08f * ((rand() % 100) / 100.0f); p.agr = 0.2f; } cambio(); }
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Normal")) { kre.push_undo(); for (auto& p : kre.c.pilotos) { p.skill = 0.88f + 0.10f * ((rand() % 100) / 100.0f); p.agr = 0.45f; } cambio(); }
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Dificil")) { kre.push_undo(); for (auto& p : kre.c.pilotos) { p.skill = 0.98f + 0.06f * ((rand() % 100) / 100.0f); p.agr = 0.75f; } cambio(); }
+                            int quitar = -1;
+                            for (size_t pi = 0; pi < kre.c.pilotos.size(); pi++) {
+                                kr::Piloto& p = kre.c.pilotos[pi];
+                                ImGui::PushID((int)pi + 7000);
+                                char tit[96]; snprintf(tit, sizeof tit, "%d. %s##piloto", (int)pi + 1, p.nombre.c_str());
+                                if (ImGui::TreeNode(tit)) {
+                                    char nm[48]; snprintf(nm, sizeof nm, "%s", p.nombre.c_str());
+                                    if (ImGui::InputText("Nombre", nm, sizeof nm)) { p.nombre = nm; cambio(); }
+                                    if (modelo_combo("Kart", p.modelo)) cambio();
+                                    if (ImGui::DragFloat("Tamano del kart", &p.tam, 0.02f, 0.0f, 4.0f, p.tam > 0 ? "%.2f m" : "(como el tuyo)")) cambio();
+                                    ImGui::TextDisabled("Como conduce");
+                                    if (ImGui::SliderFloat("Habilidad", &p.skill, 0.6f, 1.1f, "%.2f")) cambio();
+                                    if (ImGui::SliderFloat("Agresividad", &p.agr, 0.0f, 1.0f, "%.2f")) cambio();
+                                    if (ImGui::SliderFloat("Variacion de trazada", &p.var, 0.0f, 1.0f, "%.2f")) cambio();
+                                    ImGui::TextDisabled("Su kart");
+                                    if (estadisticas(p)) cambio();
+                                    if (ImGui::SmallButton("Quitar este rival")) quitar = (int)pi;
+                                    ImGui::TreePop();
+                                }
+                                ImGui::PopID();
+                            }
+                            if (quitar >= 0) { kre.push_undo(); kre.c.pilotos.erase(kre.c.pilotos.begin() + quitar); cambio(); }
+                            ImGui::TextDisabled("Cada rival puede tener su kart, tamano, estadisticas y personalidad. Salen en la parrilla detras de ti, por carriles distintos.");
                         }
                         if (ImGui::Button("Colocar la salida con un clic")) road_poner = 4;
                         ImGui::SameLine();
@@ -10303,7 +10401,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                     }
                     if (ImGui::Button("Guardar")) { save_scene(scene_path); kre.guardar(); status = kre.msg; }
                     ImGui::SameLine();
-                    if (ImGui::Button("Probar") && !cm->cerrado) status = "Cierra el circuito antes de probarlo (clic en el primer punto o Autocompletar)";
+                    if (ImGui::Button("Probar") && kre.c.ps < 0) status = "Cierra el circuito antes de probarlo (clic en el primer punto o Autocompletar)";
                     else if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
                         save_scene(scene_path);
                         if (kre.guardar() && kre.on_play) kre.on_play(kre.nombre); else status = kre.msg;
@@ -11190,14 +11288,19 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                     o = ImVec2(img_min.x + p2[0], img_min.y + p2[1]); return true;
                 };
                 kr::Camino* cm = nullptr;
-                if (hay) { for (auto& c : kre.c.caminos) if (c.principal) { cm = &c; break; } if (!cm && !kre.c.caminos.empty()) cm = &kre.c.caminos[0]; }
+                if (hay && !kre.c.caminos.empty()) { road_cam = std::clamp(road_cam, 0, (int)kre.c.caminos.size() - 1); cm = &kre.c.caminos[road_cam]; }
                 if (hay && cm) {
-                    for (auto& s : kre.c.strips) {
+                    for (size_t si = 0; si < kre.c.strips.size(); si++) {
+                        const auto& s = kre.c.strips[si];
+                        // principal: amarillo; caminos alternativos: cian (el que se edita, mas grueso)
+                        bool es_prin = kre.c.caminos[si].principal;
+                        ImU32 col = es_prin ? IM_COL32(255, 210, 60, 255) : IM_COL32(70, 210, 255, 255);
+                        float gr = (int)si == road_cam ? 4.0f : 2.0f;
                         for (int i = s.ini; i < s.ini + s.n; i++) {
                             int j = kre.c.sig(i); if (j < 0 || kre.c.m[i].hueco) continue;
                             ImVec2 a, b;
                             if (proy(kre.c.m[i].c.x, kre.c.m[i].c.y + 0.4f, kre.c.m[i].c.z, a) && proy(kre.c.m[j].c.x, kre.c.m[j].c.y + 0.4f, kre.c.m[j].c.z, b))
-                                dl->AddLine(a, b, IM_COL32(255, 210, 60, 255), 3.0f);
+                                dl->AddLine(a, b, col, gr);
                         }
                     }
                     int hov = -1; float mejor = 14.0f;
@@ -11347,7 +11450,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                             kre.tocar(); kre.c.save(kre.ruta());
                         }
                     } else
-                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hov == 0 && !cm->cerrado && cm->nodos.size() >= 3) {
+                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hov == 0 && cm->principal && !cm->cerrado && cm->nodos.size() >= 3) {
                         kre.push_undo(); cm->cerrado = true; rc_n = -1; kre.tocar(); kre.c.save(kre.ruta());        // clic en el primer punto: cierra el circuito
                     }
                     else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hov >= 0) { kre.push_undo(); rc_n = hov; rc_drag = true; }
@@ -11361,7 +11464,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                         if (!cm->nodos.empty()) { n.ancho = cm->nodos.back().ancho; t = cm->tramos.back(); }
                         cm->cerrado = false;     // mientras se dibuja, el trazado no se cierra solo: lo cierras tu (clic en el primer punto)
                         cm->nodos.push_back(n); cm->tramos.push_back(t);
-                        if (cm->nodos.size() == 1) { kre.c.sx = n.x; kre.c.sz = n.z; }
+                        if (cm->nodos.size() == 1 && cm->principal) { kre.c.sx = n.x; kre.c.sz = n.z; }
                         rc_n = (int)cm->nodos.size() - 1;
                         kre.tocar(); kre.c.save(kre.ruta());
                     }

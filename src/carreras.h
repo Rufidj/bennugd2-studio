@@ -149,6 +149,19 @@ struct CruceDet {                                   // derivado: el cruce tal co
     std::vector<int> sup, inf;                      // muestras de la carretera de arriba y de la de abajo
 };
 struct Cp    { float x, y, z, yaw, hw; int sup; };
+// una RUTA alternativa para la IA: un camino abierto que sale del principal en el checkpoint 'e' y vuelve a el en el 'x'
+struct Ruta  { int ini = 0, n = 0, e = 0, x = 0; };
+// Un PILOTO: quien conduce y con que kart. Cada rival del circuito tiene el suyo (tambien el jugador tiene sus estadisticas).
+// Las estadisticas son multiplicadores sobre el kart de serie (1 = igual); la personalidad decide como conduce la IA.
+struct Piloto {
+    std::string nombre = "Piloto";
+    std::string modelo;                // "" = el kart del jugador
+    float tam = 0;                     // alto del kart en metros (0 = el del jugador)
+    float skill = 0.92f;               // 0.6..1.1: que fraccion de la velocidad maxima aprovecha (habilidad)
+    float agr = 0.4f;                  // 0..1: agresividad (adelanta con decision, bloquea, no frena por el de delante)
+    float var = 0.5f;                  // 0..1: cuanto cambia de carril y de trazada
+    float vel = 1, acel = 1, giro = 1, agarre = 1, peso = 1;   // kart: velocidad maxima, aceleracion, giro, agarre, peso
+};
 // una pieza de la pista propia que NO colisiona (centro de la pieza en el espacio del modelo y su numero de triangulos: la identifican)
 struct SinCol { float cx = 0, cy = 0, cz = 0; int ntri = 0; };
 
@@ -193,11 +206,13 @@ struct Circuito {
     std::string ex_vis, ex_col;                // con pista propia: modelos extra generados (turbos y meta / rampas con colision); "" = ninguno
     float pista_x = 0, pista_y = 0, pista_z = 0, pista_esc = 1.0f, pista_yaw = 0;   // colocacion de la pista propia: posicion, escala y giro (grados)
     float kart_tam = 1.3f;
-    int   n_ia = 0, dif_ia = 1;                // rivales con IA (0..7) y su dificultad (0 facil, 1 normal, 2 dificil)
-    std::string ia_modelo;                     // modelo de los rivales ("" = el del jugador)
+    std::vector<Piloto> pilotos;               // los rivales con IA (0..7)
+    Piloto jugador;                            // el piloto del jugador (solo cuentan nombre y estadisticas)
+    float ia_ancho = 1.0f;                     // cuanto del ancho del trazado usan los rivales (>1 = mas que el trazado)
+    float equilibrio = 0.25f;                  // 0..1: los rivales rezagados aprietan y los que van muy por delante aflojan
     float margen = 60;                         // cesped alrededor (y limites del respawn)
 
-    Circuito() { for (int k = 0; k < MT_N; k++) esc[k] = MT_ESC[k]; efectos_defecto(); }
+    Circuito() { for (int k = 0; k < MT_N; k++) esc[k] = MT_ESC[k]; efectos_defecto(); jugador.nombre = "Tu"; }
     void efectos_defecto() {
         for (int i = 0; i < N_SUP; i++) sup_ef[i] = EF_SUP_DEF[i];
         for (int i = 0; i < 4; i++) { zona_ef[i] = EF_ZONA_DEF[i]; zona_on[i] = 0; zona_nom[i] = ZONA_DEF_NOMBRE[i]; }
@@ -224,6 +239,8 @@ struct Circuito {
     std::vector<Tramp> turbo_z;     // zonas de las placas de turbo (fuerza sin uso)
     std::vector<Cp> cps;            // checkpoints del camino principal cada 'paso' m, desde la meta
     std::vector<Cp> alt;            // puntos de los demas caminos (atajos), para saber que se esta sobre carretera
+    std::vector<Ruta> rutas;        // los caminos alternativos que enlazan con el principal (la IA elige entre ellos)
+    std::vector<std::string> avisos_ruta;
     std::vector<CruceDet> cruces_det;
     std::vector<int> m_cdet;                    // por muestra: indice del cruce en el que esta la carretera de ARRIBA (-1 = ninguno)
     std::vector<std::string> avisos_cruce;      // cruces con poca altura libre
@@ -272,7 +289,7 @@ struct Circuito {
     // ------------------------------------------------------------- .kart
     bool load(const std::string& ruta) {
         std::ifstream in(ruta); if (!in) return false;
-        caminos.clear(); rampas.clear(); objetos.clear(); turbos.clear(); lagos.clear(); cruces.clear(); luces.clear(); vueltas = 3; efectos_defecto(); n_ia = 0; dif_ia = 1; ia_modelo.clear(); pista_glb.clear(); sincol.clear(); col_alto = 0; col_sin_techos = false; sin_terreno = false; sy_manual = 1.0f; syaw_manual = 0; pista_x = pista_y = pista_z = 0; pista_esc = 1.0f; pista_yaw = 0;
+        caminos.clear(); rampas.clear(); objetos.clear(); turbos.clear(); lagos.clear(); cruces.clear(); luces.clear(); vueltas = 3; efectos_defecto(); pilotos.clear(); jugador = Piloto(); jugador.nombre = "Tu"; equilibrio = 0.25f; ia_ancho = 1.0f; pista_glb.clear(); sincol.clear(); col_alto = 0; col_sin_techos = false; sin_terreno = false; sy_manual = 1.0f; syaw_manual = 0; pista_x = pista_y = pista_z = 0; pista_esc = 1.0f; pista_yaw = 0;
         bool hubo_amb = false; amb_modo = 1; amb_hora = 9.0f; amb_dur = 240.0f; faros = 1;
         for (int k = 0; k < MT_N; k++) { tex[k].clear(); esc[k] = MT_ESC[k]; }
         std::vector<std::pair<Nodo, Tramo>> viejos;       // formato antiguo (punto=): una sola linea cerrada
@@ -324,7 +341,19 @@ struct Circuito {
             else if (k == "sincol") { SinCol sc; if (s >> sc.cx >> sc.cy >> sc.cz >> sc.ntri) sincol.push_back(sc); }
             else if (k == "pista3d") s >> pista_x >> pista_y >> pista_z >> pista_esc >> pista_yaw;
             else if (k == "kart_tam") s >> kart_tam;
-            else if (k == "rivales") { s >> n_ia >> dif_ia; n_ia = std::clamp(n_ia, 0, 7); dif_ia = std::clamp(dif_ia, 0, 2); ia_modelo = resto(s); }
+            else if (k == "rivales") {            // formato antiguo: n dificultad modelo -> se convierte en pilotos
+                int n = 0, d = 1; s >> n >> d; std::string md = resto(s); n = std::clamp(n, 0, 7);
+                if (pilotos.empty()) for (int q = 0; q < n; q++) { Piloto p; p.nombre = "Rival " + std::to_string(q + 1); p.modelo = md; p.skill = d <= 0 ? 0.82f : d == 1 ? 0.93f : 1.0f; pilotos.push_back(p); }
+            }
+            else if (k == "piloto") {
+                Piloto p; s >> p.skill >> p.agr >> p.var >> p.vel >> p.acel >> p.giro >> p.agarre >> p.peso >> p.tam;
+                std::string rs = resto(s); size_t b = rs.find('|'); if (b != std::string::npos) { p.nombre = rs.substr(0, b); p.modelo = rs.substr(b + 1); } else p.nombre = rs;
+                while (!p.nombre.empty() && p.nombre.back() == ' ') p.nombre.pop_back(); while (!p.nombre.empty() && p.nombre.front() == ' ') p.nombre.erase(0, 1);
+                if (pilotos.size() < 7) pilotos.push_back(p);
+            }
+            else if (k == "jugador") { s >> jugador.vel >> jugador.acel >> jugador.giro >> jugador.agarre >> jugador.peso; std::string rs = resto(s); size_t b = rs.find('|'); jugador.nombre = b == std::string::npos ? rs : rs.substr(b + 1); if (jugador.nombre.empty()) jugador.nombre = "Tu"; }
+            else if (k == "equilibrio") s >> equilibrio;
+            else if (k == "ia_ancho") s >> ia_ancho;
             else if (k == "margen") s >> margen;
         }
         if (caminos.empty() && !viejos.empty()) {
@@ -345,7 +374,10 @@ struct Circuito {
         if (!pista_glb.empty()) fprintf(f, "# pista propia: este .glb se ve y colisiona, no se genera carretera\npista=%s\nsalida3d=%.3f %.3f\npista3d=%.3f %.3f %.3f %.4f %.2f\nsin_terreno=%d\n", pista_glb.c_str(), sy_manual, syaw_manual, pista_x, pista_y, pista_z, pista_esc, pista_yaw, sin_terreno ? 1 : 0);
         if (!pista_glb.empty()) fprintf(f, "colision=%.3f %d\n", col_alto, col_sin_techos ? 1 : 0);
         for (auto& sc : sincol) fprintf(f, "sincol=%.4f %.4f %.4f %d\n", sc.cx, sc.cy, sc.cz, sc.ntri);
-        fprintf(f, "rivales=%d %d %s\n", n_ia, dif_ia, ia_modelo.c_str());
+        fputs("# piloto=habilidad agresividad variacion vel acel giro agarre peso tamano | nombre | modelo   (un rival; las estadisticas son multiplicadores)\n", f);
+        for (auto& p : pilotos) fprintf(f, "piloto=%.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.2f %s|%s\n", p.skill, p.agr, p.var, p.vel, p.acel, p.giro, p.agarre, p.peso, p.tam, p.nombre.c_str(), p.modelo.c_str());
+        fprintf(f, "jugador=%.3f %.3f %.3f %.3f %.3f |%s\nequilibrio=%.3f\n", jugador.vel, jugador.acel, jugador.giro, jugador.agarre, jugador.peso, jugador.nombre.c_str(), equilibrio);
+        fprintf(f, "ia_ancho=%.3f\n", ia_ancho);
         fprintf(f, "kart=%s\nkart_tam=%.3f\nmargen=%.1f\nsalida=%.3f %.3f\nvueltas=%d\n", kart.c_str(), kart_tam, margen, sx, sz, vueltas);
         if (!escena.empty()) fprintf(f, "# escena 3D con el terreno y los objetos (se edita en los modos Terreno y Escena)\nescena=%s\n", escena.c_str());
         fputs("# efecto=superficie(0 asfalto,1 tierra,2 hielo,3 barro) agarre velocidad aceleracion   (multiplicadores)\n", f);
@@ -611,15 +643,34 @@ struct Circuito {
             }
         } else meta_i = 0;
         // los demas caminos (atajos): un punto cada ~6 m para reconocer la carretera
+        rutas.clear(); avisos_ruta.clear();
         for (size_t ci = 0; ci < caminos.size(); ci++) {
             if ((int)ci == ps || strips[ci].n < 2) continue;
-            float acc = 6.0f;
+            float acc = 6.0f; size_t ini_alt = alt.size();
             for (int i = strips[ci].ini; i < strips[ci].ini + strips[ci].n && (int)alt.size() < 399; i++) {
                 if (i > strips[ci].ini) acc += len(m[i].c - m[i - 1].c);
                 if (acc < 6.0f) continue;
                 acc = 0; const Muestra& s = m[i];
                 Cp c; c.x = s.c.x; c.y = s.c.y; c.z = s.c.z; c.yaw = yaw_de(s.t); c.hw = s.ancho * 0.5f; c.sup = s.hueco ? -1 : s.sup;
                 alt.push_back(c);
+            }
+            // ¿enlaza con el principal? Un camino ABIERTO cuyo primer y ultimo punto caen cerca del principal es una ruta alternativa
+            int na = (int)(alt.size() - ini_alt);
+            if (na >= 2 && ps >= 0 && !cps.empty() && !caminos[ci].cerrado) {
+                auto cercano = [&](const Cp& p, float& d2) { int b = 0; d2 = 1e30f; for (int k = 0; k < (int)cps.size(); k++) { float dx = cps[k].x - p.x, dz = cps[k].z - p.z, dy = cps[k].y - p.y, d = dx*dx + dz*dz + dy*dy * 4.0f; if (d < d2) { d2 = d; b = k; } } return b; };
+                float d0, d1; int e = cercano(alt[ini_alt], d0), x = cercano(alt[ini_alt + na - 1], d1);
+                int N = (int)cps.size(), fw = ((x - e) % N + N) % N;
+                if (std::sqrt(d0) > 30.0f || std::sqrt(d1) > 30.0f) avisos_ruta.push_back("el camino '" + caminos[ci].nombre + "' no empieza o no acaba cerca del principal: no es una ruta");
+                else if (fw < 3 && N - fw < 3) avisos_ruta.push_back("el camino '" + caminos[ci].nombre + "' empieza y acaba en el mismo sitio del principal");
+                else {
+                    if (fw > N / 2) {                                    // va al reves: se da la vuelta (el principal tambien se recorre hacia delante)
+                        std::reverse(alt.begin() + ini_alt, alt.end());
+                        for (size_t q = ini_alt; q < alt.size(); q++) alt[q].yaw = std::fmod(alt[q].yaw + 180.0f, 360.0f);
+                        std::swap(e, x);
+                    }
+                    Ruta rt; rt.ini = (int)ini_alt; rt.n = na; rt.e = e; rt.x = x;
+                    if ((int)rutas.size() < 7) rutas.push_back(rt);
+                }
             }
         }
         // objetos: suelo debajo

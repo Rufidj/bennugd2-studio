@@ -7632,6 +7632,16 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             std::string src = ruta_util("runtime/carreras.prg", KART_RUNTIME_PATH), txt;
             if (leer_todo(src, txt)) escribir_todo(scripts_dir + "/carreras.prg", txt);
             else console_add("AVISO: no encuentro runtime/carreras.prg junto al editor\n");
+            /* modulos sustituibles: el del proyecto (Scripts/carreras_usuario/) gana al de serie */
+            { std::error_code ec; fs::create_directories(scripts_dir + "/carreras", ec); }
+            for (const char* m : { "kr_eventos", "kr_ia_defecto", "kr_ia_usuario", "kr_ia", "kr_hud", "kr_camara" }) {
+                std::string mt, uso = scripts_dir + "/carreras_usuario/" + m + ".prg";
+                if (!leer_todo(uso, mt)) {
+                    std::string ms = ruta_util(std::string("runtime/carreras_modulos/") + m + ".prg", std::string(KART_MODULOS_PATH) + "/" + m + ".prg");
+                    if (!leer_todo(ms, mt)) { console_add(std::string("AVISO: falta el modulo ") + m + "\n"); continue; }
+                } else console_add(std::string("modulo propio: ") + m + "\n");
+                escribir_todo(scripts_dir + "/carreras/" + m + ".prg", mt);
+            }
         };
 
         /* ================= UNA PASADA POR ESCENA =================

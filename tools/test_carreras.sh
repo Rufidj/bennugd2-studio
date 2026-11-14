@@ -33,6 +33,14 @@ for i in 1 2 3; do
   av=$(grep "kart $i:" "$L" | tail -1 | sed 's/.*avance=//')
   [ -n "$av" ] && awk "BEGIN{exit !($av > 50)}" && ok "el rival $i avanza ($av)" || mal "el rival $i no avanza (avance=${av:-?})"
 done
+echo "4. modulo sustituido por el proyecto (kr_eventos propio)"
+mkdir -p "$T/Scripts/carreras_usuario"
+sed 's|^FUNCTION kr_ev_meta(int kid, int puesto, int ticks)     BEGIN END|FUNCTION kr_ev_meta(int kid, int puesto, int ticks) BEGIN send_notifications(N_INFO, "carreras", "EVMETA " + kid); END|' "$AQUI/runtime/carreras_modulos/kr_eventos.prg" > "$T/Scripts/carreras_usuario/kr_eventos.prg"
+grep -q EVMETA "$T/Scripts/carreras_usuario/kr_eventos.prg" || mal "no se pudo preparar el modulo de prueba"
+( cd "$AQUI/bin" && EDITOR_PROYECTO="$T" EDITOR_MODO=6 EDITOR_GENERAR=1 timeout 300 ./editor3d > "$T/gen3.log" 2>&1 )
+grep -q EVMETA "$T/Scripts/carreras/kr_eventos.prg" && ok "el generador usa el modulo del proyecto" || mal "no usa el modulo propio"
+( cd "$T" && PATH="$BIN:$PATH" LD_LIBRARY_PATH="$BIN" timeout 240 "$BIN/bgdi" main.dcb bot > "$T/run2.log" 2>&1 )
+grep -q EVMETA "$T/run2.log" "$T/carreras.log" 2>/dev/null && ok "el evento propio se ejecuta" || mal "el evento propio no se ejecuto"
 echo
 [ $fallo = 0 ] && echo "TODO BIEN" || echo "HAY FALLOS"
 exit $fallo

@@ -165,6 +165,7 @@ target_compile_definitions(editor3d PRIVATE
     PLAT_RUNTIME_PATH="${CMAKE_CURRENT_SOURCE_DIR}/runtime/plataformas.prg"   # biblioteca de plataformas 2.5D
     PASILLO_RUNTIME_PATH="${CMAKE_CURRENT_SOURCE_DIR}/runtime/pasillo.prg"       # biblioteca de pasillos estilo Crash
     KART_RUNTIME_PATH="${CMAKE_CURRENT_SOURCE_DIR}/runtime/carreras.prg"        # biblioteca de carreras de karts
+    KART_MODULOS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/runtime/carreras_modulos"   # modulos sustituibles de carreras
     KART_TEX_PATH="${CMAKE_CURRENT_SOURCE_DIR}/runtime/carreras"                # texturas de la pista de karts
     PLAT_STARTER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/runtime/starter"           # proyecto de ejemplo de plataformas
     BGDC_PATH="${BGD_BIN}/bgdc"      # compilador BennuGD2 (se resuelve arriba)

@@ -188,6 +188,14 @@ GLOBAL
     int    kr_rep = 0;                      // sube cada vez que se repite la carrera (ENTER)
     float  kr_k_x[7]; float kr_k_y[7]; float kr_k_z[7]; float kr_k_vel[7]; float kr_k_prog[7];
     int    kr_k_fin[7]; int kr_k_tfin[7]; int kr_k_pos[7]; float kr_k_off[7];
+    // estado de cada kart para los modulos (IA, HUD, eventos)
+    float  kr_k_yaw[7]; int kr_k_cp[7]; int kr_k_lap[7];
+    int    kr_k_fr_i[7]; float kr_k_fr_d[7]; float kr_k_fr_s[7]; int kr_k_at_i[7]; float kr_k_at_d[7]; float kr_k_at_s[7];     // vecino de delante / de detras
+    int    kr_k_derrape[7]; float kr_k_carga[7]; int kr_k_turbo[7]; int kr_k_surf[7];
+    // lo que "pulsa" cada piloto de IA (lo escribe el modulo kr_ia) y su memoria
+    float  kr_ia_acel[7]; float kr_ia_giro[7]; int kr_ia_salto[7];
+    float  kr_ia_off[7]; float kr_ia_off_obj[7]; int kr_ia_off_t[7]; int kr_ia_ruta[7]; int kr_ia_ruta_j[7]; int kr_ia_rt_hecho[7]; float kr_ia_bhw[7];
+    int    kr_p_ia[7];                      // conductor de cada piloto: 0 = la IA de serie, 1 = IA propia (kr_ia_usuario)
     // estado publico del kart
     float  kr_kart_x; float kr_kart_y; float kr_kart_z;
     float  kr_kart_yaw; float kr_kart_vel; int kr_kart_turbo;
@@ -413,6 +421,16 @@ BEGIN
     IF (kr_n_obj > 0) send_notifications(N_INFO, "carreras", "" + kr_n_obj + " objetos colocados"); END
 END
 
+// =========================== modulos sustituibles =================================
+// Cada uno es un fichero que el editor copia a Scripts/carreras/ al generar el juego; si el proyecto tiene uno con el mismo nombre en
+// Scripts/carreras_usuario/, se usa ese en su lugar. Ver docs/CARRERAS_API.md.
+#include "Scripts/carreras/kr_eventos.prg"
+#include "Scripts/carreras/kr_ia_defecto.prg"
+#include "Scripts/carreras/kr_ia_usuario.prg"
+#include "Scripts/carreras/kr_ia.prg"
+#include "Scripts/carreras/kr_hud.prg"
+#include "Scripts/carreras/kr_camara.prg"
+
 // =========================== input ===========================================
 FUNCTION kr_leer_input()
 PRIVATE
@@ -477,6 +495,7 @@ BEGIN
     priority = 10;
     LOOP
         kr_leer_input();
+        kr_hud_actualizar();
         IF (kr_auto)
             t = t + 1;
             IF (t % 150 == 0 AND kr_n_k > 1)
@@ -532,7 +551,7 @@ PRIVATE
     int   prg; int lap; int fin; int t_race; int t_lap; int bestl; int rep_vista; int d0;
     // piloto automatico (kid > 0)
     string nom_mod; float skill; float off; float off_obj; int off_t; float tx; float tz; float usable; float lx; float lz; int look; float frac;
-    int   k2; float ddx; float ddz; float dist2; float dif; float dif2;
+    int   k2; float ddx; float ddz; float dist2; float dif; float dif2; int mot;
     float st_vel; float st_acel; float st_giro; float st_agarre; float st_peso; float tam_k; float agr; float vari;
     int ruta; int ruta_j; int rt_hecho; int rr; int jj; float bx; float bz; float byaw; float bhw; float dj0; float dj1; int rj; int rj3; int rj11; int rj14; int pasa; float pa;
     int lanes; int lane_cur; int lane_new; float curva; float off_ap; float dyaw; float peso_ap; int ci3; int ci11;
@@ -589,13 +608,15 @@ BEGIN
     END
     fuera_t = 0; atasco_t = 0; atasco_rep = 0; atasco_ult = -1;
     kr_k_x[kid] = sx; kr_k_y[kid] = sy; kr_k_z[kid] = sz; kr_k_prog[kid] = -1000.0;
-    rep_vista = kr_rep; ruta = -1; ruta_j = 0; rt_hecho = -1; bhw = 7.0;
+    rep_vista = kr_rep;
+    kr_ia_ruta[kid] = -1; kr_ia_ruta_j[kid] = 0; kr_ia_rt_hecho[kid] = -1; kr_ia_bhw[kid] = 7.0;
     IF (kid > 0)                                                  // un carril propio al empezar
-        off = rand(-100, 100) / 100.0 * 0.6; off_obj = off; off_t = rand(60, 240);
+        kr_ia_off[kid] = rand(-100, 100) / 100.0 * 0.6; kr_ia_off_obj[kid] = kr_ia_off[kid]; kr_ia_off_t[kid] = rand(60, 240);
     END
 
     LOOP
         // ---------- entradas efectivas ----------
+        kr_k_yaw[kid] = yaw; kr_k_cp[kid] = cp_i; kr_k_lap[kid] = lap;
         // ---------- vecinos: el kart mas cercano delante y detras en mi carril ----------
         sfx = sin(yaw * 1000); sfz = cos(yaw * 1000); srx = cos(yaw * 1000); srz = -sin(yaw * 1000);
         fr_d = 1.0e9; fr_s = 0.0; fr_i = -1; at_d = 1.0e9; at_s = 0.0; at_i = -1; slip = 0;
@@ -608,112 +629,12 @@ BEGIN
             END
         END
         IF (fr_i >= 0 AND fr_d < 14.0 AND abs(fr_s) < 1.4) slip = 1; END           // rebufo: pegado al de delante se corre mas
+        kr_k_fr_i[kid] = fr_i; kr_k_fr_d[kid] = fr_d; kr_k_fr_s[kid] = fr_s; kr_k_at_i[kid] = at_i; kr_k_at_d[kid] = at_d; kr_k_at_s[kid] = at_s;
         IF (kid == 0)
             a_acel = kr_in_acel; a_giro = kr_in_giro; a_salto = kr_in_salto;
         ELSE
-            // ---------- IA: sigue el trazado por su propio carril ----------
-            a_acel = 0.0; a_giro = 0.0; a_salto = 0;
-            IF (kr_n_cp > 4 AND !fin)
-                off_t = off_t - 1;
-                // carriles: la carretera se reparte en carriles de ~3,4 m y cada piloto se mueve de uno a otro (no en una linea unica)
-                usable = bhw * kr_ia_ancho - 2.2; IF (usable < 0.0) usable = 0.0; END
-                lanes = (usable * 2.0) / 3.4 + 1; IF (lanes < 1) lanes = 1; END IF (lanes > 6) lanes = 6; END
-                IF (off_t <= 0)                                              // de vez en cuando cambia de carril (mas o menos segun su variacion)
-                    lane_cur = ((off_obj + 1.0) * lanes - 1.0) / 2.0 + 0.5; IF (lane_cur < 0) lane_cur = 0; END IF (lane_cur >= lanes) lane_cur = lanes - 1; END
-                    lane_new = lane_cur;
-                    IF (rand(0, 100) < 35 + 60 * vari)
-                        IF (rand(0, 1)) lane_new = lane_cur + 1; ELSE lane_new = lane_cur - 1; END
-                        IF (vari > 0.7 AND rand(0, 100) < 30) lane_new = lane_new + (lane_new - lane_cur); END
-                    END
-                    IF (lane_new < 0) lane_new = 0; END IF (lane_new >= lanes) lane_new = lanes - 1; END
-                    off_obj = -1.0 + (2.0 * lane_new + 1.0) / lanes;
-                    off_t = (260 - 180 * vari) + rand(0, 160);
-                END
-                // reaccion a los demas: el de delante en mi carril se pasa por el lado con mas sitio; si el de atras aprieta y soy agresivo, le cierro
-                IF (fr_i >= 0 AND fr_d < 13.0 AND off_t > 25)
-                    IF (fr_s >= 0.0) off_obj = off - 0.55 - agr * 0.25; ELSE off_obj = off + 0.55 + agr * 0.25; END
-                    IF (off_obj > 0.95) off_obj = off - 0.6; END
-                    IF (off_obj < -0.95) off_obj = off + 0.6; END
-                    off_t = 40 + rand(0, 40);
-                ELSEIF (at_i >= 0 AND agr > 0.55 AND at_d < 9.0 AND off_t > 40)
-                    IF (at_s >= 0.0) off_obj = off + 0.3 * agr; ELSE off_obj = off - 0.3 * agr; END
-                    off_t = 55;
-                END
-                off_obj = clamp(off_obj, -1.0, 1.0);
-                off = off + (off_obj - off) * (0.02 + 0.03 * (fr_i >= 0));
-                look = 2 + vf / 13.0;
-                // ---------- rutas alternativas: antes de una bifurcacion elige por cual ir (los dos tuneles, las cabinas del peaje...) ----------
-                IF (ruta < 0)
-                    FOR (rr = 0; rr < kr_n_rt; rr = rr + 1)
-                        pasa = (kr_rt_e[rr] - cp_i + kr_n_cp * 2) % kr_n_cp;                       // checkpoints que faltan para la bifurcacion
-                        IF (pasa >= 6 AND pasa <= 16 AND rt_hecho != rr + 1000 * lap)
-                            rt_hecho = rr + 1000 * lap;
-                            pa = 0.5 + (vari - 0.5) * 0.2;                                          // por defecto, mitad y mitad; algo mas aventureros los variables
-                            IF (fr_i >= 0 AND fr_d < 16.0) pa = pa + 0.2; END                        // si hay alguien delante, prueba el otro camino
-                            IF (rand(0, 100) < pa * 100) ruta = rr; ruta_j = 0; END
-                            send_notifications(N_DEBUG, "ia", "kart " + kid + " vuelta " + lap + " bifurcacion " + rr + ": " + (ruta == rr));
-                        END
-                    END
-                END
-                IF (ruta >= 0)
-                    // avanza por la ruta: el punto mas cercano hacia delante
-                    FOR (jj = 0; jj < 4; jj = jj + 1)
-                        IF (ruta_j < kr_rt_n[ruta] - 1)
-                            rj = kr_rt_ini[ruta] + ruta_j;
-                            dj0 = (kr_ar_x[rj] - px) * (kr_ar_x[rj] - px) + (kr_ar_z[rj] - pz) * (kr_ar_z[rj] - pz);
-                            dj1 = (kr_ar_x[rj + 1] - px) * (kr_ar_x[rj + 1] - px) + (kr_ar_z[rj + 1] - pz) * (kr_ar_z[rj + 1] - pz);
-                            IF (dj1 < dj0) ruta_j = ruta_j + 1; END
-                        END
-                    END
-                    pasa = (kr_rt_x[ruta] - cp_i + kr_n_cp * 2) % kr_n_cp;
-                    IF (ruta_j >= kr_rt_n[ruta] - 1 OR pasa < 2 OR pasa > kr_n_cp / 2) ruta = -1; END          // llego a la union con el principal
-                END
-                IF (ruta >= 0)
-                    rj = kr_rt_ini[ruta] + clamp(ruta_j + look, 0, kr_rt_n[ruta] - 1);
-                    bx = kr_ar_x[rj]; bz = kr_ar_z[rj]; byaw = kr_ar_yaw[rj]; bhw = kr_ar_hw[rj];
-                    rj3 = kr_rt_ini[ruta] + clamp(ruta_j + 3, 0, kr_rt_n[ruta] - 1); rj11 = kr_rt_ini[ruta] + clamp(ruta_j + 11, 0, kr_rt_n[ruta] - 1);
-                    rj14 = kr_rt_ini[ruta] + clamp(ruta_j + 14, 0, kr_rt_n[ruta] - 1);
-                ELSE
-                    ci = (cp_i + look) % kr_n_cp;
-                    bx = kr_cp_x[ci]; bz = kr_cp_z[ci]; byaw = kr_cp_yaw[ci]; bhw = kr_cp_hw[ci];
-                END
-                kr_k_rt[kid] = ruta;
-                usable = bhw * kr_ia_ancho - 2.2; IF (usable < 0.0) usable = 0.0; END
-                // trazada de carrera: en una curva entra por fuera, corta por dentro y sale abierto (los habilidosos mas que los demas)
-                IF (ruta >= 0) dyaw = kr_ar_yaw[rj11] - kr_ar_yaw[rj3];
-                ELSE
-                    ci3 = (cp_i + 3) % kr_n_cp; ci11 = (cp_i + 11 + vf / 6.0) % kr_n_cp;
-                    dyaw = kr_cp_yaw[ci11] - kr_cp_yaw[ci3];
-                END
-                WHILE (dyaw > 180.0)  dyaw = dyaw - 360.0; END
-                WHILE (dyaw < -180.0) dyaw = dyaw + 360.0; END
-                curva = clamp(dyaw / 35.0, -1.0, 1.0);
-                off_ap = -curva * 0.85;
-                peso_ap = abs(curva) * (0.35 + 0.5 * skill);
-                lx = cos(byaw * 1000); lz = -sin(byaw * 1000);
-                tx = bx + lx * kr_mez(off, off_ap, peso_ap) * usable; tz = bz + lz * kr_mez(off, off_ap, peso_ap) * usable;
-                dif = atan2(tx - px, tz - pz) / 1000.0 - yaw;
-                WHILE (dif > 180.0)  dif = dif - 360.0; END
-                WHILE (dif < -180.0) dif = dif + 360.0; END
-                a_giro = clamp(-dif / 15.0, -1.0, 1.0);
-                IF (ruta >= 0) dif2 = atan2(kr_ar_x[rj14] - px, kr_ar_z[rj14] - pz) / 1000.0 - yaw;           // la curva que viene: soltar el gas o frenar
-                ELSE
-                    ci = (cp_i + 14) % kr_n_cp;
-                    dif2 = atan2(kr_cp_x[ci] - px, kr_cp_z[ci] - pz) / 1000.0 - yaw;
-                END
-                WHILE (dif2 > 180.0)  dif2 = dif2 - 360.0; END
-                WHILE (dif2 < -180.0) dif2 = dif2 + 360.0; END
-                a_acel = 1.0;
-                gom = 0.0;                                                    // equilibrio: el rezagado aprieta, el que va muy por delante afloja
-                IF (kr_equilibrio > 0.0) gom = clamp((kr_k_prog[0] - kr_k_prog[kid]) / 40.0, -1.0, 1.0) * 0.07 * kr_equilibrio; END
-                IF (vf > KR_PUNTA * st_vel * (skill + gom)) a_acel = 0.0; END
-                IF (abs(dif2) > 30.0 AND vf > 24.0) a_acel = 0.0; END
-                IF (abs(dif2) > 55.0 AND vf > 20.0) a_acel = -0.6; END
-                IF (fr_i >= 0 AND agr < 0.6)                                  // prudente: no embiste al de delante
-                    IF (fr_d < 5.5 AND vf > kr_k_vel[fr_i] + 1.0) a_acel = clamp(a_acel, -0.3, 0.25); END
-                    IF (fr_d < 3.2) a_acel = clamp(a_acel, -0.5, 0.0); END
-                END
-            END
+            kr_ia(kid);                                                   // el conductor (modulo kr_ia): deja escrito lo que "pulsa"
+            a_acel = kr_ia_acel[kid]; a_giro = kr_ia_giro[kid]; a_salto = kr_ia_salto[kid];
         END
         IF (kr_cuenta > 0 OR fin) a_acel = 0.0; a_giro = 0.0; a_salto = 0; END
         IF (kid == 0 AND kr_cuenta > 0)
@@ -810,7 +731,7 @@ BEGIN
         IF (suelo AND !suelo_ant)
             dip = -0.18;
             IF (a_salto AND !derrape AND vf > KR_DER_MIN AND (a_giro > 0.3 OR a_giro < -0.3))
-                derrape = 1; carga = 0.0;
+                derrape = 1; carga = 0.0; kr_ev_derrape(kid);
                 IF (a_giro > 0.0) dir = 1; ELSE dir = -1; END
                 send_notifications(N_DEBUG, "carreras", "derrape dir=" + dir);
             END
@@ -823,12 +744,12 @@ BEGIN
             IF (tr >= 0)
                 g3d_char_jump(ch, kr_tr_fuerza[tr]);
                 IF (turbo_t < 30) turbo_t = 30; END
-                tramp_cd = 40;
+                tramp_cd = 40; kr_ev_trampolin(kid);
                 send_notifications(N_DEBUG, "carreras", "trampolin " + tr);
             END
         END
         IF (suelo AND kr_turbo_en(px, py, pz))
-            IF (turbo_t < 50) turbo_t = 50; END
+            IF (turbo_t < 50) turbo_t = 50; kr_ev_turbo(kid); END
         END
 
         // ---------- progreso por checkpoints ----------
@@ -885,9 +806,11 @@ BEGIN
                 lap_t = t_lap;
                 IF (bestl == 0 OR lap_t < bestl) bestl = lap_t; END
                 IF (kid == 0) send_notifications(N_INFO, "carreras", "vuelta " + lap + "/" + kr_vueltas + ": " + kr_tiempo(lap_t)); END
+                kr_ev_vuelta(kid, lap, lap_t);
                 t_lap = 0;
                 IF (lap >= kr_vueltas)
                     fin = 1; kr_k_fin[kid] = 1; kr_k_tfin[kid] = t_race;
+                    kr_ev_meta(kid, kr_k_pos[kid] + 1, t_race);
                     IF (kid == 0)
                         kr_msg = "META!  " + kr_tiempo(t_race) + "   (ENTER = repetir)   Puesto " + (kr_k_pos[0] + 1) + "/" + kr_n_k;
                         send_notifications(N_INFO, "carreras", "carrera terminada: " + kr_tiempo(t_race) + " puesto " + (kr_k_pos[0] + 1));
@@ -919,7 +842,9 @@ BEGIN
                 atasco_ult = ok_i;
                 IF (atasco_rep > 0) ok_i = (ok_i + 4 * atasco_rep) % kr_n_cp; ok_prog = ok_prog + 4 * atasco_rep; END
             END
-            IF (caida_t > 25 OR agua_t > 70 OR kr_in_reset OR fuera_t > 90 OR atasco_t > 210)
+            IF (caida_t > 25 OR agua_t > 70 OR (kid == 0 AND kr_in_reset) OR fuera_t > 90 OR atasco_t > 210)
+                IF (caida_t > 25) mot = 1; ELSEIF (agua_t > 70) mot = 2; ELSEIF (kid == 0 AND kr_in_reset) mot = 3; ELSEIF (fuera_t > 90) mot = 4; ELSE mot = 5; END
+                kr_ev_reaparece(kid, mot);
                 px = kr_cp_x[ok_i]; py = kr_cp_y[ok_i] + 1.2; pz = kr_cp_z[ok_i]; yaw = kr_cp_yaw[ok_i];
                 cp_i = ok_i; prg = ok_prog; reinicio = 1;
                 IF (kid == 0) send_notifications(N_INFO, "carreras", "reaparece en el checkpoint " + ok_i); END
@@ -932,6 +857,7 @@ BEGIN
             END
         END
         IF (px < kr_lim_x0 OR px > kr_lim_x1 OR pz < kr_lim_z0 OR pz > kr_lim_z1)
+            kr_ev_reaparece(kid, 6);
             IF (kr_n_cp > 4) px = kr_cp_x[ok_i]; py = kr_cp_y[ok_i] + 1.2; pz = kr_cp_z[ok_i]; yaw = kr_cp_yaw[ok_i]; cp_i = ok_i; prg = ok_prog;
             ELSE px = okx; py = oky + 1.0; pz = okz; yaw = okyaw; END
             reinicio = 1;
@@ -973,7 +899,7 @@ BEGIN
         ELSE g3d_entity_set_position(ent, px, py + KR_MEDIO + dip, pz); END
         g3d_entity_set_rotation(ent, vis_pitch, (yaw + vis_yaw) * 1000, vis_roll);
 
-        kr_k_x[kid] = px; kr_k_y[kid] = py; kr_k_z[kid] = pz; kr_k_vel[kid] = vf; kr_k_off[kid] = off;
+        kr_k_x[kid] = px; kr_k_y[kid] = py; kr_k_z[kid] = pz; kr_k_vel[kid] = vf;
         frac = 0.0; IF (kr_n_cp > 4) frac = clamp(lon / kr_paso, -0.5, 0.5); END
         kr_k_prog[kid] = prg - d0 + frac;                         // avance desde la linea de meta (negativo antes de cruzarla)
         IF (kid == 0)
@@ -982,37 +908,8 @@ BEGIN
             kr_prog = prg; kr_lap = lap; kr_fin = fin; kr_t_race = t_race; kr_t_lap = t_lap; kr_best = bestl; kr_d0 = d0;
         END
 
-        // ---------- HUD (solo el del jugador) ----------
-        IF (kid == 0)
-        kmh = vf * 3.6;
-        kr_hud = "" + kmh + " km/h";
-        IF (derrape)
-            IF (carga >= KR_CARGA2)     kr_hud = kr_hud + "   DERRAPE **";
-            ELSEIF (carga >= KR_CARGA1) kr_hud = kr_hud + "   DERRAPE *";
-            ELSE                         kr_hud = kr_hud + "   DERRAPE"; END
-        END
-        IF (turbo_t > 0) kr_hud = kr_hud + "   TURBO!"; END
-        IF (surf == KR_S_TIERRA) kr_hud = kr_hud + "   [tierra]"; END
-        IF (surf == KR_S_HIELO)  kr_hud = kr_hud + "   [hielo]"; END
-        IF (surf == KR_S_BARRO)  kr_hud = kr_hud + "   [barro]"; END
-        IF (surf == KR_S_FUERA)  kr_hud = kr_hud + "   [fuera de pista]"; END
-        IF (surf == KR_S_AGUA)   kr_hud = kr_hud + "   [agua]"; END
-        IF (kr_n_cp > 4)
-            kr_hud2 = "Vuelta " + lap + "/" + kr_vueltas + "   " + kr_tiempo(t_race);
-            IF (bestl > 0) kr_hud2 = kr_hud2 + "   Mejor vuelta " + kr_tiempo(bestl); END
-            IF (kr_amb_modo == 3)
-                hh = kr_hora; mm = (kr_hora - hh) * 60.0;
-                kr_hud2 = kr_hud2 + "   ";
-                IF (hh < 10) kr_hud2 = kr_hud2 + "0"; END
-                kr_hud2 = kr_hud2 + hh + ":";
-                IF (mm < 10) kr_hud2 = kr_hud2 + "0"; END
-                kr_hud2 = kr_hud2 + mm;
-            END
-        ELSE
-            kr_hud2 = "";
-        END
-        IF (kr_n_k > 1 AND kr_n_cp > 4) kr_hud2 = kr_hud2 + "   Puesto " + (kr_k_pos[0] + 1) + "/" + kr_n_k; END
-        END
+        // estado para el HUD y para los modulos (derrape, turbo, superficie)
+        kr_k_derrape[kid] = derrape; kr_k_carga[kid] = carga; kr_k_turbo[kid] = turbo_t; kr_k_surf[kid] = surf;
         FRAME;
     END
 END
@@ -1156,35 +1053,6 @@ BEGIN
                 graph = 0;
             END
         END
-        FRAME;
-    END
-END
-
-// =========================== camara ==========================================
-PROCESS kr_camara()
-PRIVATE
-    float cyaw; float d; float dist; float cy; float fx; float fz;
-    float fov_act; float fov_meta;
-BEGIN
-    priority = -10;
-    cyaw = kr_kart_yaw; cy = kr_kart_y + KR_CAM_ALTO; fov_act = KR_CAM_FOV;
-    LOOP
-        d = kr_kart_yaw - cyaw;
-        WHILE (d > 180.0)  d = d - 360.0; END
-        WHILE (d < -180.0) d = d + 360.0; END
-        cyaw = cyaw + d * KR_CAM_GIRO;
-        fx = sin(cyaw * 1000); fz = cos(cyaw * 1000);
-        dist = g3d_camera_safe_distance(kr_kart_x, kr_kart_y + 1.0, kr_kart_z, -fx, 0.3, -fz, KR_CAM_DIST, 0.4);
-        cy = cy + (kr_kart_y + KR_CAM_ALTO - cy) * KR_CAM_Y;
-        IF (cy < kr_kart_y + 1.2) cy = kr_kart_y + 1.2; END
-        IF (kr_n_lago > 0 AND cy < KR_AGUA_Y + 1.6) cy = KR_AGUA_Y + 1.6; END   // nunca bajo la superficie del agua
-        g3d_camera_set_position(kr_camera, kr_kart_x - fx * dist, cy, kr_kart_z - fz * dist);
-        g3d_camera_look_at(kr_camera, kr_kart_x + fx * KR_CAM_MIRA, kr_kart_y + 1.0,
-                           kr_kart_z + fz * KR_CAM_MIRA, 0.0, 1.0, 0.0);
-        fov_meta = KR_CAM_FOV + KR_CAM_FOV_V * clamp(kr_kart_vel / KR_PUNTA, 0.0, 1.0);
-        IF (kr_kart_turbo) fov_meta = fov_meta + KR_CAM_FOV_T; END
-        fov_act = fov_act + (fov_meta - fov_act) * 0.1;
-        g3d_camera_set_fov(kr_camera, fov_act);
         FRAME;
     END
 END
@@ -1363,6 +1231,7 @@ BEGIN
     kr_txt_hud   = write_var(0, 10, 30, 0, kr_hud);
     kr_txt_hud2  = write_var(0, 10, 50, 0, kr_hud2);
     kr_txt_msg   = write_var(0, 640, 280, 4, kr_msg);
+    kr_ev_inicio();
 END
 
 // Quita el circuito (la escena generada mata ademas los procesos kr_*).

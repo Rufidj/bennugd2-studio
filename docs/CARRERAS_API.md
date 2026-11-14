@@ -10,6 +10,7 @@ ese en lugar del de serie (el editor lo avisa en la consola con "modulo propio: 
 | `kr_ia.prg` | Reparte el conductor de cada piloto (IA de serie o propia) | Escribir `kr_ia_acel/giro/salto[kid]` |
 | `kr_ia_defecto.prg` | La IA de serie (carriles, trazada, rutas, equilibrio) | `kr_ia_defecto(kid)` |
 | `kr_ia_usuario.prg` | Tu conductor, para pilotos con la casilla "IA propia" (`kr_p_ia[kid] = 1`) | `kr_ia_usuario(kid)` |
+| `kr_fisica.prg` | El manejo: aceleración, giro, derrape, turbo, agarre, empujones. Lee `kr_f_*[kid]` y deja `kr_f_vx/vz/yaw/vf/der/carga/turbo` | `kr_fisica(kid)` |
 | `kr_hud.prg` | Textos/estado en pantalla cada fotograma | `kr_hud_actualizar()` |
 | `kr_camara.prg` | La cámara | el proceso de cámara que lance el motor |
 

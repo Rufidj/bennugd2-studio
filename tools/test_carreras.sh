@@ -6,7 +6,7 @@ set -u
 AQUI="$(cd "$(dirname "$0")/.." && pwd)"
 ED="$AQUI/bin/editor3d"
 BIN="${BGD_BIN:-$AQUI/../../build/linux-gnu/bin}"
-T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+T="${KEEP_T:-$(mktemp -d)}"; [ -n "${KEEP_T:-}" ] || trap 'rm -rf "$T"' EXIT
 fallo=0; ok() { echo "  ok:    $1"; }; mal() { echo "  FALLO: $1"; fallo=1; }
 
 [ -x "$ED" ] || { echo "no existe $ED (compila el editor)"; exit 2; }
@@ -55,6 +55,12 @@ grep -q 'kr_p_ia\[1\] = 1' "$T/main.prg" && ok "el piloto 1 sale con IA propia" 
 ( cd "$T" && rm -f carreras.log && PATH="$BIN:$PATH" LD_LIBRARY_PATH="$BIN" timeout 240 "$BIN/bgdi" main.dcb bot > "$T/run3.log" 2>&1 )
 grep -q IAPROPIA "$T/run3.log" "$T/carreras.log" 2>/dev/null && ok "la IA propia conduce" || mal "la IA propia no se ejecuto"
 grep -q 'carrera terminada' "$T/carreras.log" && ok "la carrera termina con IA propia" || mal "no termina con IA propia"
+echo "6. fisica sustituida por el proyecto (kr_fisica propio: kart mas lento)"
+sed 's|^    punta = KR_PUNTA \* spunta \* st_vel;|    punta = KR_PUNTA * spunta * st_vel * 0.5;|' "$AQUI/runtime/carreras_modulos/kr_fisica.prg" > "$T/Scripts/carreras_usuario/kr_fisica.prg"
+cmp -s "$T/Scripts/carreras_usuario/kr_fisica.prg" "$AQUI/runtime/carreras_modulos/kr_fisica.prg" && mal "no se pudo preparar la fisica de prueba"
+( cd "$AQUI/bin" && EDITOR_PROYECTO="$T" EDITOR_MODO=6 EDITOR_GENERAR=1 timeout 300 ./editor3d > "$T/gen5.log" 2>&1 )
+( cd "$T" && rm -f carreras.log && PATH="$BIN:$PATH" LD_LIBRARY_PATH="$BIN" timeout 400 "$BIN/bgdi" main.dcb bot > "$T/run4.log" 2>&1 )
+grep -q 'tiempo agotado' "$T/carreras.log" && ok "con la fisica propia (mitad de velocidad) la carrera ya no acaba a tiempo" || mal "la fisica propia no cambia nada"
 echo
 [ $fallo = 0 ] && echo "TODO BIEN" || echo "HAY FALLOS"
 exit $fallo

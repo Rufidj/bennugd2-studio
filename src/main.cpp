@@ -7634,7 +7634,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
             else console_add("AVISO: no encuentro runtime/carreras.prg junto al editor\n");
             /* modulos sustituibles: el del proyecto (Scripts/carreras_usuario/) gana al de serie */
             { std::error_code ec; fs::create_directories(scripts_dir + "/carreras", ec); }
-            for (const char* m : { "kr_eventos", "kr_ia_defecto", "kr_ia_usuario", "kr_ia", "kr_hud", "kr_camara" }) {
+            for (const char* m : { "kr_eventos", "kr_fisica", "kr_ia_defecto", "kr_ia_usuario", "kr_ia", "kr_hud", "kr_camara" }) {
                 std::string mt, uso = scripts_dir + "/carreras_usuario/" + m + ".prg";
                 if (!leer_todo(uso, mt)) {
                     std::string ms = ruta_util(std::string("runtime/carreras_modulos/") + m + ".prg", std::string(KART_MODULOS_PATH) + "/" + m + ".prg");
@@ -10353,7 +10353,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                             ImGui::TextDisabled("La IA reparte la carretera en carriles de ~3,4 m segun el ancho del trazado. Si tu carretera es mas ancha que el trazado dibujado, sube este valor para que use todos los carriles.");
                             if (ImGui::TreeNode("Modulos del sistema (sustituir piezas)")) {
                                 ImGui::TextDisabled("Copia un modulo de serie a Scripts/carreras_usuario/ para cambiarlo en este proyecto.");
-                                for (const char* mod : { "kr_ia_usuario", "kr_ia_defecto", "kr_eventos", "kr_hud", "kr_camara" }) {
+                                for (const char* mod : { "kr_ia_usuario", "kr_ia_defecto", "kr_fisica", "kr_eventos", "kr_hud", "kr_camara" }) {
                                     std::string dst = scripts_dir + "/carreras_usuario/" + mod + ".prg", t0;
                                     bool tiene = leer_todo(dst, t0);
                                     ImGui::PushID(mod);

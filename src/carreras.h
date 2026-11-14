@@ -160,6 +160,7 @@ struct Piloto {
     float skill = 0.92f;               // 0.6..1.1: que fraccion de la velocidad maxima aprovecha (habilidad)
     float agr = 0.4f;                  // 0..1: agresividad (adelanta con decision, bloquea, no frena por el de delante)
     float var = 0.5f;                  // 0..1: cuanto cambia de carril y de trazada
+    bool ia_propia = false;            // true = lo conduce kr_ia_usuario (modulo del proyecto) en vez de la IA de serie
     float vel = 1, acel = 1, giro = 1, agarre = 1, peso = 1;   // kart: velocidad maxima, aceleracion, giro, agarre, peso
 };
 // una pieza de la pista propia que NO colisiona (centro de la pieza en el espacio del modelo y su numero de triangulos: la identifican)
@@ -347,7 +348,7 @@ struct Circuito {
             }
             else if (k == "piloto") {
                 Piloto p; s >> p.skill >> p.agr >> p.var >> p.vel >> p.acel >> p.giro >> p.agarre >> p.peso >> p.tam;
-                std::string rs = resto(s); size_t b = rs.find('|'); if (b != std::string::npos) { p.nombre = rs.substr(0, b); p.modelo = rs.substr(b + 1); } else p.nombre = rs;
+                std::string rs = resto(s); size_t b = rs.find('|'); if (b != std::string::npos) { p.nombre = rs.substr(0, b); p.modelo = rs.substr(b + 1); size_t b2 = p.modelo.find('|'); if (b2 != std::string::npos) { p.ia_propia = p.modelo.substr(b2 + 1) == "1"; p.modelo.resize(b2); } } else p.nombre = rs;
                 while (!p.nombre.empty() && p.nombre.back() == ' ') p.nombre.pop_back(); while (!p.nombre.empty() && p.nombre.front() == ' ') p.nombre.erase(0, 1);
                 if (pilotos.size() < 7) pilotos.push_back(p);
             }
@@ -375,7 +376,7 @@ struct Circuito {
         if (!pista_glb.empty()) fprintf(f, "colision=%.3f %d\n", col_alto, col_sin_techos ? 1 : 0);
         for (auto& sc : sincol) fprintf(f, "sincol=%.4f %.4f %.4f %d\n", sc.cx, sc.cy, sc.cz, sc.ntri);
         fputs("# piloto=habilidad agresividad variacion vel acel giro agarre peso tamano | nombre | modelo   (un rival; las estadisticas son multiplicadores)\n", f);
-        for (auto& p : pilotos) fprintf(f, "piloto=%.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.2f %s|%s\n", p.skill, p.agr, p.var, p.vel, p.acel, p.giro, p.agarre, p.peso, p.tam, p.nombre.c_str(), p.modelo.c_str());
+        for (auto& p : pilotos) fprintf(f, "piloto=%.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.2f %s|%s%s\n", p.skill, p.agr, p.var, p.vel, p.acel, p.giro, p.agarre, p.peso, p.tam, p.nombre.c_str(), p.modelo.c_str(), p.ia_propia ? "|1" : "");
         fprintf(f, "jugador=%.3f %.3f %.3f %.3f %.3f |%s\nequilibrio=%.3f\n", jugador.vel, jugador.acel, jugador.giro, jugador.agarre, jugador.peso, jugador.nombre.c_str(), equilibrio);
         fprintf(f, "ia_ancho=%.3f\n", ia_ancho);
         fprintf(f, "kart=%s\nkart_tam=%.3f\nmargen=%.1f\nsalida=%.3f %.3f\nvueltas=%d\n", kart.c_str(), kart_tam, margen, sx, sz, vueltas);

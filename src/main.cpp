@@ -7590,7 +7590,7 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 };
                 emite(0, kc.jugador);
                 int np = std::min((int)kc.pilotos.size(), 7);
-                for (int i = 0; i < np; i++) emite(i + 1, kc.pilotos[i]);
+                for (int i = 0; i < np; i++) { emite(i + 1, kc.pilotos[i]); if (kc.pilotos[i].ia_propia) fprintf(f, "    kr_p_ia[%d] = 1;\n", i + 1); }
                 fprintf(f, "    kr_n_ia = %d; kr_equilibrio = %.3f; kr_ia_ancho = %.3f; kr_p_ok = 1;\n", np, kc.equilibrio, kc.ia_ancho);
             }
             for (int i = 0; i < kr::N_SUP; i++)
@@ -10351,6 +10351,23 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                             ImGui::TextDisabled("0 = cada rival va a lo suyo. Mas = los que se quedan atras aprietan y los que van muy por delante aflojan un poco.");
                             if (ImGui::SliderFloat("Ancho que usan los rivales", &kre.c.ia_ancho, 0.5f, 2.5f, "x%.2f del trazado")) cambio();
                             ImGui::TextDisabled("La IA reparte la carretera en carriles de ~3,4 m segun el ancho del trazado. Si tu carretera es mas ancha que el trazado dibujado, sube este valor para que use todos los carriles.");
+                            if (ImGui::TreeNode("Modulos del sistema (sustituir piezas)")) {
+                                ImGui::TextDisabled("Copia un modulo de serie a Scripts/carreras_usuario/ para cambiarlo en este proyecto.");
+                                for (const char* mod : { "kr_ia_usuario", "kr_ia_defecto", "kr_eventos", "kr_hud", "kr_camara" }) {
+                                    std::string dst = scripts_dir + "/carreras_usuario/" + mod + ".prg", t0;
+                                    bool tiene = leer_todo(dst, t0);
+                                    ImGui::PushID(mod);
+                                    ImGui::Text("%s %s", mod, tiene ? "(propio)" : "(de serie)");
+                                    ImGui::SameLine();
+                                    if (!tiene && ImGui::SmallButton("Personalizar")) {
+                                        std::string ms = ruta_util(std::string("runtime/carreras_modulos/") + mod + ".prg", std::string(KART_MODULOS_PATH) + "/" + mod + ".prg");
+                                        std::error_code ec; fs::create_directories(scripts_dir + "/carreras_usuario", ec);
+                                        if (leer_todo(ms, t0) && escribir_todo(dst, t0)) console_add(std::string("modulo copiado a ") + dst + "\n");
+                                    } else if (tiene && ImGui::SmallButton("Volver al de serie")) { std::error_code ec; fs::remove(dst, ec); }
+                                    ImGui::PopID();
+                                }
+                                ImGui::TreePop();
+                            }
                             ImGui::Text("Rivales: %d de 7", (int)kre.c.pilotos.size());
                             ImGui::SameLine();
                             if (kre.c.pilotos.size() < 7 && ImGui::SmallButton("+ Anadir")) {
@@ -10375,6 +10392,8 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                                     if (modelo_combo("Kart", p.modelo)) cambio();
                                     if (ImGui::DragFloat("Tamano del kart", &p.tam, 0.02f, 0.0f, 4.0f, p.tam > 0 ? "%.2f m" : "(como el tuyo)")) cambio();
                                     ImGui::TextDisabled("Como conduce");
+                                    if (ImGui::Checkbox("IA propia (tu codigo)", &p.ia_propia)) cambio();
+                                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lo conduce kr_ia_usuario(kid), de Scripts/carreras_usuario/kr_ia_usuario.prg.\nPor defecto hace lo mismo que la IA de serie.");
                                     if (ImGui::SliderFloat("Habilidad", &p.skill, 0.6f, 1.1f, "%.2f")) cambio();
                                     if (ImGui::SliderFloat("Agresividad", &p.agr, 0.0f, 1.0f, "%.2f")) cambio();
                                     if (ImGui::SliderFloat("Variacion de trazada", &p.var, 0.0f, 1.0f, "%.2f")) cambio();

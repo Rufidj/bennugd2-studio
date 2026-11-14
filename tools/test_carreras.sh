@@ -41,6 +41,20 @@ grep -q EVMETA "$T/Scripts/carreras_usuario/kr_eventos.prg" || mal "no se pudo p
 grep -q EVMETA "$T/Scripts/carreras/kr_eventos.prg" && ok "el generador usa el modulo del proyecto" || mal "no usa el modulo propio"
 ( cd "$T" && PATH="$BIN:$PATH" LD_LIBRARY_PATH="$BIN" timeout 240 "$BIN/bgdi" main.dcb bot > "$T/run2.log" 2>&1 )
 grep -q EVMETA "$T/run2.log" "$T/carreras.log" 2>/dev/null && ok "el evento propio se ejecuta" || mal "el evento propio no se ejecuto"
+echo "5. IA propia en un piloto (kr_ia_usuario del proyecto)"
+cat > "$T/Scripts/carreras_usuario/kr_ia_usuario.prg" <<'EOF'
+FUNCTION kr_ia_usuario(int kid)
+BEGIN
+    kr_ia_defecto(kid);
+    IF (kr_k_vel[kid] > 1.0) send_notifications(N_INFO, "carreras", "IAPROPIA " + kid); END
+END
+EOF
+sed -i '0,/^piloto=\(.*\)|\(.*\)$/s//piloto=\1|\2|1/' "$K"
+( cd "$AQUI/bin" && EDITOR_PROYECTO="$T" EDITOR_MODO=6 EDITOR_GENERAR=1 timeout 300 ./editor3d > "$T/gen4.log" 2>&1 )
+grep -q 'kr_p_ia\[1\] = 1' "$T/main.prg" && ok "el piloto 1 sale con IA propia" || mal "no se genera kr_p_ia"
+( cd "$T" && rm -f carreras.log && PATH="$BIN:$PATH" LD_LIBRARY_PATH="$BIN" timeout 240 "$BIN/bgdi" main.dcb bot > "$T/run3.log" 2>&1 )
+grep -q IAPROPIA "$T/run3.log" "$T/carreras.log" 2>/dev/null && ok "la IA propia conduce" || mal "la IA propia no se ejecuto"
+grep -q 'carrera terminada' "$T/carreras.log" && ok "la carrera termina con IA propia" || mal "no termina con IA propia"
 echo
 [ $fallo = 0 ] && echo "TODO BIEN" || echo "HAY FALLOS"
 exit $fallo

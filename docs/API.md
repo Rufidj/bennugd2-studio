@@ -1,6 +1,6 @@
 # Referencia de la API
 
-Generada automaticamente desde los modulos del motor (1150 funciones, 1149 documentadas).
+Generada automaticamente desde los modulos del motor (1150 funciones, 1150 documentadas).
 
 ## Modulo 3d
 ### camera
@@ -370,7 +370,10 @@ Numero de entidades descartadas por no verse en el ultimo frame.
 
 **Devuelve:** numero de entidades
 
-#### `g3d_raycast(float, float, float, float, float, float, pointer, pointer, pointer) -> int`
+#### `g3d_raycast(float ox, float oy, float oz, float dx, float dy, float dz, pointer &salida, pointer, pointer) -> int`
+NO USAR: variante con tres punteros declarada en el motor, pero su implementacion es la misma que la de 7 parametros y lee el ultimo parametro como distancia maxima, no como puntero. Usa G3D_RAYCAST con 7 parametros y lee el impacto con g3d_ray_hit_x/y/z().
+
+**Devuelve:** distancia al impacto, o -1
 
 ### gltf
 #### `g3d_gltf_set_recenter(int activo) -> int`

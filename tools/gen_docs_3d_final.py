@@ -88,3 +88,7 @@ D("G3D_LVL_CELL","Valor de la celda (x, y) de una capa de un plano; la fila 0 es
 D("G3D_LVL_LINKS","Enlaces entre objetos del nivel: texto con una linea por objeto (plano|x|y|nombre|destinos, con destinos separados por comas). Puertas, botones y portales se enlazan por su nombre.",["nivel"],"texto de los enlaces (vacio si no hay)")
 
 json.dump(d, open(R, "w", encoding="utf-8"), ensure_ascii=False, indent=1, sort_keys=True)
+
+d = json.load(open(R, encoding="utf-8"))
+D("G3D_RAYCAST(FFFFFFPPP)","NO USAR: variante con tres punteros declarada en el motor, pero su implementacion es la misma que la de 7 parametros y lee el ultimo parametro como distancia maxima, no como puntero. Usa G3D_RAYCAST con 7 parametros y lee el impacto con g3d_ray_hit_x/y/z().",["ox","oy","oz","dx","dy","dz","&salida"],"distancia al impacto, o -1")
+json.dump(d, open(R, "w", encoding="utf-8"), ensure_ascii=False, indent=1, sort_keys=True)

@@ -3404,6 +3404,19 @@
   ],
   "ret": "distancia al impacto, o -1 si no toca nada"
  },
+ "G3D_RAYCAST(FFFFFFPPP)": {
+  "desc": "NO USAR: variante con tres punteros declarada en el motor, pero su implementacion es la misma que la de 7 parametros y lee el ultimo parametro como distancia maxima, no como puntero. Usa G3D_RAYCAST con 7 parametros y lee el impacto con g3d_ray_hit_x/y/z().",
+  "params": [
+   "ox",
+   "oy",
+   "oz",
+   "dx",
+   "dy",
+   "dz",
+   "&salida"
+  ],
+  "ret": "distancia al impacto, o -1"
+ },
  "G3D_RAY_ENTITY": {
   "desc": "Entidad alcanzada por el ultimo g3d_raycast.",
   "ret": "id de la entidad, o -1 si fallo"

@@ -1488,6 +1488,118 @@
   ],
   "ret": "Z"
  },
+ "G3D_CLOTH_CLEAR_COLLIDER": {
+  "desc": "Quita la esfera de colision de la tela.",
+  "params": [
+   "tela"
+  ]
+ },
+ "G3D_CLOTH_CREATE": {
+  "desc": "Crea una tela (bandera, lona, cortina): una rejilla de nx x ny particulas unidas por distancias, de ancho x alto unidades, con la esquina superior izquierda en (x, y, z). Nace plana en el plano XY y cuelga hacia -Y. Crea su propia entidad en la escena activa, con textura, luz y sombra como cualquier objeto. Es una simulacion de Verlet: llama a la funcion update cada frame para que se mueva. Mas particulas = mas realista pero mas lento.",
+  "ejemplo": "tela = g3d_cloth_create(4.0, 3.0, 20, 15, 0, 6, 0);\ng3d_cloth_pin(tela, 0);          // sujeta el borde de arriba\ng3d_cloth_set_wind(tela, 1, 0, 0.3, 4.0);\n// cada frame:\ng3d_cloth_update(tela, 1.0 / 60);",
+  "params": [
+   "ancho",
+   "alto",
+   "nx",
+   "ny",
+   "x",
+   "y",
+   "z"
+  ],
+  "ret": "id de la tela, o -1"
+ },
+ "G3D_CLOTH_CREATE_ORIENTED": {
+  "desc": "Igual que g3d_cloth_create, pero el ancho de la tela sigue la direccion (dirx, dirz) en el plano XZ en vez de ir siempre por +X. Sirve para colgar un estandarte pegado a una pared que no mira al eje X.",
+  "params": [
+   "ancho",
+   "alto",
+   "nx",
+   "ny",
+   "x",
+   "y",
+   "z",
+   "dirx",
+   "dirz"
+  ],
+  "ret": "id de la tela, o -1"
+ },
+ "G3D_CLOTH_PIN": {
+  "desc": "Elige como se sujeta la tela: 0 = todo el borde superior (cortina, estandarte), 1 = solo las dos esquinas de arriba (lona), 2 = el borde izquierdo (bandera en un mastil).",
+  "params": [
+   "tela",
+   "modo"
+  ]
+ },
+ "G3D_CLOTH_PIN_MOVE": {
+  "desc": "Sujeta y coloca UNA particula de la tela (columna i, fila j de la rejilla, desde 0) en un punto del mundo. Llamala cada frame para colgar la tela de algo que se mueve, por ejemplo un punto de una cuerda (g3d_rope_x/y/z).",
+  "params": [
+   "tela",
+   "i",
+   "j",
+   "x",
+   "y",
+   "z"
+  ]
+ },
+ "G3D_CLOTH_PUSH": {
+  "desc": "Empujon global: aparta TODAS las telas de una esfera. Lo llama lo que deba apartarlas (el jugador, un barril, un coche) una vez por frame, con su posicion y su grosor; si deja de llamarse, la tela se recupera sola. Devuelve cuantas particulas de tela esta apartando, para poder frenar al atravesar una lona pesada.",
+  "ejemplo": "tocando = g3d_cloth_push(px, py + 1, pz, 0.5);\nif (tocando > 0) vel = vel * 0.5; end",
+  "params": [
+   "x",
+   "y",
+   "z",
+   "radio"
+  ],
+  "ret": "particulas apartadas (0 = aire libre)"
+ },
+ "G3D_CLOTH_PUSH_CAPSULE": {
+  "desc": "Como g3d_cloth_push pero con una capsula (del punto a al b, con radio): la forma real de una persona, un barril o un coche, para que lo que sobresale no atraviese la tela.",
+  "params": [
+   "ax",
+   "ay",
+   "az",
+   "bx",
+   "by",
+   "bz",
+   "radio"
+  ],
+  "ret": "particulas apartadas (0 = aire libre)"
+ },
+ "G3D_CLOTH_SET_COLLIDER": {
+  "desc": "Esfera que la tela no puede atravesar (centro y radio). Muevela cada frame para que siga a un personaje o un objeto.",
+  "params": [
+   "tela",
+   "x",
+   "y",
+   "z",
+   "radio"
+  ]
+ },
+ "G3D_CLOTH_SET_TEXTURE": {
+  "desc": "Pone una textura (de g3d_load_texture) a la tela.",
+  "ejemplo": "g3d_cloth_set_texture(tela, g3d_load_texture(\"Assets/bandera.png\"));",
+  "params": [
+   "tela",
+   "textura"
+  ]
+ },
+ "G3D_CLOTH_SET_WIND": {
+  "desc": "Viento sobre la tela: direccion (x, y, z) y fuerza.",
+  "params": [
+   "tela",
+   "x",
+   "y",
+   "z",
+   "fuerza"
+  ]
+ },
+ "G3D_CLOTH_UPDATE": {
+  "desc": "Avanza la simulacion de la tela dt segundos y actualiza su malla. Una vez por frame.",
+  "params": [
+   "tela",
+   "dt"
+  ]
+ },
  "G3D_COLLIDER_ADD_BOX": {
   "desc": "Anade una caja de colision (AABB) en coordenadas del mundo. Los extremos se ordenan solos.",
   "params": [
@@ -1725,6 +1837,125 @@
    "activo"
   ]
  },
+ "G3D_FIRE_ADD": {
+  "desc": "Pone un fuego (antorcha, hoguera) con la base de la llama en (x, y, z). Dibuja una llama procedural brillante (hace bloom) y crea una luz puntual calida que parpadea en la escena activa, ideal para escenas nocturnas.",
+  "ejemplo": "g3d_fire_add(2, 0, 3, 1.2);",
+  "params": [
+   "x",
+   "y",
+   "z",
+   "tamano"
+  ],
+  "ret": "id del fuego, o -1"
+ },
+ "G3D_FIRE_CLEAR": {
+  "desc": "Quita todos los fuegos."
+ },
+ "G3D_FLOW_ADD": {
+  "desc": "Lamina de agua que fluye entre el centro de un borde superior (tx, ty, tz) y el del inferior (bx, by, bz), de ancho dado (a lo largo de X): la textura se desplaza a lo largo. Vertical da una cascada; inclinada, un rio.",
+  "params": [
+   "tx",
+   "ty",
+   "tz",
+   "bx",
+   "by",
+   "bz",
+   "ancho",
+   "velocidad",
+   "repeticion"
+  ],
+  "ret": "id del flujo, o -1"
+ },
+ "G3D_FLOW_ADD_RIVER": {
+  "desc": "Rio en linea recta de (x0, z0) a (x1, z1) cuyos vertices siguen la altura del terreno (mas desplazamiento_y). Reacciona al relieve.",
+  "params": [
+   "terreno",
+   "x0",
+   "z0",
+   "x1",
+   "z1",
+   "ancho",
+   "desplazamiento_y",
+   "velocidad",
+   "repeticion"
+  ],
+  "ret": "id del flujo, o -1"
+ },
+ "G3D_FLOW_CLEAR": {
+  "desc": "Quita todos los flujos."
+ },
+ "G3D_FLOW_SET_CLIP": {
+  "desc": "Recorta los fragmentos de los flujos por debajo de la altura y (por ejemplo el nivel del agua, para que la cascada desaparezca en la superficie y no se vea bajo el agua).",
+  "params": [
+   "y"
+  ]
+ },
+ "G3D_FLOW_SET_COLOR": {
+  "desc": "Color del agua de todos los flujos (r, g, b de 0 a 1).",
+  "params": [
+   "r",
+   "g",
+   "b"
+  ]
+ },
+ "G3D_FLOW_SET_FOAM": {
+  "desc": "Intensidad de espuma de la PROXIMA cascada que crees.",
+  "params": [
+   "espuma"
+  ]
+ },
+ "G3D_FLOW_SET_SPEED": {
+  "desc": "Multiplicador de velocidad de la PROXIMA cascada que crees.",
+  "params": [
+   "multiplicador"
+  ]
+ },
+ "G3D_FLOW_SET_TEXTURE": {
+  "desc": "Textura comun de todos los flujos (de g3d_load_texture).",
+  "params": [
+   "textura"
+  ]
+ },
+ "G3D_FLUID_ADD": {
+  "desc": "Coloca una zona de fluido rectangular: un charco, estanque o sala inundada centrado en (cx, cz), de tam_x por tam_z, con la superficie a la altura nivel y profundidad unidades de agua debajo (profundiza el color). Pueden convivir varias, todas con el mismo estilo (g3d_fluid_style).",
+  "ejemplo": "g3d_fluid_add(10, -5, 8, 6, 2.0, 3.0);",
+  "params": [
+   "cx",
+   "cz",
+   "tam_x",
+   "tam_z",
+   "nivel",
+   "profundidad"
+  ],
+  "ret": "id de la zona, o -1"
+ },
+ "G3D_FLUID_BLOCK_RESET": {
+  "desc": "Reinicia la mascara de celdas que bloquean el relleno de lagos y la cobertura de lagos. Llamala antes de preparar rios y lagos nuevos."
+ },
+ "G3D_FLUID_CLEAR": {
+  "desc": "Quita todas las zonas de fluido."
+ },
+ "G3D_FLUID_SET_TEXTURE": {
+  "desc": "Textura comun de las zonas de fluido (de g3d_load_texture). 0 la quita.",
+  "params": [
+   "textura"
+  ]
+ },
+ "G3D_FLUID_STYLE": {
+  "desc": "Estilo comun de todas las zonas de fluido: olas (amplitud, longitud, velocidad), color profundo (r, g, b), color de orilla (r, g, b) y opacidad (0 transparente a 1 opaco). Sin textura.",
+  "params": [
+   "amplitud",
+   "longitud",
+   "velocidad",
+   "prof_r",
+   "prof_g",
+   "prof_b",
+   "orilla_r",
+   "orilla_g",
+   "orilla_b",
+   "opacidad"
+  ]
+ },
  "G3D_GLTF_SET_CHUNKING": {
   "desc": "Divide los modelos glTF muy grandes (mapas) en celdas espaciales para poder ocultar las que no se ven. -1 = automatico, 0 = desactivado, mayor que 0 = tamano de celda en unidades. Afecta a las cargas posteriores.",
   "params": [
@@ -1740,6 +1971,36 @@
  "G3D_IBL_REFRESH": {
   "desc": "Obliga a recapturar el cielo para el IBL. Llamala cuando el cielo o el sol cambian (ciclo dia/noche); no hace falta cada frame, basta cada pocos segundos.",
   "ejemplo": "g3d_ibl_refresh();"
+ },
+ "G3D_LAKE_ADD": {
+  "desc": "Llena de agua el hueco del terreno que contiene el punto (semilla_x, semilla_z), hasta la altura superficie, con la forma exacta del hueco. Necesita que el terreno este registrado como colisionador (g3d_set_terrain_collider). Con el agua unificada del motor, el lago se une a rios, mar y cascadas por si solo.",
+  "ejemplo": "g3d_lake_add(30, 12, g3d_lake_spill_level(30, 12) - 0.2, 4.0);",
+  "params": [
+   "semilla_x",
+   "semilla_z",
+   "superficie",
+   "profundidad"
+  ],
+  "ret": "-1 si no pudo (sin terreno registrado); si no, el hueco queda lleno"
+ },
+ "G3D_LAKE_ADD_R": {
+  "desc": "Como g3d_lake_add pero el agua solo llena un disco de radio_max alrededor del punto (0 = sin limite). Sirve en hoyos abiertos, junto al borde de una montana, para que no se desborde y llene todo el escenario.",
+  "params": [
+   "semilla_x",
+   "semilla_z",
+   "superficie",
+   "profundidad",
+   "radio_max"
+  ],
+  "ret": "-1 si no pudo (sin terreno registrado); si no, el hueco queda lleno"
+ },
+ "G3D_LAKE_SPILL_LEVEL": {
+  "desc": "Altura a la que se desbordaria el hueco del terreno donde esta el punto. Pon el agua justo por debajo para que no rebose por el borde.",
+  "params": [
+   "semilla_x",
+   "semilla_z"
+  ],
+  "ret": "altura de desborde"
  },
  "G3D_LIGHT_CREATE": {
   "desc": "Crea una luz. Tipo: G3D_LIGHT_DIRECTIONAL (0), G3D_LIGHT_POINT (1) o G3D_LIGHT_SPOT (2). Maximo 32 luces. La variante de 1 parametro crea la luz en blanco.",
@@ -2458,6 +2719,32 @@
   ],
   "ret": "Z"
  },
+ "G3D_RIVER_BEGIN": {
+  "desc": "Empieza a definir un rio: ancho del cauce (si es 0.1 o menos se usa 3) y cuanto sube el agua sobre el lecho. A continuacion da los puntos con g3d_river_point y termina con g3d_river_end.",
+  "ejemplo": "g3d_river_begin(4.0, 0.3);\ng3d_river_point(-80, -60);\ng3d_river_point(-20, -10);\ng3d_river_point(40, 30);\ng3d_river_end();",
+  "params": [
+   "ancho",
+   "elevacion"
+  ]
+ },
+ "G3D_RIVER_BLOCK": {
+  "desc": "Marca el rio que se esta definiendo (begin/point) en la mascara que impide que los lagos lo inunden, SIN construirlo. Llamala antes de crear los lagos."
+ },
+ "G3D_RIVER_END": {
+  "desc": "Construye el rio con los puntos dados, siguiendo el terreno, con flujo animado y cascadas donde el cauce cae un desnivel fuerte.",
+  "ret": "resultado de la construccion"
+ },
+ "G3D_RIVER_FALLS": {
+  "desc": "Anade solo las cascadas del rio definido (begin/point), para el camino COMPLETO sin recortar, despues de haber creado su superficie con otra secuencia."
+ },
+ "G3D_RIVER_POINT": {
+  "desc": "Anade un punto (x, z) al rio que se esta definiendo; la altura sale del terreno. El agua corre en el orden en que das los puntos.",
+  "params": [
+   "x",
+   "z"
+  ],
+  "ret": "1 si lo anadio, 0 si ya no caben mas puntos"
+ },
  "G3D_ROAD_ADD_NODE": {
   "desc": "Anade un nodo a la carretera. Las curvas entre nodos son suaves (tangentes Catmull-Rom). Ancho, peralte, altura y dy se interpolan hasta el nodo siguiente. Con sigue=1 la carretera va pegada al terreno (altura = terreno + dy) y 'y' se ignora; con sigue=0 va a la altura fija 'y'. La superficie es una etiqueta del tramo que SALE de este nodo: 0 asfalto, 1 tierra, 2 hielo, 3 barro, o lo que decida tu juego. Un peralte positivo sube el borde derecho (curvas a la izquierda). Maximo 512 nodos por carretera.",
   "params": [
@@ -2653,6 +2940,111 @@
   "params": [
    "carretera",
    "distancia"
+  ],
+  "ret": "Z"
+ },
+ "G3D_ROPE_CREATE": {
+  "desc": "Crea una cuerda entre dos puntos: una fila de segmentos particulas dibujada como un tubo (se ve desde cualquier angulo) de radio grosor. holgura es cuanto mas larga es que la distancia entre los extremos: 0 = tirante, 0.3 = cuelga bastante. Nace con los dos extremos sujetos. Sirve para cables, lianas, puentes y para colgar telas. Es una simulacion de Verlet: llama a la funcion update cada frame para que se mueva.",
+  "ejemplo": "cuerda = g3d_rope_create(-3, 4, 0,  3, 4, 0,  16, 0.05, 0.25);\n// cada frame:\ng3d_rope_update(cuerda, 1.0 / 60);",
+  "params": [
+   "ax",
+   "ay",
+   "az",
+   "bx",
+   "by",
+   "bz",
+   "segmentos",
+   "grosor",
+   "holgura"
+  ],
+  "ret": "id de la cuerda, o -1"
+ },
+ "G3D_ROPE_DESTROY": {
+  "desc": "Elimina la cuerda.",
+  "params": [
+   "cuerda"
+  ]
+ },
+ "G3D_ROPE_LOAD": {
+  "desc": "Cuelga peso de un punto de la cuerda: se comba ahi. Hay que repetirlo CADA FRAME mientras siga colgado; si se deja de llamar, la cuerda se recupera sola.",
+  "params": [
+   "cuerda",
+   "punto",
+   "peso"
+  ]
+ },
+ "G3D_ROPE_PIN": {
+  "desc": "Fija (1) o suelta (0) un extremo de la cuerda: extremo 0 = el primero, 1 = el ultimo.",
+  "ejemplo": "g3d_rope_pin(cuerda, 1, 0);   // suelta el extremo final",
+  "params": [
+   "cuerda",
+   "extremo",
+   "fijo"
+  ]
+ },
+ "G3D_ROPE_PIN_MOVE": {
+  "desc": "Clava un punto cualquiera de la cuerda (0 = el primero) en una posicion: un gancho que se mueve. Llamala cada frame.",
+  "params": [
+   "cuerda",
+   "punto",
+   "x",
+   "y",
+   "z"
+  ]
+ },
+ "G3D_ROPE_POINTS": {
+  "desc": "Numero de puntos de la cuerda (los validos para los demas comandos van de 0 a ese numero menos 1).",
+  "params": [
+   "cuerda"
+  ],
+  "ret": "numero de puntos"
+ },
+ "G3D_ROPE_SET_TEXTURE": {
+  "desc": "Textura del tubo de la cuerda. OJO: este parametro es el identificador de textura de OpenGL, no el manejador de g3d_load_texture.",
+  "params": [
+   "cuerda",
+   "textura_gl"
+  ]
+ },
+ "G3D_ROPE_SET_WIND": {
+  "desc": "Viento sobre la cuerda: direccion (x, y, z) y fuerza.",
+  "params": [
+   "cuerda",
+   "x",
+   "y",
+   "z",
+   "fuerza"
+  ]
+ },
+ "G3D_ROPE_UPDATE": {
+  "desc": "Avanza la simulacion de la cuerda dt segundos. Una vez por frame.",
+  "params": [
+   "cuerda",
+   "dt"
+  ]
+ },
+ "G3D_ROPE_X": {
+  "desc": "Coordenada X actual del punto n de la cuerda, para colgar cosas de el.",
+  "params": [
+   "cuerda",
+   "punto"
+  ],
+  "ret": "X"
+ },
+ "G3D_ROPE_Y": {
+  "desc": "Coordenada Y actual del punto n de la cuerda.",
+  "params": [
+   "cuerda",
+   "punto"
+  ],
+  "ret": "Y"
+ },
+ "G3D_ROPE_Z": {
+  "desc": "Coordenada Z actual del punto n de la cuerda.",
+  "ejemplo": "mitad = g3d_rope_points(cuerda) / 2;\ng3d_cloth_pin_move(tela, 0, 0, g3d_rope_x(cuerda, mitad), g3d_rope_y(cuerda, mitad), g3d_rope_z(cuerda, mitad));",
+  "params": [
+   "cuerda",
+   "punto"
   ],
   "ret": "Z"
  },
@@ -3162,6 +3554,206 @@
    "maxd"
   ],
   "ret": "distancia al primer impacto, o maxd si no hay ninguno"
+ },
+ "G3D_WATERFALL_ADD": {
+  "desc": "Cascada puesta a mano: del borde (tx, ty, tz) a la base (bx, bz), de ancho dado y con un arco (comba hacia delante, 0 = recta). La base aterriza en el agua si la hay. Usa antes g3d_flow_set_foam / g3d_flow_set_speed para su aspecto.",
+  "params": [
+   "tx",
+   "ty",
+   "tz",
+   "bx",
+   "bz",
+   "ancho",
+   "arco"
+  ],
+  "ret": "id de la cascada, o -1"
+ },
+ "G3D_WATERSIM_ADD_SOURCE": {
+  "desc": "Manantial en (x, z): vierte tasa unidades de profundidad por segundo en esa celda mientras exista. Una tasa negativa es un sumidero. El agua baja sola por las pendientes formando lagos y rios.",
+  "ejemplo": "g3d_watersim_add_source(0, 0, 0.5);\ng3d_watersim_settle(60.0);   // que ya aparezca lleno",
+  "params": [
+   "x",
+   "z",
+   "tasa"
+  ],
+  "ret": "id del manantial, o -1"
+ },
+ "G3D_WATERSIM_CLEAR_SOURCES": {
+  "desc": "Quita todos los manantiales."
+ },
+ "G3D_WATERSIM_SETTLE": {
+  "desc": "Avanza la simulacion segundos de golpe, para que el agua alcance su estado estable (un manantial con su lago y su rio ya llenos) en vez de llenarse poco a poco. Llamala al colocar un manantial o al cargar la escena.",
+  "params": [
+   "segundos"
+  ]
+ },
+ "G3D_WATERSIM_SET_EVAPORATION": {
+  "desc": "Agua que se evapora o se absorbe por segundo en todas partes. Mantiene los rios finos y seca los charcos sueltos. 0 = el agua solo sale por los bordes del mapa. Ponla a 0 si quieres que un rio alimentado por un manantial no se seque.",
+  "params": [
+   "tasa"
+  ]
+ },
+ "G3D_WATERSIM_SET_VISCOSITY": {
+  "desc": "Multiplicador de la velocidad de flujo (1 = normal). Valores bajos dan un liquido lento y espeso, como lava.",
+  "params": [
+   "factor"
+  ]
+ },
+ "G3D_WATER_ADD_RIPPLE_SOURCE": {
+  "desc": "Registra una fuente continua de ondas (desembocadura de un rio, etc.): el motor repite la onda solo, con una cadencia.",
+  "params": [
+   "x",
+   "z",
+   "fuerza"
+  ]
+ },
+ "G3D_WATER_CLEAR_RIPPLE_SOURCES": {
+  "desc": "Quita todas las fuentes continuas de ondas."
+ },
+ "G3D_WATER_CREATE": {
+  "desc": "Crea la superficie de agua global a la altura nivel, de tamano x tamano unidades y subdividida subdiv veces por lado, y la activa. Con olas animadas, reflejo Fresnel, brillo del sol y transparencia. Despues se afina con g3d_water_set_*.",
+  "ejemplo": "g3d_water_create(0.0, 400.0, 64);\ng3d_water_set_color(0.0, 0.1, 0.25,  0.1, 0.5, 0.6);\ng3d_water_set_waves(0.3, 6.0, 1.0);",
+  "params": [
+   "nivel",
+   "tamano",
+   "subdiv"
+  ],
+  "ret": "id del agua"
+ },
+ "G3D_WATER_LEVEL_AT": {
+  "desc": "Altura de la superficie del agua (mar, lago o rio) en un punto.",
+  "ejemplo": "if (g3d_water_level_at(px, pz) > py) nadando = 1; end",
+  "params": [
+   "x",
+   "z"
+  ],
+  "ret": "altura, o un valor muy negativo si no hay agua ahi"
+ },
+ "G3D_WATER_RIPPLE": {
+  "desc": "Lanza una onda circular en (x, z) de la superficie. fuerza 1 = chapoteo normal. Llamala por evento (una brazada) o repetida (un objeto en el agua).",
+  "params": [
+   "x",
+   "z",
+   "fuerza"
+  ]
+ },
+ "G3D_WATER_SET_CAUSTICS": {
+  "desc": "Caustica: la red de luz que el agua proyecta en el fondo. 0 la apaga; 1 es la fuerza por defecto.",
+  "params": [
+   "fuerza"
+  ]
+ },
+ "G3D_WATER_SET_COLOR": {
+  "desc": "Colores del agua (0 a 1): el de aguas profundas y el de orilla / poco fondo; el brillo Fresnel mezcla entre ambos.",
+  "params": [
+   "prof_r",
+   "prof_g",
+   "prof_b",
+   "orilla_r",
+   "orilla_g",
+   "orilla_b"
+  ]
+ },
+ "G3D_WATER_SET_ENABLED": {
+  "desc": "Muestra (1) u oculta (0) el agua.",
+  "params": [
+   "activo"
+  ]
+ },
+ "G3D_WATER_SET_FOAM": {
+  "desc": "Espuma (0 = ninguna) y cuanto distorsiona el agua lo que hay detras (refraccion, 0 = nada).",
+  "params": [
+   "espuma",
+   "refraccion"
+  ]
+ },
+ "G3D_WATER_SET_OCEAN": {
+  "desc": "Oleaje de mar abierto: direccion (x, z) en la que avanzan las olas y amplitud del oleaje que rompe en la orilla (0 = desactivado).",
+  "params": [
+   "dir_x",
+   "dir_z",
+   "amplitud"
+  ]
+ },
+ "G3D_WATER_SET_REFLECTION": {
+  "desc": "Reflejo plano: dibuja la escena en espejo y la mezcla en el agua segun Fresnel. activo 1/0; fuerza escala el efecto.",
+  "params": [
+   "activo",
+   "fuerza"
+  ]
+ },
+ "G3D_WATER_SET_REFLECTION_FLIP": {
+  "desc": "Invierte la coordenada V del reflejo (1) si en tu plataforma sale boca abajo.",
+  "params": [
+   "invertir"
+  ]
+ },
+ "G3D_WATER_SET_SPLASH": {
+  "desc": "Salpicaduras: intensidad (0 = sin ellas, 1 por defecto) y velocidad minima del agua, en unidades por segundo, para que salpique al chocar con un obstaculo (0.8 por defecto; sube si un lago en calma burbujea alrededor de las rocas).",
+  "params": [
+   "cantidad",
+   "umbral"
+  ]
+ },
+ "G3D_WATER_SET_SSR": {
+  "desc": "Reflejos en espacio de pantalla sobre el agua. activo 1/0 y fuerza.",
+  "params": [
+   "activo",
+   "fuerza"
+  ]
+ },
+ "G3D_WATER_SET_SURF": {
+  "desc": "Oleaje que rompe en la playa: cantidad (0 = sin rompientes), longitud de onda medida en unidades de profundidad, velocidad con que llegan y alcance (cuanto sube la espuma por la arena, en unidades del mundo).",
+  "params": [
+   "cantidad",
+   "longitud",
+   "velocidad",
+   "alcance"
+  ]
+ },
+ "G3D_WATER_SET_SURF_WAVE": {
+  "desc": "Forma del oleaje de orilla: altura de la cresta y direccion de la que llega, en grados. En la orilla las olas giran solas para quedar paralelas a la costa.",
+  "params": [
+   "altura",
+   "direccion_grados"
+  ]
+ },
+ "G3D_WATER_SET_TESSELLATION": {
+  "desc": "Activa (1) o desactiva (0) las olas con volumen real por teselado (requiere GL4; por defecto activo si se dispone de el).",
+  "params": [
+   "activo"
+  ]
+ },
+ "G3D_WATER_SET_TEXTURE": {
+  "desc": "Textura de la superficie (de g3d_load_texture, que se repita sin costuras): anade detalle de ondas que se desplazan y tinte. 0 la quita.",
+  "params": [
+   "textura"
+  ]
+ },
+ "G3D_WATER_SET_UNDERWATER_LOOK": {
+  "desc": "Aspecto bajo el agua cuando la camara esta sumergida: visibilidad (hasta donde se ve) y fuerza de los rayos de luz (0 = ninguno).",
+  "params": [
+   "visibilidad",
+   "rayos"
+  ]
+ },
+ "G3D_WATER_SET_WAVES": {
+  "desc": "Olas: amplitud maxima, longitud de onda base y velocidad de la animacion.",
+  "params": [
+   "amplitud",
+   "longitud",
+   "velocidad"
+  ]
+ },
+ "G3D_WATER_SPLASH": {
+  "desc": "Onda en la superficie mas una rafaga de gotas en (x, y, z).",
+  "ejemplo": "g3d_water_splash(px, 0.0, pz, 1.0);",
+  "params": [
+   "x",
+   "y",
+   "z",
+   "fuerza"
+  ]
  },
  "G3D_WORLD_REBASE": {
   "desc": "Origen flotante: desplaza TODO el mundo (-dx, -dy, -dz) para mantener las coordenadas pequenas lejos del origen, donde los decimales pierden precision. Llamala cuando la camara se aleje mucho y ajusta tu propia camara y tus variables con el mismo desplazamiento.",

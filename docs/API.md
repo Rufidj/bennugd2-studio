@@ -1,6 +1,6 @@
 # Referencia de la API
 
-Generada automaticamente desde los modulos del motor (1150 funciones, 764 documentadas).
+Generada automaticamente desde los modulos del motor (1150 funciones, 837 documentadas).
 
 ## Modulo 3d
 ### camera
@@ -95,27 +95,63 @@ Indica si el personaje esta apoyado en el suelo.
 Destruye todos los personajes.
 
 ### cloth
-#### `g3d_cloth_create(float, float, int, int, float, float, float) -> int`
+#### `g3d_cloth_create(float ancho, float alto, int nx, int ny, float x, float y, float z) -> int`
+Crea una tela (bandera, lona, cortina): una rejilla de nx x ny particulas unidas por distancias, de ancho x alto unidades, con la esquina superior izquierda en (x, y, z). Nace plana en el plano XY y cuelga hacia -Y. Crea su propia entidad en la escena activa, con textura, luz y sombra como cualquier objeto. Es una simulacion de Verlet: llama a la funcion update cada frame para que se mueva. Mas particulas = mas realista pero mas lento.
 
-#### `g3d_cloth_create_oriented(float, float, int, int, float, float, float, float, float) -> int`
+**Devuelve:** id de la tela, o -1
 
-#### `g3d_cloth_pin(int, int) -> int`
+```
+tela = g3d_cloth_create(4.0, 3.0, 20, 15, 0, 6, 0);
+g3d_cloth_pin(tela, 0);          // sujeta el borde de arriba
+g3d_cloth_set_wind(tela, 1, 0, 0.3, 4.0);
+// cada frame:
+g3d_cloth_update(tela, 1.0 / 60);
+```
 
-#### `g3d_cloth_set_wind(int, float, float, float, float) -> int`
+#### `g3d_cloth_create_oriented(float ancho, float alto, int nx, int ny, float x, float y, float z, float dirx, float dirz) -> int`
+Igual que g3d_cloth_create, pero el ancho de la tela sigue la direccion (dirx, dirz) en el plano XZ en vez de ir siempre por +X. Sirve para colgar un estandarte pegado a una pared que no mira al eje X.
 
-#### `g3d_cloth_set_collider(int, float, float, float, float) -> int`
+**Devuelve:** id de la tela, o -1
 
-#### `g3d_cloth_clear_collider(int) -> int`
+#### `g3d_cloth_pin(int tela, int modo) -> int`
+Elige como se sujeta la tela: 0 = todo el borde superior (cortina, estandarte), 1 = solo las dos esquinas de arriba (lona), 2 = el borde izquierdo (bandera en un mastil).
 
-#### `g3d_cloth_set_texture(int, int) -> int`
+#### `g3d_cloth_set_wind(int tela, float x, float y, float z, float fuerza) -> int`
+Viento sobre la tela: direccion (x, y, z) y fuerza.
 
-#### `g3d_cloth_update(int, float) -> int`
+#### `g3d_cloth_set_collider(int tela, float x, float y, float z, float radio) -> int`
+Esfera que la tela no puede atravesar (centro y radio). Muevela cada frame para que siga a un personaje o un objeto.
 
-#### `g3d_cloth_push(float, float, float, float) -> int`
+#### `g3d_cloth_clear_collider(int tela) -> int`
+Quita la esfera de colision de la tela.
 
-#### `g3d_cloth_push_capsule(float, float, float, float, float, float, float) -> int`
+#### `g3d_cloth_set_texture(int tela, int textura) -> int`
+Pone una textura (de g3d_load_texture) a la tela.
 
-#### `g3d_cloth_pin_move(int, int, int, float, float, float) -> int`
+```
+g3d_cloth_set_texture(tela, g3d_load_texture("Assets/bandera.png"));
+```
+
+#### `g3d_cloth_update(int tela, float dt) -> int`
+Avanza la simulacion de la tela dt segundos y actualiza su malla. Una vez por frame.
+
+#### `g3d_cloth_push(float x, float y, float z, float radio) -> int`
+Empujon global: aparta TODAS las telas de una esfera. Lo llama lo que deba apartarlas (el jugador, un barril, un coche) una vez por frame, con su posicion y su grosor; si deja de llamarse, la tela se recupera sola. Devuelve cuantas particulas de tela esta apartando, para poder frenar al atravesar una lona pesada.
+
+**Devuelve:** particulas apartadas (0 = aire libre)
+
+```
+tocando = g3d_cloth_push(px, py + 1, pz, 0.5);
+if (tocando > 0) vel = vel * 0.5; end
+```
+
+#### `g3d_cloth_push_capsule(float ax, float ay, float az, float bx, float by, float bz, float radio) -> int`
+Como g3d_cloth_push pero con una capsula (del punto a al b, con radio): la forma real de una persona, un barril o un coche, para que lo que sobresale no atraviese la tela.
+
+**Devuelve:** particulas apartadas (0 = aire libre)
+
+#### `g3d_cloth_pin_move(int tela, int i, int j, float x, float y, float z) -> int`
+Sujeta y coloca UNA particula de la tela (columna i, fila j de la rejilla, desde 0) en un punto del mundo. Llamala cada frame para colgar la tela de algo que se mueve, por ejemplo un punto de una cuerda (g3d_rope_x/y/z).
 
 ### collide
 #### `g3d_collide_move(float x, float y, float z, float radio, float alto, float dx, float dz) -> int`
@@ -249,37 +285,68 @@ pj = g3d_load_fbx("Assets/heroe.fbx");
 ```
 
 ### fire
-#### `g3d_fire_add(float, float, float, float) -> int`
+#### `g3d_fire_add(float x, float y, float z, float tamano) -> int`
+Pone un fuego (antorcha, hoguera) con la base de la llama en (x, y, z). Dibuja una llama procedural brillante (hace bloom) y crea una luz puntual calida que parpadea en la escena activa, ideal para escenas nocturnas.
+
+**Devuelve:** id del fuego, o -1
+
+```
+g3d_fire_add(2, 0, 3, 1.2);
+```
 
 #### `g3d_fire_clear() -> int`
+Quita todos los fuegos.
 
 ### flow
-#### `g3d_flow_add(float, float, float, float, float, float, float, float, float) -> int`
+#### `g3d_flow_add(float tx, float ty, float tz, float bx, float by, float bz, float ancho, float velocidad, float repeticion) -> int`
+Lamina de agua que fluye entre el centro de un borde superior (tx, ty, tz) y el del inferior (bx, by, bz), de ancho dado (a lo largo de X): la textura se desplaza a lo largo. Vertical da una cascada; inclinada, un rio.
 
-#### `g3d_flow_add_river(int, float, float, float, float, float, float, float, float) -> int`
+**Devuelve:** id del flujo, o -1
 
-#### `g3d_flow_set_texture(int) -> int`
+#### `g3d_flow_add_river(int terreno, float x0, float z0, float x1, float z1, float ancho, float desplazamiento_y, float velocidad, float repeticion) -> int`
+Rio en linea recta de (x0, z0) a (x1, z1) cuyos vertices siguen la altura del terreno (mas desplazamiento_y). Reacciona al relieve.
 
-#### `g3d_flow_set_color(float, float, float) -> int`
+**Devuelve:** id del flujo, o -1
 
-#### `g3d_flow_set_foam(float) -> int`
+#### `g3d_flow_set_texture(int textura) -> int`
+Textura comun de todos los flujos (de g3d_load_texture).
 
-#### `g3d_flow_set_speed(float) -> int`
+#### `g3d_flow_set_color(float r, float g, float b) -> int`
+Color del agua de todos los flujos (r, g, b de 0 a 1).
+
+#### `g3d_flow_set_foam(float espuma) -> int`
+Intensidad de espuma de la PROXIMA cascada que crees.
+
+#### `g3d_flow_set_speed(float multiplicador) -> int`
+Multiplicador de velocidad de la PROXIMA cascada que crees.
 
 #### `g3d_flow_clear() -> int`
+Quita todos los flujos.
 
-#### `g3d_flow_set_clip(float) -> int`
+#### `g3d_flow_set_clip(float y) -> int`
+Recorta los fragmentos de los flujos por debajo de la altura y (por ejemplo el nivel del agua, para que la cascada desaparezca en la superficie y no se vea bajo el agua).
 
 ### fluid
-#### `g3d_fluid_add(float, float, float, float, float, float) -> int`
+#### `g3d_fluid_add(float cx, float cz, float tam_x, float tam_z, float nivel, float profundidad) -> int`
+Coloca una zona de fluido rectangular: un charco, estanque o sala inundada centrado en (cx, cz), de tam_x por tam_z, con la superficie a la altura nivel y profundidad unidades de agua debajo (profundiza el color). Pueden convivir varias, todas con el mismo estilo (g3d_fluid_style).
+
+**Devuelve:** id de la zona, o -1
+
+```
+g3d_fluid_add(10, -5, 8, 6, 2.0, 3.0);
+```
 
 #### `g3d_fluid_clear() -> int`
+Quita todas las zonas de fluido.
 
-#### `g3d_fluid_style(float, float, float, float, float, float, float, float, float, float) -> int`
+#### `g3d_fluid_style(float amplitud, float longitud, float velocidad, float prof_r, float prof_g, float prof_b, float orilla_r, float orilla_g, float orilla_b, float opacidad) -> int`
+Estilo comun de todas las zonas de fluido: olas (amplitud, longitud, velocidad), color profundo (r, g, b), color de orilla (r, g, b) y opacidad (0 transparente a 1 opaco). Sin textura.
 
 #### `g3d_fluid_block_reset() -> int`
+Reinicia la mascara de celdas que bloquean el relleno de lagos y la cobertura de lagos. Llamala antes de preparar rios y lagos nuevos.
 
-#### `g3d_fluid_set_texture(int) -> int`
+#### `g3d_fluid_set_texture(int textura) -> int`
+Textura comun de las zonas de fluido (de g3d_load_texture). 0 la quita.
 
 ### general
 #### `g3d_raycast(float ox, float oy, float oz, float dx, float dy, float dz, float maxd) -> float`
@@ -340,11 +407,24 @@ g3d_ibl_refresh();
 #### `g3d_instances_count(int) -> int`
 
 ### lake
-#### `g3d_lake_add(float, float, float, float) -> int`
+#### `g3d_lake_add(float semilla_x, float semilla_z, float superficie, float profundidad) -> int`
+Llena de agua el hueco del terreno que contiene el punto (semilla_x, semilla_z), hasta la altura superficie, con la forma exacta del hueco. Necesita que el terreno este registrado como colisionador (g3d_set_terrain_collider). Con el agua unificada del motor, el lago se une a rios, mar y cascadas por si solo.
 
-#### `g3d_lake_add_r(float, float, float, float, float) -> int`
+**Devuelve:** -1 si no pudo (sin terreno registrado); si no, el hueco queda lleno
 
-#### `g3d_lake_spill_level(float, float) -> float`
+```
+g3d_lake_add(30, 12, g3d_lake_spill_level(30, 12) - 0.2, 4.0);
+```
+
+#### `g3d_lake_add_r(float semilla_x, float semilla_z, float superficie, float profundidad, float radio_max) -> int`
+Como g3d_lake_add pero el agua solo llena un disco de radio_max alrededor del punto (0 = sin limite). Sirve en hoyos abiertos, junto al borde de una montana, para que no se desborde y llene todo el escenario.
+
+**Devuelve:** -1 si no pudo (sin terreno registrado); si no, el hueco queda lleno
+
+#### `g3d_lake_spill_level(float semilla_x, float semilla_z) -> float`
+Altura a la que se desbordaria el hueco del terreno donde esta el punto. Pon el agua justo por debajo para que no rebose por el borde.
+
+**Devuelve:** altura de desborde
 
 ### light
 #### `g3d_light_create(int tipo, float r, float g, float b) -> int`
@@ -948,15 +1028,32 @@ g3d_entity_set_rotation(raiz, g3d_rigidbody_angle_x(c), g3d_rigidbody_angle_y(c)
 ```
 
 ### river
-#### `g3d_river_begin(float, float) -> int`
+#### `g3d_river_begin(float ancho, float elevacion) -> int`
+Empieza a definir un rio: ancho del cauce (si es 0.1 o menos se usa 3) y cuanto sube el agua sobre el lecho. A continuacion da los puntos con g3d_river_point y termina con g3d_river_end.
 
-#### `g3d_river_point(float, float) -> int`
+```
+g3d_river_begin(4.0, 0.3);
+g3d_river_point(-80, -60);
+g3d_river_point(-20, -10);
+g3d_river_point(40, 30);
+g3d_river_end();
+```
+
+#### `g3d_river_point(float x, float z) -> int`
+Anade un punto (x, z) al rio que se esta definiendo; la altura sale del terreno. El agua corre en el orden en que das los puntos.
+
+**Devuelve:** 1 si lo anadio, 0 si ya no caben mas puntos
 
 #### `g3d_river_block() -> int`
+Marca el rio que se esta definiendo (begin/point) en la mascara que impide que los lagos lo inunden, SIN construirlo. Llamala antes de crear los lagos.
 
 #### `g3d_river_falls() -> int`
+Anade solo las cascadas del rio definido (begin/point), para el camino COMPLETO sin recortar, despues de haber creado su superficie con otra secuencia.
 
 #### `g3d_river_end() -> int`
+Construye el rio con los puntos dados, siguiendo el terreno, con flujo animado y cascadas donde el cauce cae un desnivel fuerte.
+
+**Devuelve:** resultado de la construccion
 
 ### road
 #### `g3d_road_create(int cerrada) -> int`
@@ -1120,29 +1217,66 @@ g3d_entity_set_material(g3d_road_entity(carretera, 0), m);
 Cambia el color de serie de una superficie (de 0 a 7), con componentes de 0.0 a 1.0. Afecta tambien a las carreteras ya dibujadas.
 
 ### rope
-#### `g3d_rope_create(float, float, float, float, float, float, int, float, float) -> int`
+#### `g3d_rope_create(float ax, float ay, float az, float bx, float by, float bz, int segmentos, float grosor, float holgura) -> int`
+Crea una cuerda entre dos puntos: una fila de segmentos particulas dibujada como un tubo (se ve desde cualquier angulo) de radio grosor. holgura es cuanto mas larga es que la distancia entre los extremos: 0 = tirante, 0.3 = cuelga bastante. Nace con los dos extremos sujetos. Sirve para cables, lianas, puentes y para colgar telas. Es una simulacion de Verlet: llama a la funcion update cada frame para que se mueva.
 
-#### `g3d_rope_pin(int, int, int) -> int`
+**Devuelve:** id de la cuerda, o -1
 
-#### `g3d_rope_pin_move(int, int, float, float, float) -> int`
+```
+cuerda = g3d_rope_create(-3, 4, 0,  3, 4, 0,  16, 0.05, 0.25);
+// cada frame:
+g3d_rope_update(cuerda, 1.0 / 60);
+```
 
-#### `g3d_rope_set_texture(int, int) -> int`
+#### `g3d_rope_pin(int cuerda, int extremo, int fijo) -> int`
+Fija (1) o suelta (0) un extremo de la cuerda: extremo 0 = el primero, 1 = el ultimo.
 
-#### `g3d_rope_points(int) -> int`
+```
+g3d_rope_pin(cuerda, 1, 0);   // suelta el extremo final
+```
 
-#### `g3d_rope_x(int, int) -> float`
+#### `g3d_rope_pin_move(int cuerda, int punto, float x, float y, float z) -> int`
+Clava un punto cualquiera de la cuerda (0 = el primero) en una posicion: un gancho que se mueve. Llamala cada frame.
 
-#### `g3d_rope_y(int, int) -> float`
+#### `g3d_rope_set_texture(int cuerda, int textura_gl) -> int`
+Textura del tubo de la cuerda. OJO: este parametro es el identificador de textura de OpenGL, no el manejador de g3d_load_texture.
 
-#### `g3d_rope_z(int, int) -> float`
+#### `g3d_rope_points(int cuerda) -> int`
+Numero de puntos de la cuerda (los validos para los demas comandos van de 0 a ese numero menos 1).
 
-#### `g3d_rope_update(int, float) -> int`
+**Devuelve:** numero de puntos
 
-#### `g3d_rope_load(int, int, float) -> int`
+#### `g3d_rope_x(int cuerda, int punto) -> float`
+Coordenada X actual del punto n de la cuerda, para colgar cosas de el.
 
-#### `g3d_rope_set_wind(int, float, float, float, float) -> int`
+**Devuelve:** X
 
-#### `g3d_rope_destroy(int) -> int`
+#### `g3d_rope_y(int cuerda, int punto) -> float`
+Coordenada Y actual del punto n de la cuerda.
+
+**Devuelve:** Y
+
+#### `g3d_rope_z(int cuerda, int punto) -> float`
+Coordenada Z actual del punto n de la cuerda.
+
+**Devuelve:** Z
+
+```
+mitad = g3d_rope_points(cuerda) / 2;
+g3d_cloth_pin_move(tela, 0, 0, g3d_rope_x(cuerda, mitad), g3d_rope_y(cuerda, mitad), g3d_rope_z(cuerda, mitad));
+```
+
+#### `g3d_rope_update(int cuerda, float dt) -> int`
+Avanza la simulacion de la cuerda dt segundos. Una vez por frame.
+
+#### `g3d_rope_load(int cuerda, int punto, float peso) -> int`
+Cuelga peso de un punto de la cuerda: se comba ahi. Hay que repetirlo CADA FRAME mientras siga colgado; si se deja de llamar, la cuerda se recupera sola.
+
+#### `g3d_rope_set_wind(int cuerda, float x, float y, float z, float fuerza) -> int`
+Viento sobre la cuerda: direccion (x, y, z) y fuerza.
+
+#### `g3d_rope_destroy(int cuerda) -> int`
+Elimina la cuerda.
 
 ### scatter
 #### `g3d_scatter_clear() -> int`
@@ -1558,61 +1692,115 @@ Rayo contra TODA la geometria colisionable (la de g3d_collider_add_model y simil
 **Devuelve:** distancia al primer impacto, o maxd si no hay ninguno
 
 ### water
-#### `g3d_water_set_ssr(int, float) -> int`
+#### `g3d_water_set_ssr(int activo, float fuerza) -> int`
+Reflejos en espacio de pantalla sobre el agua. activo 1/0 y fuerza.
 
-#### `g3d_water_set_ocean(float, float, float) -> int`
+#### `g3d_water_set_ocean(float dir_x, float dir_z, float amplitud) -> int`
+Oleaje de mar abierto: direccion (x, z) en la que avanzan las olas y amplitud del oleaje que rompe en la orilla (0 = desactivado).
 
-#### `g3d_water_set_tessellation(int) -> int`
+#### `g3d_water_set_tessellation(int activo) -> int`
+Activa (1) o desactiva (0) las olas con volumen real por teselado (requiere GL4; por defecto activo si se dispone de el).
 
-#### `g3d_water_set_surf(float, float, float, float) -> int`
+#### `g3d_water_set_surf(float cantidad, float longitud, float velocidad, float alcance) -> int`
+Oleaje que rompe en la playa: cantidad (0 = sin rompientes), longitud de onda medida en unidades de profundidad, velocidad con que llegan y alcance (cuanto sube la espuma por la arena, en unidades del mundo).
 
-#### `g3d_water_set_surf_wave(float, float) -> int`
+#### `g3d_water_set_surf_wave(float altura, float direccion_grados) -> int`
+Forma del oleaje de orilla: altura de la cresta y direccion de la que llega, en grados. En la orilla las olas giran solas para quedar paralelas a la costa.
 
-#### `g3d_water_set_foam(float, float) -> int`
+#### `g3d_water_set_foam(float espuma, float refraccion) -> int`
+Espuma (0 = ninguna) y cuanto distorsiona el agua lo que hay detras (refraccion, 0 = nada).
 
-#### `g3d_water_set_splash(float, float) -> int`
+#### `g3d_water_set_splash(float cantidad, float umbral) -> int`
+Salpicaduras: intensidad (0 = sin ellas, 1 por defecto) y velocidad minima del agua, en unidades por segundo, para que salpique al chocar con un obstaculo (0.8 por defecto; sube si un lago en calma burbujea alrededor de las rocas).
 
-#### `g3d_water_set_caustics(float) -> int`
+#### `g3d_water_set_caustics(float fuerza) -> int`
+Caustica: la red de luz que el agua proyecta en el fondo. 0 la apaga; 1 es la fuerza por defecto.
 
-#### `g3d_water_set_underwater_look(float, float) -> int`
+#### `g3d_water_set_underwater_look(float visibilidad, float rayos) -> int`
+Aspecto bajo el agua cuando la camara esta sumergida: visibilidad (hasta donde se ve) y fuerza de los rayos de luz (0 = ninguno).
 
-#### `g3d_water_create(float, float, int) -> int`
+#### `g3d_water_create(float nivel, float tamano, int subdiv) -> int`
+Crea la superficie de agua global a la altura nivel, de tamano x tamano unidades y subdividida subdiv veces por lado, y la activa. Con olas animadas, reflejo Fresnel, brillo del sol y transparencia. Despues se afina con g3d_water_set_*.
 
-#### `g3d_water_level_at(float, float) -> float`
+**Devuelve:** id del agua
 
-#### `g3d_water_set_waves(float, float, float) -> int`
+```
+g3d_water_create(0.0, 400.0, 64);
+g3d_water_set_color(0.0, 0.1, 0.25,  0.1, 0.5, 0.6);
+g3d_water_set_waves(0.3, 6.0, 1.0);
+```
 
-#### `g3d_water_set_color(float, float, float, float, float, float) -> int`
+#### `g3d_water_level_at(float x, float z) -> float`
+Altura de la superficie del agua (mar, lago o rio) en un punto.
 
-#### `g3d_water_set_enabled(int) -> int`
+**Devuelve:** altura, o un valor muy negativo si no hay agua ahi
 
-#### `g3d_water_set_texture(int) -> int`
+```
+if (g3d_water_level_at(px, pz) > py) nadando = 1; end
+```
 
-#### `g3d_water_set_reflection(int, float) -> int`
+#### `g3d_water_set_waves(float amplitud, float longitud, float velocidad) -> int`
+Olas: amplitud maxima, longitud de onda base y velocidad de la animacion.
 
-#### `g3d_water_set_reflection_flip(int) -> int`
+#### `g3d_water_set_color(float prof_r, float prof_g, float prof_b, float orilla_r, float orilla_g, float orilla_b) -> int`
+Colores del agua (0 a 1): el de aguas profundas y el de orilla / poco fondo; el brillo Fresnel mezcla entre ambos.
 
-#### `g3d_water_ripple(float, float, float) -> int`
+#### `g3d_water_set_enabled(int activo) -> int`
+Muestra (1) u oculta (0) el agua.
 
-#### `g3d_water_add_ripple_source(float, float, float) -> int`
+#### `g3d_water_set_texture(int textura) -> int`
+Textura de la superficie (de g3d_load_texture, que se repita sin costuras): anade detalle de ondas que se desplazan y tinte. 0 la quita.
+
+#### `g3d_water_set_reflection(int activo, float fuerza) -> int`
+Reflejo plano: dibuja la escena en espejo y la mezcla en el agua segun Fresnel. activo 1/0; fuerza escala el efecto.
+
+#### `g3d_water_set_reflection_flip(int invertir) -> int`
+Invierte la coordenada V del reflejo (1) si en tu plataforma sale boca abajo.
+
+#### `g3d_water_ripple(float x, float z, float fuerza) -> int`
+Lanza una onda circular en (x, z) de la superficie. fuerza 1 = chapoteo normal. Llamala por evento (una brazada) o repetida (un objeto en el agua).
+
+#### `g3d_water_add_ripple_source(float x, float z, float fuerza) -> int`
+Registra una fuente continua de ondas (desembocadura de un rio, etc.): el motor repite la onda solo, con una cadencia.
 
 #### `g3d_water_clear_ripple_sources() -> int`
+Quita todas las fuentes continuas de ondas.
 
-#### `g3d_water_splash(float, float, float, float) -> int`
+#### `g3d_water_splash(float x, float y, float z, float fuerza) -> int`
+Onda en la superficie mas una rafaga de gotas en (x, y, z).
+
+```
+g3d_water_splash(px, 0.0, pz, 1.0);
+```
 
 ### waterfall
-#### `g3d_waterfall_add(float, float, float, float, float, float, float) -> int`
+#### `g3d_waterfall_add(float tx, float ty, float tz, float bx, float bz, float ancho, float arco) -> int`
+Cascada puesta a mano: del borde (tx, ty, tz) a la base (bx, bz), de ancho dado y con un arco (comba hacia delante, 0 = recta). La base aterriza en el agua si la hay. Usa antes g3d_flow_set_foam / g3d_flow_set_speed para su aspecto.
+
+**Devuelve:** id de la cascada, o -1
 
 ### watersim
 #### `g3d_watersim_clear_sources() -> int`
+Quita todos los manantiales.
 
-#### `g3d_watersim_settle(float) -> int`
+#### `g3d_watersim_settle(float segundos) -> int`
+Avanza la simulacion segundos de golpe, para que el agua alcance su estado estable (un manantial con su lago y su rio ya llenos) en vez de llenarse poco a poco. Llamala al colocar un manantial o al cargar la escena.
 
-#### `g3d_watersim_add_source(float, float, float) -> int`
+#### `g3d_watersim_add_source(float x, float z, float tasa) -> int`
+Manantial en (x, z): vierte tasa unidades de profundidad por segundo en esa celda mientras exista. Una tasa negativa es un sumidero. El agua baja sola por las pendientes formando lagos y rios.
 
-#### `g3d_watersim_set_viscosity(float) -> int`
+**Devuelve:** id del manantial, o -1
 
-#### `g3d_watersim_set_evaporation(float) -> int`
+```
+g3d_watersim_add_source(0, 0, 0.5);
+g3d_watersim_settle(60.0);   // que ya aparezca lleno
+```
+
+#### `g3d_watersim_set_viscosity(float factor) -> int`
+Multiplicador de la velocidad de flujo (1 = normal). Valores bajos dan un liquido lento y espeso, como lava.
+
+#### `g3d_watersim_set_evaporation(float tasa) -> int`
+Agua que se evapora o se absorbe por segundo en todas partes. Mantiene los rios finos y seca los charcos sueltos. 0 = el agua solo sale por los bordes del mapa. Ponla a 0 si quieres que un rio alimentado por un manantial no se seque.
 
 ### world
 #### `g3d_world_rebase(float dx, float dy, float dz) -> int`

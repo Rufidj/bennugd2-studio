@@ -1,6 +1,6 @@
 # Referencia de la API
 
-Generada automaticamente desde los modulos del motor (1150 funciones, 1084 documentadas).
+Generada automaticamente desde los modulos del motor (1150 funciones, 1149 documentadas).
 
 ## Modulo 3d
 ### camera
@@ -5400,131 +5400,328 @@ Muestra de la onda que suena ahora, con signo (-128 a 127), para un osciloscopio
 
 **Devuelve:** valor de -128 a 127
 
-#### `http_fetch(string, string, string, string) -> int`
+#### `http_fetch(string url, string cabeceras, string metodo, string cuerpo) -> int`
+Hace una peticion HTTP y ESPERA a la respuesta (el programa se queda parado mientras tanto: para no bloquear usa HTTP_FETCH_BEGIN). La respuesta se guarda en memoria y se lee con HTTP_LENGTH, HTTP_READ o HTTP_SAVE. Solo admite direcciones http:// y https://. Espera como maximo 40 s en total y lee hasta 8 MB de respuesta. cabeceras son lineas "Nombre: valor" separadas por salto de linea (o cadena vacia); metodo puede ser "GET", "POST"... (vacio = GET); si das cuerpo y no pones metodo, se usa POST.
 
-#### `http_fetch_begin(string, string, string, string) -> int`
+**Devuelve:** codigo HTTP (200 = bien, 400, 401, 403, 404, 500) o 0 si no hubo conexion (HTTP_ERROR dice por que)
+
+```
+if (http_fetch("https://ejemplo.com/datos.json", "", "GET", "") == 200)
+    n = http_length();
+    say("recibidos " + n + " bytes");
+else
+    say("error: " + http_error());
+end
+```
+
+#### `http_fetch_begin(string url, string cabeceras, string metodo, string cuerpo) -> int`
+Igual que HTTP_FETCH pero en segundo plano: vuelve enseguida y el programa sigue funcionando. Luego se llama a HTTP_FETCH_POLL cada frame; HTTP_PROGRESS y HTTP_TOTAL permiten dibujar una barra. Solo una peticion a la vez. Solo admite direcciones http:// y https://. Espera como maximo 40 s en total y lee hasta 8 MB de respuesta.
+
+**Devuelve:** 0 si arranco, -1 si ya habia una en curso, -2 sin memoria, -3 si no pudo crear el hilo
 
 #### `http_fetch_poll() -> int`
+Consulta la peticion lanzada con HTTP_FETCH_BEGIN.
+
+**Devuelve:** -1 mientras sigue, el codigo HTTP cuando termina (el mismo que HTTP_FETCH), -3 si no se habia lanzado ninguna
 
 #### `http_progress() -> int`
+Bytes recibidos hasta ahora de la peticion en curso.
+
+**Devuelve:** bytes
 
 #### `http_total() -> int`
+Tamano total que anuncio el servidor para la respuesta en curso, o 0 si no lo dijo.
 
-#### `video_download_begin(string, string, string) -> int`
+**Devuelve:** bytes
 
-#### `video_download_convert_begin(string, string, string, string) -> int`
+#### `video_download_begin(string origen, string cabeceras, string ruta_salida) -> int`
+Descarga un video (lista HLS, archivo o direccion) a un solo .mp4 SIN recodificar: copia la mejor imagen y el mejor audio tal como estan. Una sola descarga a la vez. Se hace en segundo plano; consulta VIDEO_DOWNLOAD_POLL cada frame.
 
-#### `video_download_audio_begin(string, string, string) -> int`
+**Devuelve:** 0 si arranco, -1 si ya hay una descarga, -2 sin memoria, -3 si no pudo crear el hilo
+
+#### `video_download_convert_begin(string origen, string cabeceras, string ruta_salida, string formato) -> int`
+Descarga solo el audio y lo recodifica al formato pedido: "mp3", "opus", "flac", "wav" o "aac". Una sola descarga a la vez. Se hace en segundo plano; consulta VIDEO_DOWNLOAD_POLL cada frame.
+
+**Devuelve:** 0 si arranco, -1 si ya hay una descarga, -2 sin memoria, -3 si no pudo crear el hilo
+
+#### `video_download_audio_begin(string origen, string cabeceras, string ruta_salida) -> int`
+Descarga solo el audio. La extension del archivo final se ajusta al codec (.m4a, .mp3, .opus...); VIDEO_DOWNLOAD_PATH dice cual salio. Una sola descarga a la vez. Se hace en segundo plano; consulta VIDEO_DOWNLOAD_POLL cada frame.
+
+**Devuelve:** 0 si arranco, -1 si ya hay una descarga, -2 sin memoria, -3 si no pudo crear el hilo
 
 #### `video_download_path() -> string`
+Ruta del archivo que realmente se esta escribiendo (en modo audio la extension depende del codec).
+
+**Devuelve:** ruta
 
 #### `video_download_poll() -> int`
+Estado de la descarga.
+
+**Devuelve:** -1 en curso, 0 terminada bien, -2 cancelada, -10 fallo (VIDEO_DOWNLOAD_ERROR dice por que), -3 si no habia ninguna
 
 #### `video_download_percent() -> int`
+Porcentaje descargado, de 0 a 100.
+
+**Devuelve:** porcentaje
 
 #### `video_download_cancel() -> int`
+Cancela la descarga en curso.
 
 #### `video_download_error() -> string`
+Motivo del fallo de la ultima descarga.
+
+**Devuelve:** texto
 
 #### `http_length() -> int`
+Tamano en bytes de la ultima respuesta recibida.
 
-#### `http_read(pointer, int) -> int`
+**Devuelve:** bytes
 
-#### `http_save(string) -> int`
+#### `http_read(pointer &buffer, int max) -> int`
+Copia hasta max bytes de la ultima respuesta en un buffer propio (por ejemplo un array de bytes).
 
-#### `http_write(string, string) -> int`
+**Devuelve:** bytes copiados
 
-#### `http_trace(string) -> int`
+#### `http_save(string ruta) -> int`
+Guarda la ultima respuesta en un archivo del disco.
+
+**Devuelve:** 1 si se guardo, 0 si no
+
+#### `http_write(string ruta, string texto) -> int`
+Escribe un texto en un archivo del disco (sirve para guardar datos sin pasar por una peticion).
+
+**Devuelve:** 1 si se escribio, 0 si no
+
+#### `http_trace(string texto) -> int`
+Para depurar cuelgues: con el texto "PATH:ruta" fija un archivo de registro; cualquier otro texto se anade como una linea a ese archivo y se fuerza a disco.
+
+**Devuelve:** 1
 
 #### `http_error() -> string`
+Texto con el motivo del ultimo fallo de red (vacio si no hubo).
 
-#### `torrent_cache(string) -> int`
+**Devuelve:** texto
 
-#### `torrent_add(string) -> int`
+#### `torrent_cache(string carpeta) -> int`
+Carpeta donde se guardan los datos descargados (se crea al iniciar el primer torrent). Llamala antes del primer TORRENT_ADD.
 
-#### `torrent_remove(int, int) -> int`
+**Devuelve:** 0
 
-#### `torrent_state(int) -> int`
+#### `torrent_add(string origen) -> int`
+Empieza un torrent a partir de un enlace magnet:, la ruta de un .torrent o la direccion http(s) de uno. Se descarga en segundo plano. Los archivos de un torrent se sirven en una direccion local (127.0.0.1) con soporte de rangos, asi que VIDEO_OPEN los reproduce como cualquier otro stream mientras se descargan (primero las piezas que se van a ver).
 
-#### `torrent_error(int) -> string`
+**Devuelve:** manejador (1 o mas), -1 si no quedan huecos, -2 si el origen no vale
 
-#### `torrent_name(int) -> string`
+```
+t = torrent_add("magnet:?xt=urn:btih:...");
+while (torrent_state(t) == 0) frame; end   // buscando la lista de archivos
+f = torrent_main_file(t);
+```
 
-#### `torrent_files(int) -> int`
+#### `torrent_remove(int torrent, int borrar) -> int`
+Detiene un torrent; con borrar = 1 borra tambien lo descargado del disco.
 
-#### `torrent_file_name(int, int) -> string`
+#### `torrent_state(int torrent) -> int`
+Estado del torrent.
 
-#### `torrent_file_size(int, int) -> int`
+**Devuelve:** 0 = buscando la lista de archivos o leyendo el .torrent, 1 = listo, 2 = fallo (TORRENT_ERROR)
 
-#### `torrent_main(int) -> int`
+#### `torrent_error(int torrent) -> string`
+Motivo del fallo de un torrent.
 
-#### `torrent_select(int, int) -> int`
+**Devuelve:** texto
 
-#### `torrent_url(int, int) -> string`
+#### `torrent_name(int torrent) -> string`
+Nombre del torrent.
 
-#### `torrent_peers(int) -> int`
+**Devuelve:** texto
 
-#### `torrent_rate(int) -> int`
+#### `torrent_files(int torrent) -> int`
+Numero de archivos del torrent.
 
-#### `torrent_percent(int) -> int`
+**Devuelve:** numero de archivos
 
-#### `torrent_buffered(int) -> int`
+#### `torrent_file_name(int torrent, int i) -> string`
+Nombre del archivo i (desde 0) del torrent.
 
-#### `torrent_ready(int) -> int`
+**Devuelve:** texto
 
-#### `torrent_downloaded(int) -> int`
+#### `torrent_file_size(int torrent, int i) -> int`
+Tamano en bytes del archivo i del torrent.
 
-#### `torrent_options(int, int) -> int`
+**Devuelve:** bytes
 
-#### `torrent_ahead(int) -> int`
+#### `torrent_main(int torrent) -> int`
+Indice del archivo de video mas grande del torrent: el que se querra reproducir.
 
-#### `torrent_upload_limit(int) -> int`
+**Devuelve:** indice, o -1 si no hay ninguno
 
-#### `upload_start(string, int, string) -> int`
+#### `torrent_select(int torrent, int i) -> int`
+Elige el archivo que se descarga primero (los demas no se descargan).
+
+**Devuelve:** 0 si va bien, -1 si el torrent aun no esta listo o el indice no existe
+
+#### `torrent_url(int torrent, int i) -> string`
+Direccion local desde la que se sirve el archivo i, lista para VIDEO_OPEN.
+
+**Devuelve:** direccion http://127.0.0.1:...
+
+#### `torrent_peers(int torrent) -> int`
+Numero de pares conectados.
+
+**Devuelve:** pares
+
+#### `torrent_rate(int torrent) -> int`
+Velocidad de descarga en bytes por segundo.
+
+**Devuelve:** bytes por segundo
+
+#### `torrent_percent(int torrent) -> int`
+Porcentaje (0 a 100) del archivo elegido que ya esta en disco.
+
+**Devuelve:** porcentaje
+
+#### `torrent_buffered(int torrent) -> int`
+Bytes ya listos justo despues de la posicion que se esta reproduciendo.
+
+**Devuelve:** bytes
+
+#### `torrent_ready(int torrent) -> int`
+Cuanto de lo que necesita el reproductor para abrir el archivo esta ya descargado (0 a 100). Espera a 100 antes de llamar a VIDEO_OPEN.
+
+**Devuelve:** porcentaje
+
+#### `torrent_downloaded(int torrent) -> int`
+Total de bytes recibidos del torrent.
+
+**Devuelve:** bytes
+
+#### `torrent_options(int trackers_extra, int dht) -> int`
+Ajustes que se fijan ANTES de TORRENT_ADD: trackers publicos extra (1 = anadirlos a todos los torrents, por defecto activo) y DHT (1 = buscar pares tambien en la red DHT sin trackers, solo preguntando; por defecto activo).
+
+#### `torrent_ahead(int megas) -> int`
+Cuantos megas por delante de la posicion de reproduccion se descargan (de 64 a 8192; 192 por defecto). Subelo si necesitas un buffer grande.
+
+#### `torrent_upload_limit(int bytes_por_segundo) -> int`
+Bytes por segundo que el cliente puede enviar a otros. 0 = no subir nada (valor por defecto).
+
+#### `upload_start(string carpeta, int puerto, string pin) -> int`
+Arranca un pequeno servidor web para recibir archivos desde otro equipo: abriendo su direccion en un navegador sale una pagina donde se sueltan los archivos. Se protege con un PIN que hay que escribir; sin el no se escribe nada. Nunca sobrescribe (un nombre repetido pasa a "video (2).mp4"), solo escribe en la carpeta dada y reduce cada nombre a un nombre base seguro.
+
+**Devuelve:** el puerto que quedo escuchando (prueba el dado y los 19 siguientes), o un numero negativo si falla
+
+```
+p = upload_start("Videos", 8080, "1234");
+say("abre http://" + upload_ip() + ":" + p);
+```
 
 #### `upload_stop() -> int`
+Para el servidor de recepcion de archivos.
 
 #### `upload_files() -> int`
+Archivos recibidos desde que arranco el servidor.
+
+**Devuelve:** numero de archivos
 
 #### `upload_bytes() -> int`
+Bytes recibidos desde que arranco el servidor.
+
+**Devuelve:** bytes
 
 #### `upload_percent() -> int`
+Porcentaje (0 a 100) del archivo que se esta recibiendo ahora, o -1 si no hay ninguno.
+
+**Devuelve:** porcentaje
 
 #### `upload_current() -> string`
+Nombre del archivo que se esta recibiendo (vacio si ninguno).
+
+**Devuelve:** texto
 
 #### `upload_url() -> string`
+Direccion (http, https o magnet) que el usuario envio desde la pagina para reproducirla. Al leerla se borra, asi que devuelve vacio hasta que llegue otra.
+
+**Devuelve:** direccion, o vacio
 
 #### `dlna_scan() -> int`
+Busca servidores multimedia UPnP/DLNA de la red local (unos 3 s, en segundo plano). Solo lee lo que ofrece el servidor; nunca escribe en el.
 
-#### `dlna_add(string) -> int`
+**Devuelve:** 0 si arranco, -1 si ya estaba buscando
 
-#### `dlna_find(string) -> int`
+#### `dlna_add(string url) -> int`
+Anade un servidor a mano por la direccion de su descripcion (http://ip:puerto/desc.xml), para redes donde la busqueda automatica no llega. DLNA_SCAN_STATE vale 1 mientras trabaja y 2 al acabar.
 
-#### `webdav_parse(string) -> string`
+**Devuelve:** 0 si arranco, -1 si la direccion no vale o esta ocupado
 
-#### `ftp_list_begin(string) -> int`
+#### `dlna_find(string url) -> int`
+Indice de un servidor ya anadido con DLNA_ADD, a partir de su direccion.
+
+**Devuelve:** indice, o -1 si no esta
+
+#### `webdav_parse(string ruta_carpeta) -> string`
+Interpreta la respuesta de la ultima peticion (un PROPFIND de WebDAV hecho con HTTP_FETCH) como una lista de carpetas y archivos. Se pasa la ruta de la carpeta pedida para no incluirla a ella misma. Devuelve lineas separadas por tabuladores: carpetas "C<TAB>href<TAB>nombre<TAB>0" y archivos "I<TAB>href<TAB>nombre<TAB>bytes<TAB>0<TAB>v".
+
+**Devuelve:** texto con una linea por entrada
+
+#### `ftp_list_begin(string url) -> int`
+Lista en segundo plano el contenido de una carpeta FTP (la direccion debe empezar por ftp://, con usuario y clave en la direccion si hacen falta).
+
+**Devuelve:** 0 si arranco, -1 si ya hay una consulta, -2 si la direccion no vale, -3 si no pudo crear el hilo
 
 #### `ftp_list_poll() -> int`
+Estado de la consulta FTP.
+
+**Devuelve:** -1 en curso, 0 terminada bien, 1 fallo (FTP_LIST_ERROR)
 
 #### `ftp_list_result() -> string`
+Contenido de la carpeta FTP, una linea por entrada separada por tabuladores: carpetas "C<TAB>nombre<TAB>nombre<TAB>0" y archivos "I<TAB>nombre<TAB>nombre<TAB>bytes<TAB>0<TAB>v". Si el servidor no da el tipo, una entrada sin punto se toma por carpeta.
+
+**Devuelve:** texto con una linea por entrada
 
 #### `ftp_list_error() -> string`
+Motivo del ultimo fallo de la consulta FTP.
+
+**Devuelve:** texto
 
 #### `dlna_scan_state() -> int`
+Estado de la busqueda.
+
+**Devuelve:** 0 = nunca iniciada, 1 = en curso, 2 = terminada
 
 #### `dlna_count() -> int`
+Numero de servidores encontrados.
 
-#### `dlna_name(int) -> string`
+**Devuelve:** numero de servidores
 
-#### `dlna_browse(int, string, int, int) -> int`
+#### `dlna_name(int i) -> string`
+Nombre del servidor i (desde 0).
+
+**Devuelve:** texto
+
+#### `dlna_browse(int servidor, string id_carpeta, int desde, int cuantos) -> int`
+Pide al servidor i el contenido de una carpeta (el id "0" es la raiz): cuantos elementos y desde cual. Se hace en segundo plano; mira DLNA_BROWSE_STATE.
+
+**Devuelve:** 0 si arranco, -1 si esta ocupado o el servidor no vale
 
 #### `dlna_browse_state() -> int`
+Estado de la consulta de carpeta.
+
+**Devuelve:** 0 = nunca iniciada, 1 = en curso, 2 = terminada, 3 = fallo (DLNA_ERROR)
 
 #### `dlna_result() -> string`
+Contenido de la carpeta, una linea por elemento separado por tabuladores: carpetas "C<TAB>id<TAB>titulo<TAB>hijos" y archivos "I<TAB>url<TAB>titulo<TAB>bytes<TAB>segundos<TAB>tipo" (tipo v = video, a = audio, i = imagen). La url de un archivo se reproduce con VIDEO_OPEN.
+
+**Devuelve:** texto con una linea por elemento
 
 #### `dlna_total() -> int`
+Cuantos elementos tiene en total la carpeta consultada (para paginar).
+
+**Devuelve:** numero de elementos
 
 #### `dlna_error() -> string`
+Motivo del ultimo fallo de DLNA.
+
+**Devuelve:** texto
 
 #### `video_speed(int video, int porcentaje) -> int`
 Velocidad de reproduccion en porcentaje, de 25 a 300 (100 = normal). Mantiene la posicion; el sonido se reinicia desde ella.
@@ -5556,6 +5753,12 @@ Retrasa los subtitulos tantos milisegundos (negativo: los adelanta).
 Muestra la imagen tantos milisegundos mas tarde (negativo: mas pronto), para corregir un sonido desincronizado.
 
 #### `upload_ip() -> string`
+Direccion de este equipo en la red local (por ejemplo "192.168.1.50"), vacia si no se encuentra.
+
+**Devuelve:** texto
 
 #### `upload_error() -> string`
+Motivo del ultimo fallo del servidor de recepcion.
+
+**Devuelve:** texto
 

@@ -528,6 +528,65 @@
   ],
   "ret": "distancia"
  },
+ "DLNA_ADD": {
+  "desc": "Anade un servidor a mano por la direccion de su descripcion (http://ip:puerto/desc.xml), para redes donde la busqueda automatica no llega. DLNA_SCAN_STATE vale 1 mientras trabaja y 2 al acabar.",
+  "params": [
+   "url"
+  ],
+  "ret": "0 si arranco, -1 si la direccion no vale o esta ocupado"
+ },
+ "DLNA_BROWSE": {
+  "desc": "Pide al servidor i el contenido de una carpeta (el id \"0\" es la raiz): cuantos elementos y desde cual. Se hace en segundo plano; mira DLNA_BROWSE_STATE.",
+  "params": [
+   "servidor",
+   "id_carpeta",
+   "desde",
+   "cuantos"
+  ],
+  "ret": "0 si arranco, -1 si esta ocupado o el servidor no vale"
+ },
+ "DLNA_BROWSE_STATE": {
+  "desc": "Estado de la consulta de carpeta.",
+  "ret": "0 = nunca iniciada, 1 = en curso, 2 = terminada, 3 = fallo (DLNA_ERROR)"
+ },
+ "DLNA_COUNT": {
+  "desc": "Numero de servidores encontrados.",
+  "ret": "numero de servidores"
+ },
+ "DLNA_ERROR": {
+  "desc": "Motivo del ultimo fallo de DLNA.",
+  "ret": "texto"
+ },
+ "DLNA_FIND": {
+  "desc": "Indice de un servidor ya anadido con DLNA_ADD, a partir de su direccion.",
+  "params": [
+   "url"
+  ],
+  "ret": "indice, o -1 si no esta"
+ },
+ "DLNA_NAME": {
+  "desc": "Nombre del servidor i (desde 0).",
+  "params": [
+   "i"
+  ],
+  "ret": "texto"
+ },
+ "DLNA_RESULT": {
+  "desc": "Contenido de la carpeta, una linea por elemento separado por tabuladores: carpetas \"C<TAB>id<TAB>titulo<TAB>hijos\" y archivos \"I<TAB>url<TAB>titulo<TAB>bytes<TAB>segundos<TAB>tipo\" (tipo v = video, a = audio, i = imagen). La url de un archivo se reproduce con VIDEO_OPEN.",
+  "ret": "texto con una linea por elemento"
+ },
+ "DLNA_SCAN": {
+  "desc": "Busca servidores multimedia UPnP/DLNA de la red local (unos 3 s, en segundo plano). Solo lee lo que ofrece el servidor; nunca escribe en el.",
+  "ret": "0 si arranco, -1 si ya estaba buscando"
+ },
+ "DLNA_SCAN_STATE": {
+  "desc": "Estado de la busqueda.",
+  "ret": "0 = nunca iniciada, 1 = en curso, 2 = terminada"
+ },
+ "DLNA_TOTAL": {
+  "desc": "Cuantos elementos tiene en total la carpeta consultada (para paginar).",
+  "ret": "numero de elementos"
+ },
  "DRAWING_BLENDMODE(I)": {
   "desc": "Modo de mezcla de los siguientes DRAW_* (normal, aditivo, etc., con las constantes B_*).",
   "params": [
@@ -1722,6 +1781,25 @@
    "numero"
   ],
   "ret": "la cadena"
+ },
+ "FTP_LIST_BEGIN": {
+  "desc": "Lista en segundo plano el contenido de una carpeta FTP (la direccion debe empezar por ftp://, con usuario y clave en la direccion si hacen falta).",
+  "params": [
+   "url"
+  ],
+  "ret": "0 si arranco, -1 si ya hay una consulta, -2 si la direccion no vale, -3 si no pudo crear el hilo"
+ },
+ "FTP_LIST_ERROR": {
+  "desc": "Motivo del ultimo fallo de la consulta FTP.",
+  "ret": "texto"
+ },
+ "FTP_LIST_POLL": {
+  "desc": "Estado de la consulta FTP.",
+  "ret": "-1 en curso, 0 terminada bien, 1 fallo (FTP_LIST_ERROR)"
+ },
+ "FTP_LIST_RESULT": {
+  "desc": "Contenido de la carpeta FTP, una linea por entrada separada por tabuladores: carpetas \"C<TAB>nombre<TAB>nombre<TAB>0\" y archivos \"I<TAB>nombre<TAB>nombre<TAB>bytes<TAB>0<TAB>v\". Si el servidor no da el tipo, una entrada sin punto se toma por carpeta.",
+  "ret": "texto con una linea por entrada"
  },
  "FWRITE(IV++)": {
   "desc": "Escribe en el fichero una variable (o estructura).",
@@ -5196,6 +5274,77 @@
   ],
   "ret": "1 si existe"
  },
+ "HTTP_ERROR": {
+  "desc": "Texto con el motivo del ultimo fallo de red (vacio si no hubo).",
+  "ret": "texto"
+ },
+ "HTTP_FETCH": {
+  "desc": "Hace una peticion HTTP y ESPERA a la respuesta (el programa se queda parado mientras tanto: para no bloquear usa HTTP_FETCH_BEGIN). La respuesta se guarda en memoria y se lee con HTTP_LENGTH, HTTP_READ o HTTP_SAVE. Solo admite direcciones http:// y https://. Espera como maximo 40 s en total y lee hasta 8 MB de respuesta. cabeceras son lineas \"Nombre: valor\" separadas por salto de linea (o cadena vacia); metodo puede ser \"GET\", \"POST\"... (vacio = GET); si das cuerpo y no pones metodo, se usa POST.",
+  "ejemplo": "if (http_fetch(\"https://ejemplo.com/datos.json\", \"\", \"GET\", \"\") == 200)\n    n = http_length();\n    say(\"recibidos \" + n + \" bytes\");\nelse\n    say(\"error: \" + http_error());\nend",
+  "params": [
+   "url",
+   "cabeceras",
+   "metodo",
+   "cuerpo"
+  ],
+  "ret": "codigo HTTP (200 = bien, 400, 401, 403, 404, 500) o 0 si no hubo conexion (HTTP_ERROR dice por que)"
+ },
+ "HTTP_FETCH_BEGIN": {
+  "desc": "Igual que HTTP_FETCH pero en segundo plano: vuelve enseguida y el programa sigue funcionando. Luego se llama a HTTP_FETCH_POLL cada frame; HTTP_PROGRESS y HTTP_TOTAL permiten dibujar una barra. Solo una peticion a la vez. Solo admite direcciones http:// y https://. Espera como maximo 40 s en total y lee hasta 8 MB de respuesta.",
+  "params": [
+   "url",
+   "cabeceras",
+   "metodo",
+   "cuerpo"
+  ],
+  "ret": "0 si arranco, -1 si ya habia una en curso, -2 sin memoria, -3 si no pudo crear el hilo"
+ },
+ "HTTP_FETCH_POLL": {
+  "desc": "Consulta la peticion lanzada con HTTP_FETCH_BEGIN.",
+  "ret": "-1 mientras sigue, el codigo HTTP cuando termina (el mismo que HTTP_FETCH), -3 si no se habia lanzado ninguna"
+ },
+ "HTTP_LENGTH": {
+  "desc": "Tamano en bytes de la ultima respuesta recibida.",
+  "ret": "bytes"
+ },
+ "HTTP_PROGRESS": {
+  "desc": "Bytes recibidos hasta ahora de la peticion en curso.",
+  "ret": "bytes"
+ },
+ "HTTP_READ": {
+  "desc": "Copia hasta max bytes de la ultima respuesta en un buffer propio (por ejemplo un array de bytes).",
+  "params": [
+   "&buffer",
+   "max"
+  ],
+  "ret": "bytes copiados"
+ },
+ "HTTP_SAVE": {
+  "desc": "Guarda la ultima respuesta en un archivo del disco.",
+  "params": [
+   "ruta"
+  ],
+  "ret": "1 si se guardo, 0 si no"
+ },
+ "HTTP_TOTAL": {
+  "desc": "Tamano total que anuncio el servidor para la respuesta en curso, o 0 si no lo dijo.",
+  "ret": "bytes"
+ },
+ "HTTP_TRACE": {
+  "desc": "Para depurar cuelgues: con el texto \"PATH:ruta\" fija un archivo de registro; cualquier otro texto se anade como una linea a ese archivo y se fuerza a disco.",
+  "params": [
+   "texto"
+  ],
+  "ret": "1"
+ },
+ "HTTP_WRITE": {
+  "desc": "Escribe un texto en un archivo del disco (sirve para guardar datos sin pasar por una peticion).",
+  "params": [
+   "ruta",
+   "texto"
+  ],
+  "ret": "1 si se escribio, 0 si no"
+ },
  "IAP_CONSUME": {
   "desc": "Consume un producto ya comprado (para poder comprarlo otra vez, como las monedas). Solo funciona en Android (Google Play Billing); en el resto de sistemas no hace nada.",
   "params": [
@@ -7979,6 +8128,156 @@
   ],
   "ret": "el codigo en minuscula"
  },
+ "TORRENT_ADD": {
+  "desc": "Empieza un torrent a partir de un enlace magnet:, la ruta de un .torrent o la direccion http(s) de uno. Se descarga en segundo plano. Los archivos de un torrent se sirven en una direccion local (127.0.0.1) con soporte de rangos, asi que VIDEO_OPEN los reproduce como cualquier otro stream mientras se descargan (primero las piezas que se van a ver).",
+  "ejemplo": "t = torrent_add(\"magnet:?xt=urn:btih:...\");\nwhile (torrent_state(t) == 0) frame; end   // buscando la lista de archivos\nf = torrent_main_file(t);",
+  "params": [
+   "origen"
+  ],
+  "ret": "manejador (1 o mas), -1 si no quedan huecos, -2 si el origen no vale"
+ },
+ "TORRENT_AHEAD": {
+  "desc": "Cuantos megas por delante de la posicion de reproduccion se descargan (de 64 a 8192; 192 por defecto). Subelo si necesitas un buffer grande.",
+  "params": [
+   "megas"
+  ]
+ },
+ "TORRENT_BUFFERED": {
+  "desc": "Bytes ya listos justo despues de la posicion que se esta reproduciendo.",
+  "params": [
+   "torrent"
+  ],
+  "ret": "bytes"
+ },
+ "TORRENT_CACHE": {
+  "desc": "Carpeta donde se guardan los datos descargados (se crea al iniciar el primer torrent). Llamala antes del primer TORRENT_ADD.",
+  "params": [
+   "carpeta"
+  ],
+  "ret": "0"
+ },
+ "TORRENT_DOWNLOADED": {
+  "desc": "Total de bytes recibidos del torrent.",
+  "params": [
+   "torrent"
+  ],
+  "ret": "bytes"
+ },
+ "TORRENT_ERROR": {
+  "desc": "Motivo del fallo de un torrent.",
+  "params": [
+   "torrent"
+  ],
+  "ret": "texto"
+ },
+ "TORRENT_FILES": {
+  "desc": "Numero de archivos del torrent.",
+  "params": [
+   "torrent"
+  ],
+  "ret": "numero de archivos"
+ },
+ "TORRENT_FILE_NAME": {
+  "desc": "Nombre del archivo i (desde 0) del torrent.",
+  "params": [
+   "torrent",
+   "i"
+  ],
+  "ret": "texto"
+ },
+ "TORRENT_FILE_SIZE": {
+  "desc": "Tamano en bytes del archivo i del torrent.",
+  "params": [
+   "torrent",
+   "i"
+  ],
+  "ret": "bytes"
+ },
+ "TORRENT_MAIN": {
+  "desc": "Indice del archivo de video mas grande del torrent: el que se querra reproducir.",
+  "params": [
+   "torrent"
+  ],
+  "ret": "indice, o -1 si no hay ninguno"
+ },
+ "TORRENT_NAME": {
+  "desc": "Nombre del torrent.",
+  "params": [
+   "torrent"
+  ],
+  "ret": "texto"
+ },
+ "TORRENT_OPTIONS": {
+  "desc": "Ajustes que se fijan ANTES de TORRENT_ADD: trackers publicos extra (1 = anadirlos a todos los torrents, por defecto activo) y DHT (1 = buscar pares tambien en la red DHT sin trackers, solo preguntando; por defecto activo).",
+  "params": [
+   "trackers_extra",
+   "dht"
+  ]
+ },
+ "TORRENT_PEERS": {
+  "desc": "Numero de pares conectados.",
+  "params": [
+   "torrent"
+  ],
+  "ret": "pares"
+ },
+ "TORRENT_PERCENT": {
+  "desc": "Porcentaje (0 a 100) del archivo elegido que ya esta en disco.",
+  "params": [
+   "torrent"
+  ],
+  "ret": "porcentaje"
+ },
+ "TORRENT_RATE": {
+  "desc": "Velocidad de descarga en bytes por segundo.",
+  "params": [
+   "torrent"
+  ],
+  "ret": "bytes por segundo"
+ },
+ "TORRENT_READY": {
+  "desc": "Cuanto de lo que necesita el reproductor para abrir el archivo esta ya descargado (0 a 100). Espera a 100 antes de llamar a VIDEO_OPEN.",
+  "params": [
+   "torrent"
+  ],
+  "ret": "porcentaje"
+ },
+ "TORRENT_REMOVE": {
+  "desc": "Detiene un torrent; con borrar = 1 borra tambien lo descargado del disco.",
+  "params": [
+   "torrent",
+   "borrar"
+  ]
+ },
+ "TORRENT_SELECT": {
+  "desc": "Elige el archivo que se descarga primero (los demas no se descargan).",
+  "params": [
+   "torrent",
+   "i"
+  ],
+  "ret": "0 si va bien, -1 si el torrent aun no esta listo o el indice no existe"
+ },
+ "TORRENT_STATE": {
+  "desc": "Estado del torrent.",
+  "params": [
+   "torrent"
+  ],
+  "ret": "0 = buscando la lista de archivos o leyendo el .torrent, 1 = listo, 2 = fallo (TORRENT_ERROR)"
+ },
+ "TORRENT_UPLOAD_LIMIT": {
+  "desc": "Bytes por segundo que el cliente puede enviar a otros. 0 = no subir nada (valor por defecto).",
+  "params": [
+   "bytes_por_segundo"
+  ]
+ },
+ "TORRENT_URL": {
+  "desc": "Direccion local desde la que se sirve el archivo i, lista para VIDEO_OPEN.",
+  "params": [
+   "torrent",
+   "i"
+  ],
+  "ret": "direccion http://127.0.0.1:..."
+ },
  "TOUPPER": {
   "desc": "Pasa un caracter (su codigo) a mayuscula.",
   "params": [
@@ -8060,6 +8359,47 @@
   ],
   "ret": "la cadena"
  },
+ "UPLOAD_BYTES": {
+  "desc": "Bytes recibidos desde que arranco el servidor.",
+  "ret": "bytes"
+ },
+ "UPLOAD_CURRENT": {
+  "desc": "Nombre del archivo que se esta recibiendo (vacio si ninguno).",
+  "ret": "texto"
+ },
+ "UPLOAD_ERROR": {
+  "desc": "Motivo del ultimo fallo del servidor de recepcion.",
+  "ret": "texto"
+ },
+ "UPLOAD_FILES": {
+  "desc": "Archivos recibidos desde que arranco el servidor.",
+  "ret": "numero de archivos"
+ },
+ "UPLOAD_IP": {
+  "desc": "Direccion de este equipo en la red local (por ejemplo \"192.168.1.50\"), vacia si no se encuentra.",
+  "ret": "texto"
+ },
+ "UPLOAD_PERCENT": {
+  "desc": "Porcentaje (0 a 100) del archivo que se esta recibiendo ahora, o -1 si no hay ninguno.",
+  "ret": "porcentaje"
+ },
+ "UPLOAD_START": {
+  "desc": "Arranca un pequeno servidor web para recibir archivos desde otro equipo: abriendo su direccion en un navegador sale una pagina donde se sueltan los archivos. Se protege con un PIN que hay que escribir; sin el no se escribe nada. Nunca sobrescribe (un nombre repetido pasa a \"video (2).mp4\"), solo escribe en la carpeta dada y reduce cada nombre a un nombre base seguro.",
+  "ejemplo": "p = upload_start(\"Videos\", 8080, \"1234\");\nsay(\"abre http://\" + upload_ip() + \":\" + p);",
+  "params": [
+   "carpeta",
+   "puerto",
+   "pin"
+  ],
+  "ret": "el puerto que quedo escuchando (prueba el dado y los 19 siguientes), o un numero negativo si falla"
+ },
+ "UPLOAD_STOP": {
+  "desc": "Para el servidor de recepcion de archivos."
+ },
+ "UPLOAD_URL": {
+  "desc": "Direccion (http, https o magnet) que el usuario envio desde la pagina para reproducirla. Al leerla se borra, asi que devuelve vacio hasta que llegue otra.",
+  "ret": "direccion, o vacio"
+ },
  "UPTIME": {
   "desc": "Alias de GET_TIMER: milisegundos desde que arranco el programa.",
   "ret": "milisegundos"
@@ -8121,6 +8461,53 @@
   "params": [
    "video"
   ]
+ },
+ "VIDEO_DOWNLOAD_AUDIO_BEGIN": {
+  "desc": "Descarga solo el audio. La extension del archivo final se ajusta al codec (.m4a, .mp3, .opus...); VIDEO_DOWNLOAD_PATH dice cual salio. Una sola descarga a la vez. Se hace en segundo plano; consulta VIDEO_DOWNLOAD_POLL cada frame.",
+  "params": [
+   "origen",
+   "cabeceras",
+   "ruta_salida"
+  ],
+  "ret": "0 si arranco, -1 si ya hay una descarga, -2 sin memoria, -3 si no pudo crear el hilo"
+ },
+ "VIDEO_DOWNLOAD_BEGIN": {
+  "desc": "Descarga un video (lista HLS, archivo o direccion) a un solo .mp4 SIN recodificar: copia la mejor imagen y el mejor audio tal como estan. Una sola descarga a la vez. Se hace en segundo plano; consulta VIDEO_DOWNLOAD_POLL cada frame.",
+  "params": [
+   "origen",
+   "cabeceras",
+   "ruta_salida"
+  ],
+  "ret": "0 si arranco, -1 si ya hay una descarga, -2 sin memoria, -3 si no pudo crear el hilo"
+ },
+ "VIDEO_DOWNLOAD_CANCEL": {
+  "desc": "Cancela la descarga en curso."
+ },
+ "VIDEO_DOWNLOAD_CONVERT_BEGIN": {
+  "desc": "Descarga solo el audio y lo recodifica al formato pedido: \"mp3\", \"opus\", \"flac\", \"wav\" o \"aac\". Una sola descarga a la vez. Se hace en segundo plano; consulta VIDEO_DOWNLOAD_POLL cada frame.",
+  "params": [
+   "origen",
+   "cabeceras",
+   "ruta_salida",
+   "formato"
+  ],
+  "ret": "0 si arranco, -1 si ya hay una descarga, -2 sin memoria, -3 si no pudo crear el hilo"
+ },
+ "VIDEO_DOWNLOAD_ERROR": {
+  "desc": "Motivo del fallo de la ultima descarga.",
+  "ret": "texto"
+ },
+ "VIDEO_DOWNLOAD_PATH": {
+  "desc": "Ruta del archivo que realmente se esta escribiendo (en modo audio la extension depende del codec).",
+  "ret": "ruta"
+ },
+ "VIDEO_DOWNLOAD_PERCENT": {
+  "desc": "Porcentaje descargado, de 0 a 100.",
+  "ret": "porcentaje"
+ },
+ "VIDEO_DOWNLOAD_POLL": {
+  "desc": "Estado de la descarga.",
+  "ret": "-1 en curso, 0 terminada bien, -2 cancelada, -10 fallo (VIDEO_DOWNLOAD_ERROR dice por que), -3 si no habia ninguna"
  },
  "VIDEO_DURATION": {
   "desc": "Duracion del video en milisegundos.",
@@ -8344,6 +8731,13 @@
    "video"
   ],
   "ret": "ancho"
+ },
+ "WEBDAV_PARSE": {
+  "desc": "Interpreta la respuesta de la ultima peticion (un PROPFIND de WebDAV hecho con HTTP_FETCH) como una lista de carpetas y archivos. Se pasa la ruta de la carpeta pedida para no incluirla a ella misma. Devuelve lineas separadas por tabuladores: carpetas \"C<TAB>href<TAB>nombre<TAB>0\" y archivos \"I<TAB>href<TAB>nombre<TAB>bytes<TAB>0<TAB>v\".",
+  "params": [
+   "ruta_carpeta"
+  ],
+  "ret": "texto con una linea por entrada"
  },
  "WINDOW_GET_POS": {
   "desc": "Lee la posicion de la ventana en dos variables que se pasan por puntero.",

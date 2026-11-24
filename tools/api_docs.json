@@ -1,4 +1,678 @@
 {
+ "ABS": {
+  "desc": "Valor absoluto.",
+  "params": [
+   "valor"
+  ],
+  "ret": "valor sin signo"
+ },
+ "ACOS": {
+  "desc": "Arcocoseno: devuelve el angulo en milesimas de grado.",
+  "params": [
+   "valor"
+  ],
+  "ret": "angulo"
+ },
+ "ADVANCE": {
+  "desc": "Mueve el proceso 'distancia' en la direccion de su variable angle. Los angulos de BennuGD van en MILESIMAS DE GRADO (90000 = 90 grados) y la Y de pantalla crece hacia abajo, asi que con angle = 90000 el proceso sube.",
+  "ejemplo": "angle = 45000;\nadvance(4);   // avanza 4 pixeles en diagonal hacia arriba a la derecha",
+  "params": [
+   "distancia"
+  ]
+ },
+ "ASC": {
+  "desc": "Codigo del primer caracter de una cadena.",
+  "params": [
+   "texto"
+  ],
+  "ret": "el codigo"
+ },
+ "ASIN": {
+  "desc": "Arcoseno: devuelve el angulo en milesimas de grado.",
+  "params": [
+   "valor"
+  ],
+  "ret": "angulo"
+ },
+ "ATAN": {
+  "desc": "Arcotangente: devuelve el angulo en milesimas de grado.",
+  "params": [
+   "valor"
+  ],
+  "ret": "angulo"
+ },
+ "ATAN2": {
+  "desc": "Arcotangente de y entre x, resolviendo el cuadrante: devuelve el angulo en milesimas de grado.",
+  "params": [
+   "y",
+   "x"
+  ],
+  "ret": "angulo"
+ },
+ "ATOF": {
+  "desc": "Convierte una cadena en decimal.",
+  "params": [
+   "texto"
+  ],
+  "ret": "el decimal"
+ },
+ "ATOI": {
+  "desc": "Convierte una cadena en entero.",
+  "params": [
+   "texto"
+  ],
+  "ret": "el entero"
+ },
+ "BETWEEN(DDD)": {
+  "desc": "Lo mismo con decimales.",
+  "params": [
+   "valor",
+   "limite_a",
+   "limite_b"
+  ],
+  "ret": "1 si esta dentro"
+ },
+ "BETWEEN(III)": {
+  "desc": "Indica si un valor esta entre dos limites, ambos incluidos (el orden de los limites da igual).",
+  "params": [
+   "valor",
+   "limite_a",
+   "limite_b"
+  ],
+  "ret": "1 si esta dentro"
+ },
+ "CEIL": {
+  "desc": "Redondea hacia arriba.",
+  "params": [
+   "valor"
+  ],
+  "ret": "el redondeo"
+ },
+ "CHANNEL_SET_DISTANCE": {
+  "desc": "Distancia de un canal, de 0 (cerca, a todo volumen) a 255 (lejos, casi inaudible). Solo funciona mientras el canal esta sonando: si no suena nada en ese canal devuelve -1 y no hace nada.",
+  "params": [
+   "canal",
+   "distancia"
+  ],
+  "ret": "0 si va bien, -1 si no"
+ },
+ "CHANNEL_SET_EXPIRE(I)": {
+  "desc": "Hace que todos los canales se paren solos pasados 'ms' milisegundos.",
+  "params": [
+   "ms"
+  ]
+ },
+ "CHANNEL_SET_EXPIRE(II)": {
+  "desc": "Hace que un canal se pare solo pasados 'ms' milisegundos (-1 = sin limite).",
+  "params": [
+   "canal",
+   "ms"
+  ]
+ },
+ "CHANNEL_SET_PANNING": {
+  "desc": "Reparto izquierda/derecha de un canal: volumen de cada lado, de 0 a 255 (255 y 255 = centrado, 255 y 0 = solo izquierda). Solo funciona mientras el canal esta sonando: si no suena nada en ese canal devuelve -1 y no hace nada.",
+  "params": [
+   "canal",
+   "izquierda",
+   "derecha"
+  ],
+  "ret": "0 si va bien, -1 si no"
+ },
+ "CHANNEL_SET_VOLUME(I)": {
+  "desc": "Volumen de todos los canales, de 0 a 128.",
+  "params": [
+   "volumen"
+  ]
+ },
+ "CHANNEL_SET_VOLUME(II)": {
+  "desc": "Volumen de un canal, de 0 a 128.",
+  "params": [
+   "canal",
+   "volumen"
+  ]
+ },
+ "CHR": {
+  "desc": "Cadena de un solo caracter a partir de su codigo.",
+  "params": [
+   "codigo"
+  ],
+  "ret": "la cadena"
+ },
+ "CLAMP(DDD)": {
+  "desc": "Limita un valor decimal al rango [minimo, maximo].",
+  "params": [
+   "valor",
+   "minimo",
+   "maximo"
+  ],
+  "ret": "el valor limitado"
+ },
+ "CLAMP(III)": {
+  "desc": "Limita un valor al rango [minimo, maximo].",
+  "ejemplo": "vida = clamp(vida, 0, 100);",
+  "params": [
+   "valor",
+   "minimo",
+   "maximo"
+  ],
+  "ret": "el valor limitado"
+ },
+ "COLLISION(I)": {
+  "desc": "Comprueba si este proceso choca con otros. Se le pasa el tipo de proceso (TYPE nombre), el identificador de uno concreto, o -1 para el raton. La colision se calcula con la forma real del grafico de cada proceso.",
+  "ejemplo": "IF (collision(TYPE bala)) vida--; END",
+  "params": [
+   "objetivo"
+  ],
+  "ret": "identificador del proceso con el que choca, o 0"
+ },
+ "COLLISION(II)": {
+  "desc": "Igual, pero para el proceso indicado en vez de para este.",
+  "params": [
+   "proceso",
+   "objetivo"
+  ],
+  "ret": "identificador del proceso con el que choca, o 0"
+ },
+ "COS": {
+  "desc": "Coseno de un angulo. Los angulos de BennuGD van en MILESIMAS DE GRADO (90000 = 90 grados, 360000 = una vuelta). Devuelve un decimal entre -1 y 1.",
+  "params": [
+   "angulo"
+  ],
+  "ret": "el coseno"
+ },
+ "DEG": {
+  "desc": "Convierte radianes a milesimas de grado.",
+  "params": [
+   "radianes"
+  ],
+  "ret": "angulo"
+ },
+ "DESKTOP_GET_SIZE": {
+  "desc": "Lee el tamano del escritorio en dos variables que se pasan por puntero.",
+  "params": [
+   "&ancho",
+   "&alto"
+  ]
+ },
+ "DIST": {
+  "desc": "Alias de FGET_DIST: distancia entre dos puntos.",
+  "params": [
+   "x0",
+   "y0",
+   "x1",
+   "y1"
+  ],
+  "ret": "distancia"
+ },
+ "DISTANCE": {
+  "desc": "Alias de FGET_DIST: distancia entre dos puntos.",
+  "params": [
+   "x0",
+   "y0",
+   "x1",
+   "y1"
+  ],
+  "ret": "distancia"
+ },
+ "DRAWING_COLOR(I)": {
+  "desc": "Color con el que se dibujaran los siguientes DRAW_*.",
+  "params": [
+   "color"
+  ]
+ },
+ "DRAWING_COLOR(II)": {
+  "desc": "Cambia el color de un dibujo ya creado.",
+  "params": [
+   "dibujo",
+   "color"
+  ]
+ },
+ "DRAWING_MAP": {
+  "desc": "Hace que los siguientes DRAW_* dibujen dentro de un grafico en vez de en pantalla. Con (0, 0), que no es un grafico, se vuelve a dibujar en pantalla.",
+  "params": [
+   "archivo",
+   "grafico"
+  ]
+ },
+ "DRAWING_Z(I)": {
+  "desc": "Profundidad (z) de los siguientes dibujos: menor z se dibuja delante.",
+  "params": [
+   "z"
+  ]
+ },
+ "DRAW_CIRCLE(III)": {
+  "desc": "Dibuja el borde de un circulo (centro y radio) con el color de DRAWING_COLOR.",
+  "params": [
+   "x",
+   "y",
+   "radio"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_CIRCLE(IIII)": {
+  "desc": "Dibuja el borde de un circulo de un color concreto.",
+  "params": [
+   "x",
+   "y",
+   "radio",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_CIRCLE_FILLED(III)": {
+  "desc": "Dibuja un circulo relleno (centro y radio) con el color de DRAWING_COLOR.",
+  "params": [
+   "x",
+   "y",
+   "radio"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_CIRCLE_FILLED(IIII)": {
+  "desc": "Dibuja un circulo relleno de un color concreto.",
+  "params": [
+   "x",
+   "y",
+   "radio",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_DELETE": {
+  "desc": "Borra un dibujo creado con un DRAW_* (0 borra todos).",
+  "params": [
+   "dibujo"
+  ]
+ },
+ "DRAW_LINE(IIII)": {
+  "desc": "Dibuja una linea con el color de DRAWING_COLOR.",
+  "ejemplo": "drawing_color(rgb(255, 255, 0));\nlin = draw_line(10, 10, 200, 100);",
+  "params": [
+   "x0",
+   "y0",
+   "x1",
+   "y1"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_LINE(IIIII)": {
+  "desc": "Dibuja una linea de un color concreto.",
+  "params": [
+   "x0",
+   "y0",
+   "x1",
+   "y1",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_MOVE": {
+  "desc": "Mueve un dibujo ya creado.",
+  "params": [
+   "dibujo",
+   "x",
+   "y"
+  ]
+ },
+ "DRAW_POINT(II)": {
+  "desc": "Dibuja un punto con el color de DRAWING_COLOR.",
+  "params": [
+   "x",
+   "y"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_POINT(III)": {
+  "desc": "Dibuja un punto de un color concreto.",
+  "params": [
+   "x",
+   "y",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_RECTANGLE(IIII)": {
+  "desc": "Dibuja el borde de un rectangulo (x, y, ancho, alto) con el color de DRAWING_COLOR.",
+  "params": [
+   "x",
+   "y",
+   "ancho",
+   "alto"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_RECTANGLE(IIIII)": {
+  "desc": "Dibuja el borde de un rectangulo de un color concreto.",
+  "params": [
+   "x",
+   "y",
+   "ancho",
+   "alto",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_RECTANGLE_FILLED(IIII)": {
+  "desc": "Dibuja un rectangulo relleno (x, y, ancho, alto) con el color de DRAWING_COLOR.",
+  "params": [
+   "x",
+   "y",
+   "ancho",
+   "alto"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_RECTANGLE_FILLED(IIIII)": {
+  "desc": "Dibuja un rectangulo relleno de un color concreto.",
+  "params": [
+   "x",
+   "y",
+   "ancho",
+   "alto",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "EXISTS": {
+  "desc": "Indica si un proceso esta vivo, por su identificador o por su tipo (TYPE nombre).",
+  "params": [
+   "proceso"
+  ],
+  "ret": "1 si existe"
+ },
+ "EXIT()": {
+  "desc": "Termina el programa."
+ },
+ "EXIT(S)": {
+  "desc": "Termina el programa con un mensaje.",
+  "params": [
+   "mensaje"
+  ]
+ },
+ "EXIT(SI)": {
+  "desc": "Termina el programa. Se puede indicar un mensaje, que se escribe en la consola, y un codigo de salida.",
+  "params": [
+   "mensaje",
+   "codigo"
+  ]
+ },
+ "EXP": {
+  "desc": "e elevado a un valor.",
+  "params": [
+   "valor"
+  ],
+  "ret": "resultado"
+ },
+ "FADE(IIIII)": {
+  "desc": "Funde la pantalla hacia un color. Los cuatro primeros valores son el color de destino (rojo, verde, azul y su alfa/intensidad) y 'velocidad' es lo rapido que se hace.",
+  "params": [
+   "r",
+   "g",
+   "b",
+   "alfa",
+   "velocidad"
+  ]
+ },
+ "FADE_OFF(I)": {
+  "desc": "Funde la pantalla a negro con la velocidad dada (el alfa de destino es 255).",
+  "params": [
+   "velocidad"
+  ]
+ },
+ "FADE_OFF(II)": {
+  "desc": "Funde a negro solo la region indicada.",
+  "params": [
+   "velocidad",
+   "region"
+  ]
+ },
+ "FADE_ON(I)": {
+  "desc": "Quita el fundido: la pantalla vuelve a verse (alfa 0) con la velocidad dada.",
+  "params": [
+   "velocidad"
+  ]
+ },
+ "FADE_ON(II)": {
+  "desc": "Quita el fundido solo en la region indicada.",
+  "params": [
+   "velocidad",
+   "region"
+  ]
+ },
+ "FCLOSE": {
+  "desc": "Cierra un fichero abierto con FOPEN.",
+  "params": [
+   "fichero"
+  ]
+ },
+ "FEOF": {
+  "desc": "Indica si se ha llegado al final de un fichero.",
+  "params": [
+   "fichero"
+  ],
+  "ret": "1 si es el final"
+ },
+ "FEXISTS": {
+  "desc": "Indica si existe un fichero.",
+  "params": [
+   "fichero"
+  ],
+  "ret": "1 si existe"
+ },
+ "FGETS": {
+  "desc": "Lee una linea de texto de un fichero (sin el salto de linea final). Devuelve una cadena vacia al llegar al final.",
+  "params": [
+   "fichero"
+  ],
+  "ret": "la linea"
+ },
+ "FGET_ANGLE": {
+  "desc": "Angulo en milesimas de grado desde el punto (x0, y0) hasta (x1, y1), con la Y de pantalla creciendo hacia abajo: 0 = hacia la derecha, 90000 = hacia arriba.",
+  "params": [
+   "x0",
+   "y0",
+   "x1",
+   "y1"
+  ],
+  "ret": "angulo"
+ },
+ "FGET_DIST": {
+  "desc": "Distancia entre dos puntos (x0, y0) y (x1, y1).",
+  "params": [
+   "x0",
+   "y0",
+   "x1",
+   "y1"
+  ],
+  "ret": "distancia"
+ },
+ "FIND(SS)": {
+  "desc": "Posicion de la primera aparicion de un trozo en una cadena (empezando en 0), o -1 si no esta.",
+  "params": [
+   "texto",
+   "buscar"
+  ],
+  "ret": "posicion o -1"
+ },
+ "FIND(SSI)": {
+  "desc": "Igual, empezando a buscar en una posicion.",
+  "params": [
+   "texto",
+   "buscar",
+   "desde"
+  ],
+  "ret": "posicion o -1"
+ },
+ "FLENGTH": {
+  "desc": "Tamano de un fichero abierto, en bytes.",
+  "params": [
+   "fichero"
+  ],
+  "ret": "bytes"
+ },
+ "FLOOR": {
+  "desc": "Redondea hacia abajo.",
+  "params": [
+   "valor"
+  ],
+  "ret": "el redondeo"
+ },
+ "FMOD": {
+  "desc": "Resto de dividir a entre b (con decimales).",
+  "params": [
+   "a",
+   "b"
+  ],
+  "ret": "el resto"
+ },
+ "FMOVE": {
+  "desc": "Mueve o renombra un fichero.",
+  "params": [
+   "origen",
+   "destino"
+  ]
+ },
+ "FNT_LOAD(S)": {
+  "desc": "Carga una fuente de mapa de bits (.fnt) desde un fichero y devuelve su identificador (0 si falla). Los ficheros .fnt de BennuGD pueden venir comprimidos con gzip.",
+  "params": [
+   "fichero"
+  ],
+  "ret": "identificador de la fuente"
+ },
+ "FNT_LOAD(SP)": {
+  "desc": "Carga una fuente .fnt EN SEGUNDO PLANO: el identificador se guarda en la variable que se pasa por puntero cuando termina.",
+  "params": [
+   "fichero",
+   "&identificador"
+  ]
+ },
+ "FNT_UNLOAD": {
+  "desc": "Libera una fuente.",
+  "params": [
+   "fuente"
+  ]
+ },
+ "FOPEN": {
+  "desc": "Abre un fichero y devuelve su manejador (0 si falla). El modo es O_READ (0, leer), O_READWRITE (1), O_WRITE (2, escribir), O_ZREAD (3, leer comprimido) u O_ZWRITE (4, escribir comprimido).",
+  "ejemplo": "f = fopen(\"datos.txt\", O_READ);\nIF (f) linea = fgets(f); fclose(f); END",
+  "params": [
+   "fichero",
+   "modo"
+  ],
+  "ret": "manejador del fichero"
+ },
+ "FORMAT(D)": {
+  "desc": "Da formato a un decimal con separador de miles.",
+  "params": [
+   "numero"
+  ],
+  "ret": "la cadena"
+ },
+ "FORMAT(DI)": {
+  "desc": "Da formato a un decimal con un numero de decimales y separador de miles.",
+  "params": [
+   "numero",
+   "decimales"
+  ],
+  "ret": "la cadena"
+ },
+ "FORMAT(I)": {
+  "desc": "Da formato a un entero con separador de miles.",
+  "params": [
+   "numero"
+  ],
+  "ret": "la cadena"
+ },
+ "FPG_ADD": {
+  "desc": "Anade a una coleccion una copia de un grafico, con el codigo indicado.",
+  "params": [
+   "archivo",
+   "codigo",
+   "archivo_origen",
+   "grafico_origen"
+  ]
+ },
+ "FPG_EXISTS": {
+  "desc": "Indica si existe una coleccion de graficos.",
+  "params": [
+   "archivo"
+  ],
+  "ret": "1 si existe"
+ },
+ "FPG_LOAD(S)": {
+  "desc": "Carga una coleccion de graficos (.fpg) y devuelve su identificador de archivo (0 si falla). Cada grafico se pide luego con (archivo, codigo): las variables file y graph de un proceso. Los .fpg de BennuGD pueden venir comprimidos con gzip.",
+  "ejemplo": "file = fpg_load(\"Assets/heroe.fpg\");\ngraph = 1;",
+  "params": [
+   "fichero"
+  ],
+  "ret": "identificador del archivo"
+ },
+ "FPG_LOAD(SP)": {
+  "desc": "Carga un .fpg EN SEGUNDO PLANO: el identificador se guarda en la variable que se pasa por puntero cuando termina.",
+  "params": [
+   "fichero",
+   "&archivo"
+  ]
+ },
+ "FPG_NEW": {
+  "desc": "Crea una coleccion de graficos vacia y devuelve su identificador.",
+  "ret": "identificador del archivo"
+ },
+ "FPG_UNLOAD": {
+  "desc": "Libera una coleccion de graficos.",
+  "params": [
+   "archivo"
+  ]
+ },
+ "FPUTS": {
+  "desc": "Escribe una cadena en un fichero.",
+  "params": [
+   "fichero",
+   "texto"
+  ]
+ },
+ "FRAC": {
+  "desc": "Parte decimal de un numero.",
+  "params": [
+   "valor"
+  ],
+  "ret": "la parte decimal"
+ },
+ "FREMOVE": {
+  "desc": "Borra un fichero.",
+  "params": [
+   "fichero"
+  ]
+ },
+ "FREWIND": {
+  "desc": "Vuelve al principio de un fichero abierto.",
+  "params": [
+   "fichero"
+  ]
+ },
+ "FTELL": {
+  "desc": "Posicion actual de lectura o escritura de un fichero abierto.",
+  "params": [
+   "fichero"
+  ],
+  "ret": "posicion"
+ },
+ "FTIME": {
+  "desc": "Da formato a una hora con los codigos de strftime (%Y, %m, %d, %H, %M, %S...).",
+  "ejemplo": "say(ftime(\"%H:%M:%S\", time()));",
+  "params": [
+   "formato",
+   "hora"
+  ],
+  "ret": "la cadena"
+ },
+ "FTOA": {
+  "desc": "Convierte un decimal en cadena.",
+  "params": [
+   "numero"
+  ],
+  "ret": "la cadena"
+ },
  "G3D_CAMERA_CREATE": {
   "desc": "Crea una camara.",
   "ret": "id de la camara"
@@ -1269,5 +1943,1714 @@
    "vehiculo"
   ],
   "ret": "Z"
+ },
+ "GET_ANGLE(I)": {
+  "desc": "Angulo (en milesimas de grado) desde este proceso hasta otro, indicado por su identificador.",
+  "params": [
+   "proceso"
+  ],
+  "ret": "angulo"
+ },
+ "GET_ANGLE(II)": {
+  "desc": "Angulo (en milesimas de grado) desde el primer proceso hasta el segundo.",
+  "params": [
+   "proceso_a",
+   "proceso_b"
+  ],
+  "ret": "angulo"
+ },
+ "GET_BASE_PATH": {
+  "desc": "Carpeta desde la que se ejecuta el programa.",
+  "ret": "la ruta"
+ },
+ "GET_DIST(I)": {
+  "desc": "Distancia en pixeles desde este proceso hasta otro, indicado por su identificador.",
+  "params": [
+   "proceso"
+  ],
+  "ret": "distancia"
+ },
+ "GET_DIST(II)": {
+  "desc": "Distancia en pixeles entre dos procesos.",
+  "params": [
+   "proceso_a",
+   "proceso_b"
+  ],
+  "ret": "distancia"
+ },
+ "GET_ID": {
+  "desc": "Recorre los procesos de un tipo (TYPE nombre): cada llamada devuelve el identificador del siguiente y 0 cuando no quedan. Con 0 recorre todos los procesos.",
+  "ejemplo": "WHILE (id = get_id(TYPE enemigo))\n    // id es un enemigo\nEND",
+  "params": [
+   "tipo"
+  ],
+  "ret": "identificador, o 0 al terminar"
+ },
+ "GET_JOY_BUTTON": {
+  "desc": "Alias antiguo de JOY_GETBUTTON.",
+  "params": [
+   "mando",
+   "boton"
+  ],
+  "ret": "1 si esta pulsado"
+ },
+ "GET_JOY_BUTTON(I)": {
+  "desc": "Alias antiguo de JOY_GETBUTTON para el mando elegido.",
+  "params": [
+   "boton"
+  ],
+  "ret": "1 si esta pulsado"
+ },
+ "GET_JOY_POSITION": {
+  "desc": "Alias antiguo de JOY_GETAXIS.",
+  "params": [
+   "mando",
+   "eje"
+  ],
+  "ret": "posicion del eje"
+ },
+ "GET_JOY_POSITION(I)": {
+  "desc": "Alias antiguo de JOY_GETAXIS para el mando elegido.",
+  "params": [
+   "eje"
+  ],
+  "ret": "posicion del eje"
+ },
+ "GET_MUSIC_DECODER": {
+  "desc": "Nombre de un decodificador de musica, por su indice.",
+  "params": [
+   "indice"
+  ],
+  "ret": "el nombre"
+ },
+ "GET_NUM_MUSIC_DECODERS": {
+  "desc": "Numero de decodificadores de musica disponibles (formatos que se pueden leer).",
+  "ret": "cantidad"
+ },
+ "GET_PREF_PATH": {
+  "desc": "Carpeta en la que guardar datos del jugador (partidas, opciones), propia del programa y del sistema. Hay que darle el nombre de la organizacion y de la aplicacion.",
+  "params": [
+   "organizacion",
+   "aplicacion"
+  ],
+  "ret": "la ruta"
+ },
+ "GET_STATUS": {
+  "desc": "Estado de un proceso a partir de su identificador (en marcha, dormido, congelado o muerto).",
+  "params": [
+   "proceso"
+  ],
+  "ret": "el estado"
+ },
+ "GET_TIMER": {
+  "desc": "Milisegundos desde que arranco el programa. Sirve para medir tiempos.",
+  "ejemplo": "t0 = get_timer();\n...\ntranscurrido = get_timer() - t0;",
+  "ret": "milisegundos"
+ },
+ "GET_TYPE": {
+  "desc": "Tipo de un proceso a partir de su identificador.",
+  "params": [
+   "proceso"
+  ],
+  "ret": "el tipo"
+ },
+ "HAS_MUSIC_DECODER": {
+  "desc": "Indica si hay un decodificador con ese nombre.",
+  "params": [
+   "nombre"
+  ],
+  "ret": "1 si existe"
+ },
+ "INVLERP": {
+  "desc": "Inversa de LERP: en que punto (0 a 1) entre a y b esta un valor.",
+  "params": [
+   "a",
+   "b",
+   "valor"
+  ],
+  "ret": "la fraccion"
+ },
+ "ITOA": {
+  "desc": "Convierte un entero en cadena.",
+  "ejemplo": "write(0, 10, 10, ALIGN_TOP_LEFT, \"Puntos: \" + itoa(puntos));",
+  "params": [
+   "numero"
+  ],
+  "ret": "la cadena"
+ },
+ "JOIN": {
+  "desc": "Une los elementos de un array de cadenas con un separador.",
+  "params": [
+   "separador",
+   "&trozos",
+   "cantidad"
+  ],
+  "ret": "la cadena unida"
+ },
+ "JOY_AXES()": {
+  "desc": "Numero de ejes (nombre antiguo) del mando elegido.",
+  "ret": "cantidad"
+ },
+ "JOY_AXES(I)": {
+  "desc": "Numero de ejes (nombre antiguo) del mando indicado.",
+  "params": [
+   "mando"
+  ],
+  "ret": "cantidad"
+ },
+ "JOY_BUTTONS()": {
+  "desc": "Numero de botones (nombre antiguo) del mando elegido.",
+  "ret": "cantidad"
+ },
+ "JOY_BUTTONS(I)": {
+  "desc": "Numero de botones (nombre antiguo) del mando indicado.",
+  "params": [
+   "mando"
+  ],
+  "ret": "cantidad"
+ },
+ "JOY_GETACCEL(IPPP)": {
+  "desc": "Lee el acelerometro del mando indicado en tres variables que se pasan por puntero.",
+  "params": [
+   "mando",
+   "&x",
+   "&y",
+   "&z"
+  ]
+ },
+ "JOY_GETACCEL(PPP)": {
+  "desc": "Lee el acelerometro del mando elegido en tres variables que se pasan por puntero.",
+  "params": [
+   "&x",
+   "&y",
+   "&z"
+  ]
+ },
+ "JOY_GETAXIS": {
+  "desc": "Posicion de un eje del mando indicado. Los ejes se piden con JOY_AXIS_LEFTX, JOY_AXIS_LEFTY, JOY_AXIS_RIGHTX, JOY_AXIS_RIGHTY (sticks) y JOY_AXIS_TRIGGERLEFT, JOY_AXIS_TRIGGERRIGHT (gatillos). El valor va de -32768 a 32767 y es 0 en reposo; para tener -1.0 .. 1.0, dividelo entre 32767.0. Los sticks nunca vuelven a 0 exacto: ignora un margen pequeno (zona muerta).",
+  "ejemplo": "ax = joy_getaxis(0, JOY_AXIS_LEFTX) / 32767.0;\nIF (abs(ax) < 0.15) ax = 0.0; END   // zona muerta",
+  "params": [
+   "mando",
+   "eje"
+  ],
+  "ret": "posicion del eje"
+ },
+ "JOY_GETAXIS(I)": {
+  "desc": "Posicion de un eje del mando elegido con JOY_SELECT (de -32768 a 32767).",
+  "params": [
+   "eje"
+  ],
+  "ret": "posicion del eje"
+ },
+ "JOY_GETBALL(IIPP)": {
+  "desc": "Lee cuanto se ha movido una bola (trackball) del mando indicado, en dos variables que se pasan por puntero.",
+  "params": [
+   "mando",
+   "bola",
+   "&dx",
+   "&dy"
+  ]
+ },
+ "JOY_GETBALL(IPP)": {
+  "desc": "Lee cuanto se ha movido una bola del mando elegido, en dos variables que se pasan por puntero.",
+  "params": [
+   "bola",
+   "&dx",
+   "&dy"
+  ]
+ },
+ "JOY_GETBUTTON": {
+  "desc": "Estado de un boton del mando indicado. Los botones se piden con las constantes JOY_BUTTON_A, _B, _X, _Y, _START, _BACK, _LEFTSHOULDER, _RIGHTSHOULDER, _DPAD_UP/DOWN/LEFT/RIGHT, _LEFTSTICK, _RIGHTSTICK, _GUIDE y _TOUCHPAD.",
+  "ejemplo": "IF (joy_getbutton(0, JOY_BUTTON_A)) saltar(); END",
+  "params": [
+   "mando",
+   "boton"
+  ],
+  "ret": "1 si esta pulsado"
+ },
+ "JOY_GETBUTTON(I)": {
+  "desc": "Estado de un boton del mando elegido con JOY_SELECT.",
+  "params": [
+   "boton"
+  ],
+  "ret": "1 si esta pulsado"
+ },
+ "JOY_GETHAT": {
+  "desc": "Estado de una cruz (POV hat) del mando indicado: JOY_HAT_CENTERED, _UP, _DOWN, _LEFT, _RIGHT, _LEFTUP, _LEFTDOWN, _RIGHTUP o _RIGHTDOWN.",
+  "params": [
+   "mando",
+   "cruz"
+  ],
+  "ret": "direccion de la cruz"
+ },
+ "JOY_GETHAT(I)": {
+  "desc": "Estado de una cruz del mando elegido.",
+  "params": [
+   "cruz"
+  ],
+  "ret": "direccion de la cruz"
+ },
+ "JOY_GETPOSITION": {
+  "desc": "Alias antiguo de JOY_GETAXIS.",
+  "params": [
+   "mando",
+   "eje"
+  ],
+  "ret": "posicion del eje"
+ },
+ "JOY_GETPOSITION(I)": {
+  "desc": "Alias antiguo de JOY_GETAXIS para el mando elegido.",
+  "params": [
+   "eje"
+  ],
+  "ret": "posicion del eje"
+ },
+ "JOY_IS_ATTACHED()": {
+  "desc": "Indica si el mando elegido esta conectado.",
+  "ret": "1 si esta conectado"
+ },
+ "JOY_IS_ATTACHED(I)": {
+  "desc": "Indica si un mando esta conectado. Sin argumento, el elegido.",
+  "params": [
+   "mando"
+  ],
+  "ret": "1 si esta conectado"
+ },
+ "JOY_NAME()": {
+  "desc": "Nombre del mando elegido.",
+  "ret": "el nombre"
+ },
+ "JOY_NAME(I)": {
+  "desc": "Nombre del mando. Sin argumento, el del mando elegido; con un numero, el de ese mando.",
+  "params": [
+   "mando"
+  ],
+  "ret": "el nombre"
+ },
+ "JOY_NUMAXES()": {
+  "desc": "Numero de ejes del mando elegido.",
+  "ret": "cantidad"
+ },
+ "JOY_NUMAXES(I)": {
+  "desc": "Numero de ejes del mando indicado.",
+  "params": [
+   "mando"
+  ],
+  "ret": "cantidad"
+ },
+ "JOY_NUMBALLS()": {
+  "desc": "Numero de bolas (trackballs) del mando elegido.",
+  "ret": "cantidad"
+ },
+ "JOY_NUMBALLS(I)": {
+  "desc": "Numero de bolas (trackballs) del mando indicado.",
+  "params": [
+   "mando"
+  ],
+  "ret": "cantidad"
+ },
+ "JOY_NUMBER": {
+  "desc": "Alias antiguo de JOY_NUMJOYSTICKS.",
+  "ret": "cantidad de mandos"
+ },
+ "JOY_NUMBUTTONS()": {
+  "desc": "Numero de botones del mando elegido.",
+  "ret": "cantidad"
+ },
+ "JOY_NUMBUTTONS(I)": {
+  "desc": "Numero de botones del mando indicado.",
+  "params": [
+   "mando"
+  ],
+  "ret": "cantidad"
+ },
+ "JOY_NUMHATS()": {
+  "desc": "Numero de cruces (sombreros / POV hats) del mando elegido.",
+  "ret": "cantidad"
+ },
+ "JOY_NUMHATS(I)": {
+  "desc": "Numero de cruces (sombreros / POV hats) del mando indicado.",
+  "params": [
+   "mando"
+  ],
+  "ret": "cantidad"
+ },
+ "JOY_NUMJOYSTICKS": {
+  "desc": "Numero de mandos conectados.",
+  "ret": "cantidad de mandos"
+ },
+ "JOY_QUERY(I)": {
+  "desc": "Informacion general de los mandos: se pide con un 'elemento'.",
+  "params": [
+   "elemento"
+  ],
+  "ret": "el valor pedido"
+ },
+ "JOY_QUERY(II)": {
+  "desc": "Informacion especifica de un mando: se pide con un 'elemento'.",
+  "params": [
+   "mando",
+   "elemento"
+  ],
+  "ret": "el valor pedido"
+ },
+ "JOY_QUERY(III)": {
+  "desc": "Informacion especifica de un mando: se pide con un 'elemento' y, segun cual sea, un argumento extra.",
+  "params": [
+   "mando",
+   "elemento",
+   "arg"
+  ],
+  "ret": "el valor pedido"
+ },
+ "JOY_SELECT": {
+  "desc": "Elige el mando con el que trabajan las funciones JOY_* que no llevan numero de mando. BennuGD2 arranca SIN ningun mando elegido: hasta que se elige, JOY_GETBUTTON y JOY_GETAXIS devuelven siempre 0. Normalmente se hace una vez al empezar.",
+  "ejemplo": "IF (joy_numjoysticks() > 0) joy_select(0); END",
+  "params": [
+   "mando"
+  ],
+  "ret": "el mando elegido"
+ },
+ "JOY_SET(IIII)": {
+  "desc": "Cambia un ajuste de un mando: se indica el 'elemento' y hasta dos argumentos.",
+  "params": [
+   "mando",
+   "elemento",
+   "arg1",
+   "arg2"
+  ]
+ },
+ "JOY_SET(IIIII)": {
+  "desc": "Cambia un ajuste de un mando: se indica el 'elemento' y hasta tres argumentos.",
+  "params": [
+   "mando",
+   "elemento",
+   "arg1",
+   "arg2",
+   "arg3"
+  ]
+ },
+ "KEY": {
+  "desc": "Indica si una tecla esta pulsada AHORA. Se le pasa una constante de tecla (_A, _SPACE, _ESC, _UP, _LEFT...). Una tecla pulsada y soltada dentro del mismo fotograma tambien cuenta como pulsada, para que el juego no se pierda pulsaciones rapidas.",
+  "ejemplo": "IF (key(_SPACE)) saltar(); END\nIF (key(_LEFT)) x -= 4; END",
+  "params": [
+   "tecla"
+  ],
+  "ret": "1 si esta pulsada, 0 si no"
+ },
+ "KEYDOWN": {
+  "desc": "Alias de KEY_DOWN.",
+  "params": [
+   "tecla"
+  ],
+  "ret": "1 solo en el fotograma de la pulsacion"
+ },
+ "KEYUP": {
+  "desc": "Alias de KEY_UP.",
+  "params": [
+   "tecla"
+  ],
+  "ret": "1 solo en el fotograma de soltarla"
+ },
+ "KEY_DOWN": {
+  "desc": "Indica si una tecla se ACABA de pulsar: vale 1 solo en el fotograma en que pasa de suelta a pulsada. Util para acciones de un solo disparo (saltar, disparar, abrir un menu).",
+  "ejemplo": "IF (key_down(_SPACE)) disparar(); END   // un disparo por pulsacion, aunque mantengas la tecla",
+  "params": [
+   "tecla"
+  ],
+  "ret": "1 solo en el fotograma de la pulsacion"
+ },
+ "KEY_UP": {
+  "desc": "Indica si una tecla se ACABA de soltar: vale 1 solo en el fotograma en que pasa de pulsada a suelta.",
+  "params": [
+   "tecla"
+  ],
+  "ret": "1 solo en el fotograma de soltarla"
+ },
+ "LCASE": {
+  "desc": "Pasa una cadena a minusculas.",
+  "params": [
+   "texto"
+  ],
+  "ret": "la cadena"
+ },
+ "LEN": {
+  "desc": "Alias de STRLEN.",
+  "params": [
+   "texto"
+  ],
+  "ret": "la longitud"
+ },
+ "LERP": {
+  "desc": "Interpolacion lineal: a + t * (b - a). Con t = 0 da a; con t = 1 da b.",
+  "params": [
+   "a",
+   "b",
+   "t"
+  ],
+  "ret": "el valor interpolado"
+ },
+ "LET_ME_ALONE": {
+  "desc": "Mata a todos los procesos menos al que la llama."
+ },
+ "LOAD": {
+  "desc": "Lee un fichero escrito con SAVE y lo deja en una variable (o estructura).",
+  "params": [
+   "fichero",
+   "variable"
+  ],
+  "ret": "bytes leidos"
+ },
+ "LOG": {
+  "desc": "Logaritmo natural.",
+  "params": [
+   "valor"
+  ],
+  "ret": "resultado"
+ },
+ "LOG10": {
+  "desc": "Logaritmo en base 10.",
+  "params": [
+   "valor"
+  ],
+  "ret": "resultado"
+ },
+ "LPAD": {
+  "desc": "Alarga una cadena hasta una longitud anadiendo espacios por la IZQUIERDA (para alinear numeros).",
+  "params": [
+   "texto",
+   "longitud"
+  ],
+  "ret": "la cadena"
+ },
+ "MAG": {
+  "desc": "Modulo de un vector: raiz de dx^2 + dy^2.",
+  "params": [
+   "dx",
+   "dy"
+  ],
+  "ret": "longitud"
+ },
+ "MAP_CLEAR(II)": {
+  "desc": "Limpia un grafico (lo deja transparente).",
+  "params": [
+   "archivo",
+   "grafico"
+  ]
+ },
+ "MAP_CLEAR(III)": {
+  "desc": "Rellena un grafico entero de un color.",
+  "params": [
+   "archivo",
+   "grafico",
+   "color"
+  ]
+ },
+ "MAP_CLEAR(IIIIII)": {
+  "desc": "Rellena de un color solo un rectangulo (x0, y0, x1, y1).",
+  "params": [
+   "archivo",
+   "grafico",
+   "x0",
+   "y0",
+   "x1",
+   "y1"
+  ]
+ },
+ "MAP_CLONE": {
+  "desc": "Crea una copia de un grafico y devuelve el codigo de la copia.",
+  "params": [
+   "archivo",
+   "grafico"
+  ],
+  "ret": "codigo de la copia"
+ },
+ "MAP_EXISTS": {
+  "desc": "Indica si existe un grafico.",
+  "params": [
+   "archivo",
+   "grafico"
+  ],
+  "ret": "1 si existe"
+ },
+ "MAP_GET_PIXEL": {
+  "desc": "Color de un pixel de un grafico (-1 si el grafico no existe).",
+  "params": [
+   "archivo",
+   "grafico",
+   "x",
+   "y"
+  ],
+  "ret": "el color"
+ },
+ "MAP_LOAD(S)": {
+  "desc": "Carga una imagen (PNG, JPG...) como grafico en la biblioteca del sistema y devuelve su codigo (0 si falla).",
+  "ejemplo": "graph = map_load(\"Assets/Sprites/heroe.png\");",
+  "params": [
+   "fichero"
+  ],
+  "ret": "codigo del grafico"
+ },
+ "MAP_LOAD(SP)": {
+  "desc": "Carga una imagen EN SEGUNDO PLANO: el codigo se guarda en la variable que se pasa por puntero cuando termina.",
+  "params": [
+   "fichero",
+   "&codigo"
+  ]
+ },
+ "MAP_NEW(II)": {
+  "desc": "Crea un grafico vacio del tamano indicado en la biblioteca del sistema (archivo 0) y devuelve su codigo (0 si falla).",
+  "ejemplo": "g = map_new(32, 32);\nmap_clear(0, g, rgb(255, 0, 0));   // lo rellena de rojo",
+  "params": [
+   "ancho",
+   "alto"
+  ],
+  "ret": "codigo del grafico"
+ },
+ "MAP_NEW(III)": {
+  "desc": "Igual, y con la bandera B_CLEAR ademas lo deja limpio.",
+  "params": [
+   "ancho",
+   "alto",
+   "flags"
+  ],
+  "ret": "codigo del grafico"
+ },
+ "MAP_PUT(IIIIII)": {
+  "desc": "Copia un grafico (origen) sobre otro (destino) en la posicion (x, y).",
+  "params": [
+   "archivo_destino",
+   "grafico_destino",
+   "archivo_origen",
+   "grafico_origen",
+   "x",
+   "y"
+  ]
+ },
+ "MAP_PUT(IIIIIIIIIIBBBB)": {
+  "desc": "Copia un grafico sobre otro con todas las opciones: angulo (milesimas de grado), escala en porcentaje (100 = tamano normal), banderas (B_HMIRROR, B_VMIRROR, B_TRANSLUCENT...), tinte (r, g, b) y alfa (0 a 255).",
+  "params": [
+   "archivo_destino",
+   "grafico_destino",
+   "archivo_origen",
+   "grafico_origen",
+   "x",
+   "y",
+   "angulo",
+   "escala_x",
+   "escala_y",
+   "flags",
+   "r",
+   "g",
+   "b",
+   "alfa"
+  ]
+ },
+ "MAP_PUT(IIIIIIIIIIBBBBI)": {
+  "desc": "Igual, con modo de mezcla (BLEND_NORMAL, BLEND_ADD, BLEND_MULTIPLY, BLEND_SUBTRACT...).",
+  "params": [
+   "archivo_destino",
+   "grafico_destino",
+   "archivo_origen",
+   "grafico_origen",
+   "x",
+   "y",
+   "angulo",
+   "escala_x",
+   "escala_y",
+   "flags",
+   "r",
+   "g",
+   "b",
+   "alfa",
+   "mezcla"
+  ]
+ },
+ "MAP_PUT_PIXEL": {
+  "desc": "Pone un pixel de un color en un grafico.",
+  "params": [
+   "archivo",
+   "grafico",
+   "x",
+   "y",
+   "color"
+  ]
+ },
+ "MAP_SAVE": {
+  "desc": "Guarda un grafico en un fichero de imagen. Devuelve -1 si el grafico no existe.",
+  "params": [
+   "archivo",
+   "grafico",
+   "fichero"
+  ],
+  "ret": "0 si va bien, -1 si no"
+ },
+ "MAP_UNLOAD": {
+  "desc": "Libera un grafico de memoria.",
+  "params": [
+   "archivo",
+   "grafico"
+  ]
+ },
+ "MAX": {
+  "desc": "El mayor de dos numeros.",
+  "params": [
+   "a",
+   "b"
+  ],
+  "ret": "el mayor"
+ },
+ "MIN": {
+  "desc": "El menor de dos numeros.",
+  "params": [
+   "a",
+   "b"
+  ],
+  "ret": "el menor"
+ },
+ "MUSIC_FADE_IN(III)": {
+  "desc": "Empieza una musica subiendo el volumen poco a poco durante 'ms' milisegundos.",
+  "params": [
+   "musica",
+   "bucles",
+   "ms"
+  ],
+  "ret": "0 si va bien, -1 si hay error"
+ },
+ "MUSIC_FADE_IN(IIID)": {
+  "desc": "Igual que la anterior, empezando en un punto de la musica ('posicion' en segundos).",
+  "params": [
+   "musica",
+   "bucles",
+   "ms",
+   "posicion"
+  ],
+  "ret": "0 si va bien, -1 si hay error"
+ },
+ "MUSIC_FADE_OFF": {
+  "desc": "Baja el volumen de la musica poco a poco durante 'ms' milisegundos y la para.",
+  "params": [
+   "ms"
+  ]
+ },
+ "MUSIC_GET_ALBUM_TAG()": {
+  "desc": "Devuelve el etiqueta de album de la musica que suena.",
+  "ret": "el valor"
+ },
+ "MUSIC_GET_ALBUM_TAG(I)": {
+  "desc": "Devuelve el etiqueta de album de una musica, segun lo que traiga el fichero.",
+  "params": [
+   "musica"
+  ],
+  "ret": "el valor"
+ },
+ "MUSIC_GET_ARTIST_TAG()": {
+  "desc": "Devuelve el etiqueta de artista de la musica que suena.",
+  "ret": "el valor"
+ },
+ "MUSIC_GET_ARTIST_TAG(I)": {
+  "desc": "Devuelve el etiqueta de artista de una musica, segun lo que traiga el fichero.",
+  "params": [
+   "musica"
+  ],
+  "ret": "el valor"
+ },
+ "MUSIC_GET_COPYRIGHT_TAG()": {
+  "desc": "Devuelve el etiqueta de copyright de la musica que suena.",
+  "ret": "el valor"
+ },
+ "MUSIC_GET_COPYRIGHT_TAG(I)": {
+  "desc": "Devuelve el etiqueta de copyright de una musica, segun lo que traiga el fichero.",
+  "params": [
+   "musica"
+  ],
+  "ret": "el valor"
+ },
+ "MUSIC_GET_DURATION()": {
+  "desc": "Duracion de la musica que suena, en segundos.",
+  "ret": "segundos"
+ },
+ "MUSIC_GET_DURATION(I)": {
+  "desc": "Duracion de una musica, en segundos.",
+  "params": [
+   "musica"
+  ],
+  "ret": "segundos"
+ },
+ "MUSIC_GET_LOOP_END()": {
+  "desc": "Lo mismo para la musica que suena.",
+  "ret": "segundos"
+ },
+ "MUSIC_GET_LOOP_END(I)": {
+  "desc": "Segundo en que esta el final del bucle propio de la musica, si el fichero lo define.",
+  "params": [
+   "musica"
+  ],
+  "ret": "segundos"
+ },
+ "MUSIC_GET_LOOP_LEN()": {
+  "desc": "Lo mismo para la musica que suena.",
+  "ret": "segundos"
+ },
+ "MUSIC_GET_LOOP_LEN(I)": {
+  "desc": "Duracion del bucle propio de la musica, en segundos, si el fichero lo define.",
+  "params": [
+   "musica"
+  ],
+  "ret": "segundos"
+ },
+ "MUSIC_GET_LOOP_START()": {
+  "desc": "Lo mismo para la musica que suena.",
+  "ret": "segundos"
+ },
+ "MUSIC_GET_LOOP_START(I)": {
+  "desc": "Segundo en que esta el comienzo del bucle propio de la musica, si el fichero lo define.",
+  "params": [
+   "musica"
+  ],
+  "ret": "segundos"
+ },
+ "MUSIC_GET_PLAYBACK_POSITION": {
+  "desc": "Posicion actual de la musica, en segundos.",
+  "params": [
+   "musica"
+  ],
+  "ret": "segundos"
+ },
+ "MUSIC_GET_TIME_POSITION": {
+  "desc": "Alias de MUSIC_GET_PLAYBACK_POSITION.",
+  "params": [
+   "musica"
+  ],
+  "ret": "segundos"
+ },
+ "MUSIC_GET_TITLE()": {
+  "desc": "Devuelve el titulo de la musica que suena.",
+  "ret": "el valor"
+ },
+ "MUSIC_GET_TITLE(I)": {
+  "desc": "Devuelve el titulo de una musica, segun lo que traiga el fichero.",
+  "params": [
+   "musica"
+  ],
+  "ret": "el valor"
+ },
+ "MUSIC_GET_TITLE_TAG()": {
+  "desc": "Devuelve el etiqueta de titulo de la musica que suena.",
+  "ret": "el valor"
+ },
+ "MUSIC_GET_TITLE_TAG(I)": {
+  "desc": "Devuelve el etiqueta de titulo de una musica, segun lo que traiga el fichero.",
+  "params": [
+   "musica"
+  ],
+  "ret": "el valor"
+ },
+ "MUSIC_GET_TYPE()": {
+  "desc": "Devuelve el tipo de formato de la musica que suena.",
+  "ret": "el valor"
+ },
+ "MUSIC_GET_TYPE(I)": {
+  "desc": "Devuelve el tipo de formato de una musica, segun lo que traiga el fichero.",
+  "params": [
+   "musica"
+  ],
+  "ret": "el valor"
+ },
+ "MUSIC_GET_VOLUME": {
+  "desc": "Volumen de una musica (necesita SDL_mixer 2.6 o mas reciente; con una anterior devuelve -1).",
+  "params": [
+   "musica"
+  ],
+  "ret": "volumen"
+ },
+ "MUSIC_IS_FADING": {
+  "desc": "Indica si la musica esta subiendo o bajando de volumen.",
+  "ret": "distinto de 0 si esta en un fundido"
+ },
+ "MUSIC_IS_PAUSED": {
+  "desc": "Indica si la musica esta en pausa.",
+  "ret": "1 si esta en pausa"
+ },
+ "MUSIC_IS_PLAYING": {
+  "desc": "Indica si hay una musica sonando.",
+  "ret": "1 si suena"
+ },
+ "MUSIC_LOAD(S)": {
+  "desc": "Carga una musica (MP3, OGG, WAV, MOD...) desde un fichero. Devuelve un identificador para el resto de funciones MUSIC_*; 0 si no se pudo cargar. Inicia el sonido si hacia falta.",
+  "ejemplo": "m = music_load(\"Assets/Music/tema.ogg\");\nmusic_play(m);   // sin fin",
+  "params": [
+   "fichero"
+  ],
+  "ret": "identificador de la musica, 0 si falla"
+ },
+ "MUSIC_LOAD(SP)": {
+  "desc": "Carga una musica EN SEGUNDO PLANO, sin parar el juego: el identificador se guarda en la variable que se pasa por puntero cuando termina.",
+  "params": [
+   "fichero",
+   "&identificador"
+  ]
+ },
+ "MUSIC_PAUSE": {
+  "desc": "Pausa la musica."
+ },
+ "MUSIC_PLAY(I)": {
+  "desc": "Reproduce una musica en bucle sin fin.",
+  "params": [
+   "musica"
+  ],
+  "ret": "0 si va bien, -1 si hay error"
+ },
+ "MUSIC_PLAY(II)": {
+  "desc": "Reproduce una musica repitiendola 'bucles' veces (0 = una vez, -1 = sin fin). Solo suena una musica a la vez: empezar otra corta la anterior.",
+  "params": [
+   "musica",
+   "bucles"
+  ],
+  "ret": "0 si va bien, -1 si hay error"
+ },
+ "MUSIC_RESUME": {
+  "desc": "Reanuda una musica pausada."
+ },
+ "MUSIC_REWIND": {
+  "desc": "Vuelve al principio de la musica."
+ },
+ "MUSIC_SET_PLAYBACK_POSITION": {
+  "desc": "Salta a un punto de la musica, en segundos.",
+  "params": [
+   "segundos"
+  ]
+ },
+ "MUSIC_SET_TIME_POSITION": {
+  "desc": "Alias de MUSIC_SET_PLAYBACK_POSITION.",
+  "params": [
+   "segundos"
+  ]
+ },
+ "MUSIC_SET_VOLUME": {
+  "desc": "Volumen de la musica, de 0 a 128 (los valores fuera de rango se recortan).",
+  "ejemplo": "music_set_volume(64);   // la mitad",
+  "params": [
+   "volumen"
+  ],
+  "ret": "0 si va bien, -1 si el sonido no esta iniciado"
+ },
+ "MUSIC_STOP": {
+  "desc": "Para la musica que suena."
+ },
+ "MUSIC_UNLOAD(I)": {
+  "desc": "Libera una musica cargada.",
+  "params": [
+   "musica"
+  ]
+ },
+ "MUSIC_UNLOAD(P)": {
+  "desc": "Libera una musica cargada con carga en segundo plano, y deja su variable a 0.",
+  "params": [
+   "&musica"
+  ]
+ },
+ "NEAR_ANGLE": {
+  "desc": "Acerca un angulo a otro como mucho 'paso' por el camino mas corto (para girar suavemente hacia un objetivo). Angulos en milesimas de grado.",
+  "params": [
+   "angulo",
+   "destino",
+   "paso"
+  ],
+  "ret": "el angulo nuevo"
+ },
+ "NORMALIZE(DDD)": {
+  "desc": "Convierte un valor del rango [bajo, alto] a un numero entre 0 y 1.",
+  "params": [
+   "valor",
+   "bajo",
+   "alto"
+  ],
+  "ret": "la fraccion"
+ },
+ "NUMBER_JOY": {
+  "desc": "Alias antiguo de JOY_NUMJOYSTICKS.",
+  "ret": "cantidad de mandos"
+ },
+ "POW": {
+  "desc": "Potencia: base elevada al exponente.",
+  "params": [
+   "base",
+   "exponente"
+  ],
+  "ret": "el resultado"
+ },
+ "RAD": {
+  "desc": "Convierte milesimas de grado a radianes.",
+  "params": [
+   "angulo"
+  ],
+  "ret": "radianes"
+ },
+ "RAND": {
+  "desc": "Numero entero al azar entre dos valores, ambos incluidos (el orden da igual).",
+  "ejemplo": "dado = rand(1, 6);",
+  "params": [
+   "minimo",
+   "maximo"
+  ],
+  "ret": "un entero al azar"
+ },
+ "RAND_SEED": {
+  "desc": "Fija la semilla del generador de numeros al azar: con la misma semilla salen siempre los mismos numeros.",
+  "params": [
+   "semilla"
+  ]
+ },
+ "REMAP(DDDDD)": {
+  "desc": "Convierte un valor de un rango a otro: remap(5, 0, 10, 0, 100) = 50.",
+  "params": [
+   "valor",
+   "desde_min",
+   "desde_max",
+   "hasta_min",
+   "hasta_max"
+  ],
+  "ret": "el valor convertido"
+ },
+ "REMAP(IIIII)": {
+  "desc": "Lo mismo con enteros.",
+  "params": [
+   "valor",
+   "desde_min",
+   "desde_max",
+   "hasta_min",
+   "hasta_max"
+  ],
+  "ret": "el valor convertido"
+ },
+ "RESERVE_CHANNELS": {
+  "desc": "Reserva los 'cantidad' primeros canales para que no se usen como libres (para sonidos que tu eliges el canal). Devuelve cuantos se reservaron.",
+  "params": [
+   "cantidad"
+  ],
+  "ret": "canales reservados"
+ },
+ "REVERSE_STEREO": {
+  "desc": "Invierte (1) o no (0) los canales izquierdo y derecho de un canal. Solo funciona mientras el canal esta sonando: si no suena nada en ese canal devuelve -1 y no hace nada.",
+  "params": [
+   "canal",
+   "invertir"
+  ],
+  "ret": "0 si va bien, -1 si no"
+ },
+ "RFIND(SS)": {
+  "desc": "Posicion de la ULTIMA aparicion de un trozo en una cadena, o -1 si no esta.",
+  "params": [
+   "texto",
+   "buscar"
+  ],
+  "ret": "posicion o -1"
+ },
+ "RFIND(SSI)": {
+  "desc": "Igual, buscando hacia atras desde una posicion.",
+  "params": [
+   "texto",
+   "buscar",
+   "desde"
+  ],
+  "ret": "posicion o -1"
+ },
+ "RGB(BBB)": {
+  "desc": "Crea un color con rojo, verde y azul (0 a 255 cada uno), opaco. El numero que devuelve se usa en DRAWING_COLOR, MAP_CLEAR, MAP_PUT_PIXEL...",
+  "ejemplo": "color = rgb(255, 128, 0);   // naranja",
+  "params": [
+   "r",
+   "g",
+   "b"
+  ],
+  "ret": "el color"
+ },
+ "RGB(IIBBB)": {
+  "desc": "Alias que acepta un mapa (se ignora) y devuelve el mismo color.",
+  "params": [
+   "archivo",
+   "grafico",
+   "r",
+   "g",
+   "b"
+  ],
+  "ret": "el color"
+ },
+ "RGBA(BBBB)": {
+  "desc": "Crea un color con rojo, verde, azul y alfa (0 a 255 cada uno; alfa 255 = opaco).",
+  "params": [
+   "r",
+   "g",
+   "b",
+   "alfa"
+  ],
+  "ret": "el color"
+ },
+ "RGBA(IIBBBB)": {
+  "desc": "Alias que acepta un mapa (se ignora) y devuelve el mismo color.",
+  "params": [
+   "archivo",
+   "grafico",
+   "r",
+   "g",
+   "b",
+   "alfa"
+  ],
+  "ret": "el color"
+ },
+ "RGBA_GET(IPPPP)": {
+  "desc": "Separa un color en rojo, verde, azul y alfa, en cuatro variables que se pasan por puntero.",
+  "params": [
+   "color",
+   "&r",
+   "&g",
+   "&b",
+   "&alfa"
+  ]
+ },
+ "RGB_GET(IPPP)": {
+  "desc": "Separa un color en rojo, verde y azul, en tres variables que se pasan por puntero.",
+  "params": [
+   "color",
+   "&r",
+   "&g",
+   "&b"
+  ]
+ },
+ "ROUND": {
+  "desc": "Redondea al entero mas cercano (devuelve un decimal con valor entero).",
+  "params": [
+   "valor"
+  ],
+  "ret": "el redondeo"
+ },
+ "RPAD": {
+  "desc": "Alarga una cadena hasta una longitud anadiendo espacios por la DERECHA.",
+  "params": [
+   "texto",
+   "longitud"
+  ],
+  "ret": "la cadena"
+ },
+ "SAVE": {
+  "desc": "Guarda una variable (o una estructura) en un fichero. Es la forma mas simple de guardar partidas.",
+  "params": [
+   "fichero",
+   "variable"
+  ],
+  "ret": "bytes guardados"
+ },
+ "SAY": {
+  "desc": "Escribe una linea de texto en la consola (salida estandar) para depurar. Es la forma de ver mensajes mientras el juego corre.",
+  "ejemplo": "say(\"vidas: \" + itoa(vidas));",
+  "params": [
+   "texto"
+  ]
+ },
+ "SAY_FAST": {
+  "desc": "Como SAY pero sin esperar a volcar la salida: mas rapida, para mensajes muy frecuentes.",
+  "params": [
+   "texto"
+  ]
+ },
+ "SELECT_JOY": {
+  "desc": "Alias antiguo de JOY_SELECT.",
+  "params": [
+   "mando"
+  ]
+ },
+ "SET_DISTANCE": {
+  "desc": "Alias de CHANNEL_SET_DISTANCE.",
+  "params": [
+   "canal",
+   "distancia"
+  ],
+  "ret": "0 si va bien, -1 si no"
+ },
+ "SET_FPS": {
+  "desc": "Fotogramas por segundo del juego. El segundo valor es cuantos fotogramas se pueden saltar al dibujar si el juego va lento (0 = ninguno).",
+  "ejemplo": "set_fps(60, 0);",
+  "params": [
+   "fps",
+   "saltos"
+  ],
+  "ret": "los fps fijados"
+ },
+ "SET_MASTER_VOLUME": {
+  "desc": "Volumen general de todo el sonido, de 0 a 128.",
+  "params": [
+   "volumen"
+  ],
+  "ret": "0 si va bien, -1 si el sonido no esta iniciado"
+ },
+ "SET_MODE(II)": {
+  "desc": "Cambia el tamano de la pantalla (o de la ventana) en pixeles.",
+  "ejemplo": "set_mode(1280, 720);",
+  "params": [
+   "ancho",
+   "alto"
+  ]
+ },
+ "SET_MODE(III)": {
+  "desc": "Cambia el tamano de la pantalla con banderas de modo.",
+  "params": [
+   "ancho",
+   "alto",
+   "flags"
+  ]
+ },
+ "SET_PANNING": {
+  "desc": "Alias de CHANNEL_SET_PANNING.",
+  "params": [
+   "canal",
+   "izquierda",
+   "derecha"
+  ],
+  "ret": "0 si va bien, -1 si no"
+ },
+ "SET_POSITION": {
+  "desc": "Alias de SOUND_SET_LOCATION.",
+  "params": [
+   "canal",
+   "angulo",
+   "distancia"
+  ],
+  "ret": "0 si va bien, -1 si no"
+ },
+ "SGN": {
+  "desc": "Signo de un numero: -1, 0 o 1.",
+  "params": [
+   "valor"
+  ],
+  "ret": "el signo"
+ },
+ "SIGNAL": {
+  "desc": "Envia una senal a un proceso (por su identificador o por su tipo con TYPE nombre), o a todos con ALL_PROCESS. Las senales habituales son S_KILL (matarlo), S_SLEEP, S_FREEZE y S_WAKEUP; sumando S_TREE se aplica tambien a sus hijos.",
+  "ejemplo": "signal(TYPE enemigo, S_KILL);   // quita todos los enemigos",
+  "params": [
+   "proceso",
+   "senal"
+  ]
+ },
+ "SIN": {
+  "desc": "Seno de un angulo. Los angulos de BennuGD van en MILESIMAS DE GRADO (90000 = 90 grados, 360000 = una vuelta). Devuelve un decimal entre -1 y 1.",
+  "ejemplo": "y = sin(angle) * 100;   // angle esta en milesimas de grado",
+  "params": [
+   "angulo"
+  ],
+  "ret": "el seno"
+ },
+ "SOUNDSYS_INIT": {
+  "desc": "Inicia el sistema de sonido. No hace falta llamarla: se inicia sola al cargar el primer sonido o musica. Antes de iniciarlo se pueden fijar sound.freq, sound.mode y sound.channels.",
+  "ret": "0 si va bien, -1 si falla"
+ },
+ "SOUNDSYS_QUIT": {
+  "desc": "Cierra el sistema de sonido y libera sus recursos."
+ },
+ "SOUND_FADE_IN(IIII)": {
+  "desc": "Reproduce un sonido en un canal subiendo el volumen durante 'ms' milisegundos.",
+  "params": [
+   "sonido",
+   "bucles",
+   "ms",
+   "canal"
+  ],
+  "ret": "el canal usado, o -1"
+ },
+ "SOUND_FADE_IN(IIIII)": {
+  "desc": "Igual, y ademas lo corta a los 'tiempo' milisegundos.",
+  "params": [
+   "sonido",
+   "bucles",
+   "ms",
+   "canal",
+   "tiempo"
+  ],
+  "ret": "el canal usado, o -1"
+ },
+ "SOUND_FADE_OFF": {
+  "desc": "Baja el volumen del sonido de un canal durante 'ms' milisegundos y lo para.",
+  "params": [
+   "canal",
+   "ms"
+  ]
+ },
+ "SOUND_GROUP_AVAILABLE": {
+  "desc": "Primer canal libre de un grupo, o -1 si no hay.",
+  "params": [
+   "grupo"
+  ],
+  "ret": "canal o -1"
+ },
+ "SOUND_GROUP_CHANNEL": {
+  "desc": "Mete un canal en un grupo (una etiqueta numerica), para tratar varios canales a la vez.",
+  "params": [
+   "canal",
+   "grupo"
+  ]
+ },
+ "SOUND_GROUP_CHANNELS": {
+  "desc": "Mete un rango de canales en un grupo.",
+  "params": [
+   "desde",
+   "hasta",
+   "grupo"
+  ],
+  "ret": "cuantos canales se agruparon"
+ },
+ "SOUND_GROUP_COUNT": {
+  "desc": "Cuantos canales tiene un grupo.",
+  "params": [
+   "grupo"
+  ],
+  "ret": "cantidad"
+ },
+ "SOUND_GROUP_FADE_OUT": {
+  "desc": "Baja el volumen de todos los sonidos de un grupo durante 'ms' milisegundos y los para.",
+  "params": [
+   "grupo",
+   "ms"
+  ]
+ },
+ "SOUND_GROUP_HALT": {
+  "desc": "Para todos los sonidos de un grupo.",
+  "params": [
+   "grupo"
+  ]
+ },
+ "SOUND_GROUP_NEWER": {
+  "desc": "El canal del grupo que empezo a sonar hace menos.",
+  "params": [
+   "grupo"
+  ],
+  "ret": "canal o -1"
+ },
+ "SOUND_GROUP_OLDEST": {
+  "desc": "El canal del grupo que lleva mas tiempo sonando.",
+  "params": [
+   "grupo"
+  ],
+  "ret": "canal o -1"
+ },
+ "SOUND_IS_FADING": {
+  "desc": "Indica si un canal esta en un fundido.",
+  "params": [
+   "canal"
+  ],
+  "ret": "distinto de 0 si esta en un fundido"
+ },
+ "SOUND_IS_PAUSED": {
+  "desc": "Indica si el sonido de un canal esta en pausa.",
+  "params": [
+   "canal"
+  ],
+  "ret": "1 si esta en pausa"
+ },
+ "SOUND_IS_PLAYING": {
+  "desc": "Indica si suena algo en un canal (-1 = cuenta los canales que suenan).",
+  "params": [
+   "canal"
+  ],
+  "ret": "1 si suena (o cuantos, con -1)"
+ },
+ "SOUND_LOAD(S)": {
+  "desc": "Carga un efecto de sonido (WAV, OGG...) desde un fichero. Devuelve un identificador para SOUND_PLAY; 0 si no se pudo cargar.",
+  "ejemplo": "s = sound_load(\"Assets/Sounds/salto.wav\");\nsound_play(s);",
+  "params": [
+   "fichero"
+  ],
+  "ret": "identificador del sonido, 0 si falla"
+ },
+ "SOUND_LOAD(SP)": {
+  "desc": "Carga un efecto de sonido EN SEGUNDO PLANO: el identificador se guarda en la variable que se pasa por puntero cuando termina.",
+  "params": [
+   "fichero",
+   "&identificador"
+  ]
+ },
+ "SOUND_PAUSE": {
+  "desc": "Pausa el sonido de un canal (-1 = todos).",
+  "params": [
+   "canal"
+  ]
+ },
+ "SOUND_PLAY(I)": {
+  "desc": "Reproduce un sonido una vez en el primer canal libre.",
+  "params": [
+   "sonido"
+  ],
+  "ret": "el canal usado, o -1 si no hay ninguno libre"
+ },
+ "SOUND_PLAY(II)": {
+  "desc": "Reproduce un sonido en el primer canal libre, repitiendolo 'bucles' veces (0 = una vez, -1 = sin fin). Se pueden oir varios a la vez, cada uno en su canal.",
+  "params": [
+   "sonido",
+   "bucles"
+  ],
+  "ret": "el canal usado, o -1 si no hay ninguno libre"
+ },
+ "SOUND_PLAY(III)": {
+  "desc": "Reproduce un sonido en un canal concreto (-1 = el primero libre).",
+  "params": [
+   "sonido",
+   "bucles",
+   "canal"
+  ],
+  "ret": "el canal usado, o -1"
+ },
+ "SOUND_PLAY(IIII)": {
+  "desc": "Reproduce un sonido en un canal y lo corta a los 'ms' milisegundos aunque no haya acabado.",
+  "params": [
+   "sonido",
+   "bucles",
+   "canal",
+   "ms"
+  ],
+  "ret": "el canal usado, o -1"
+ },
+ "SOUND_RESUME": {
+  "desc": "Reanuda el sonido de un canal pausado (-1 = todos).",
+  "params": [
+   "canal"
+  ]
+ },
+ "SOUND_SET_LOCATION": {
+  "desc": "Sonido posicional: angulo (0 a 360, 0 = delante, 90 = derecha) y distancia (0 a 255) de un canal respecto al oyente. Solo funciona mientras el canal esta sonando: si no suena nada en ese canal devuelve -1 y no hace nada.",
+  "params": [
+   "canal",
+   "angulo",
+   "distancia"
+  ],
+  "ret": "0 si va bien, -1 si no"
+ },
+ "SOUND_SET_SPATIAL_POSITION": {
+  "desc": "Alias de SOUND_SET_LOCATION.",
+  "params": [
+   "canal",
+   "angulo",
+   "distancia"
+  ],
+  "ret": "0 si va bien, -1 si no"
+ },
+ "SOUND_SET_VOLUME(I)": {
+  "desc": "Volumen de TODOS los canales, de 0 a 128.",
+  "params": [
+   "volumen"
+  ]
+ },
+ "SOUND_SET_VOLUME(II)": {
+  "desc": "Volumen propio de un sonido, de 0 a 128. Se aplica cada vez que suena.",
+  "params": [
+   "sonido",
+   "volumen"
+  ]
+ },
+ "SOUND_STOP": {
+  "desc": "Para el sonido de un canal (-1 = todos).",
+  "params": [
+   "canal"
+  ]
+ },
+ "SOUND_UNLOAD(I)": {
+  "desc": "Libera un sonido cargado.",
+  "params": [
+   "sonido"
+  ]
+ },
+ "SOUND_UNLOAD(P)": {
+  "desc": "Libera un sonido cargado con carga en segundo plano y deja su variable a 0.",
+  "params": [
+   "&sonido"
+  ]
+ },
+ "SPLIT": {
+  "desc": "Parte una cadena por un separador (expresion regular) y guarda los trozos en un array de cadenas. Devuelve cuantos trozos salieron.",
+  "params": [
+   "separador",
+   "texto",
+   "&trozos",
+   "max"
+  ],
+  "ret": "cantidad de trozos"
+ },
+ "SQRT": {
+  "desc": "Raiz cuadrada.",
+  "params": [
+   "valor"
+  ],
+  "ret": "la raiz"
+ },
+ "STRCASECMP": {
+  "desc": "Compara dos cadenas sin distinguir mayusculas de minusculas: 0 si son iguales.",
+  "params": [
+   "a",
+   "b"
+  ],
+  "ret": "0 si son iguales"
+ },
+ "STRLEN": {
+  "desc": "Longitud de una cadena en caracteres.",
+  "params": [
+   "texto"
+  ],
+  "ret": "la longitud"
+ },
+ "STRREV": {
+  "desc": "Da la vuelta a una cadena.",
+  "params": [
+   "texto"
+  ],
+  "ret": "la cadena al reves"
+ },
+ "SUBSTR(SI)": {
+  "desc": "Trozo de una cadena desde un caracter (empezando en 0) hasta el final.",
+  "params": [
+   "texto",
+   "desde"
+  ],
+  "ret": "el trozo"
+ },
+ "SUBSTR(SII)": {
+  "desc": "Trozo de una cadena desde un caracter (empezando en 0) y con una longitud. Una longitud negativa deja fuera ese numero de caracteres del final.",
+  "params": [
+   "texto",
+   "desde",
+   "longitud"
+  ],
+  "ret": "el trozo"
+ },
+ "TAN": {
+  "desc": "Tangente de un angulo. Los angulos de BennuGD van en MILESIMAS DE GRADO (90000 = 90 grados, 360000 = una vuelta).",
+  "params": [
+   "angulo"
+  ],
+  "ret": "la tangente"
+ },
+ "TEXT_HEIGHT": {
+  "desc": "Alto en pixeles que ocupa un texto con una fuente.",
+  "params": [
+   "fuente",
+   "texto"
+  ],
+  "ret": "alto"
+ },
+ "TEXT_WIDTH": {
+  "desc": "Ancho en pixeles que ocupa un texto con una fuente.",
+  "params": [
+   "fuente",
+   "texto"
+  ],
+  "ret": "ancho"
+ },
+ "TIME": {
+  "desc": "Segundos desde el 1 de enero de 1970 (la hora del sistema).",
+  "ret": "segundos"
+ },
+ "TOWARDS(DDD)": {
+  "desc": "Lo mismo con decimales.",
+  "params": [
+   "valor",
+   "destino",
+   "paso"
+  ],
+  "ret": "el valor nuevo"
+ },
+ "TOWARDS(III)": {
+  "desc": "Acerca un valor a un destino como mucho 'paso', sin pasarse.",
+  "ejemplo": "x = towards(x, 200, 3);   // avanza 3 pixeles por frame hasta 200",
+  "params": [
+   "valor",
+   "destino",
+   "paso"
+  ],
+  "ret": "el valor nuevo"
+ },
+ "TRIM": {
+  "desc": "Quita los espacios del principio y del final de una cadena.",
+  "params": [
+   "texto"
+  ],
+  "ret": "la cadena"
+ },
+ "TRUNC": {
+  "desc": "Quita la parte decimal.",
+  "params": [
+   "valor"
+  ],
+  "ret": "el entero"
+ },
+ "TTF_LOAD": {
+  "desc": "Carga una fuente TrueType (.ttf) y devuelve su identificador. Se usa igual que una fuente .fnt en WRITE. Ajusta su tamano con TTF_SET_SIZE.",
+  "params": [
+   "fichero"
+  ],
+  "ret": "identificador de la fuente"
+ },
+ "TTF_SET_SIZE": {
+  "desc": "Tamano de una fuente TrueType, en puntos.",
+  "params": [
+   "fuente",
+   "tamano"
+  ]
+ },
+ "UCASE": {
+  "desc": "Pasa una cadena a mayusculas.",
+  "params": [
+   "texto"
+  ],
+  "ret": "la cadena"
+ },
+ "UPTIME": {
+  "desc": "Alias de GET_TIMER: milisegundos desde que arranco el programa.",
+  "ret": "milisegundos"
+ },
+ "WINDOW_GET_POS": {
+  "desc": "Lee la posicion de la ventana en dos variables que se pasan por puntero.",
+  "params": [
+   "&x",
+   "&y"
+  ]
+ },
+ "WINDOW_HIDE": {
+  "desc": "Oculta la ventana."
+ },
+ "WINDOW_MAXIMIZE": {
+  "desc": "Maximiza la ventana."
+ },
+ "WINDOW_MINIMIZE": {
+  "desc": "Minimiza la ventana."
+ },
+ "WINDOW_MOVE": {
+  "desc": "Mueve la ventana a una posicion del escritorio.",
+  "params": [
+   "x",
+   "y"
+  ]
+ },
+ "WINDOW_RAISE": {
+  "desc": "Trae al frente la ventana."
+ },
+ "WINDOW_RESTORE": {
+  "desc": "Restaura la ventana."
+ },
+ "WINDOW_SET_ICON": {
+  "desc": "Pone el icono de la ventana a partir de un grafico.",
+  "params": [
+   "archivo",
+   "grafico"
+  ]
+ },
+ "WINDOW_SET_POS": {
+  "desc": "Alias de WINDOW_MOVE.",
+  "params": [
+   "x",
+   "y"
+  ]
+ },
+ "WINDOW_SET_TITLE": {
+  "desc": "Pone el titulo de la ventana.",
+  "params": [
+   "titulo"
+  ]
+ },
+ "WINDOW_SHOW": {
+  "desc": "Muestra la ventana."
+ },
+ "WRAP": {
+  "desc": "Mantiene un valor dentro de un rango dando la vuelta (ambos limites incluidos): wrap(11, 0, 9) = 1.",
+  "params": [
+   "valor",
+   "limite_a",
+   "limite_b"
+  ],
+  "ret": "el valor dentro del rango"
+ },
+ "WRITE(IIIIIS)": {
+  "desc": "Igual, indicando tambien la profundidad (z): menor z se dibuja delante.",
+  "params": [
+   "fuente",
+   "x",
+   "y",
+   "z",
+   "alineacion",
+   "texto"
+  ],
+  "ret": "identificador del texto"
+ },
+ "WRITE(IIIIS)": {
+  "desc": "Escribe un texto en pantalla y devuelve su identificador. El texto se queda hasta que lo borras con WRITE_DELETE (o hasta que acaba el programa), no hay que volver a escribirlo cada frame. La alineacion es una de ALIGN_TOP_LEFT, ALIGN_TOP, ALIGN_TOP_RIGHT, ALIGN_CENTER_LEFT, ALIGN_CENTER, ALIGN_CENTER_RIGHT, ALIGN_BOTTOM_LEFT, ALIGN_BOTTOM, ALIGN_BOTTOM_RIGHT. La fuente es un identificador de FNT_LOAD o TTF_LOAD (0 = la fuente del sistema).",
+  "ejemplo": "txt = write(0, 10, 10, ALIGN_TOP_LEFT, \"Hola\");\n...\nwrite_delete(txt);",
+  "params": [
+   "fuente",
+   "x",
+   "y",
+   "alineacion",
+   "texto"
+  ],
+  "ret": "identificador del texto"
+ },
+ "WRITE_DELETE": {
+  "desc": "Borra un texto escrito con WRITE o WRITE_VAR (0 borra todos).",
+  "params": [
+   "texto"
+  ]
+ },
+ "WRITE_IN_MAP(ISI)": {
+  "desc": "Dibuja un texto dentro de un grafico nuevo y devuelve su codigo, en vez de ponerlo en pantalla.",
+  "params": [
+   "fuente",
+   "texto",
+   "alineacion"
+  ],
+  "ret": "codigo del grafico"
+ },
+ "WRITE_MOVE(III)": {
+  "desc": "Mueve un texto ya escrito.",
+  "params": [
+   "texto",
+   "x",
+   "y"
+  ]
+ },
+ "WRITE_MOVE(IIII)": {
+  "desc": "Mueve un texto ya escrito, cambiando tambien su profundidad.",
+  "params": [
+   "texto",
+   "x",
+   "y",
+   "z"
+  ]
+ },
+ "WRITE_VAR(IIIIIV++)": {
+  "desc": "Igual, indicando tambien la profundidad (z).",
+  "params": [
+   "fuente",
+   "x",
+   "y",
+   "z",
+   "alineacion",
+   "variable"
+  ],
+  "ret": "identificador del texto"
+ },
+ "WRITE_VAR(IIIIV++)": {
+  "desc": "Escribe el valor de una variable y lo mantiene actualizado solo: si la variable cambia, el texto cambia. Se pasa la propia variable.",
+  "ejemplo": "write_var(0, 10, 30, ALIGN_TOP_LEFT, puntos);",
+  "params": [
+   "fuente",
+   "x",
+   "y",
+   "alineacion",
+   "variable"
+  ],
+  "ret": "identificador del texto"
+ },
+ "XADVANCE": {
+  "desc": "Como ADVANCE pero con el angulo dado, sin tocar la variable angle.",
+  "params": [
+   "angulo",
+   "distancia"
+  ]
  }
 }

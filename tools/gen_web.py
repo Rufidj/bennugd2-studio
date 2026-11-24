@@ -93,14 +93,27 @@ def datos():
     for f in sorted(glob.glob(os.path.join(AQUI, "guias", "*.md"))):
         t, h = md(open(f, encoding="utf-8").read())
         guias.append({"id": os.path.basename(f)[:-3], "t": t, "h": h})
-    api = []
+    # Una funcion con varias formas (sobrecargas y alias) sale UNA vez: la principal es la mas completa; las demas van en 'ov'.
+    grupos = {}
     for f in gen_api.leer():
-        d = docs.get(f["nombre"], {})
+        grupos.setdefault((f["modulo"], f["nombre"]), []).append(f)
+    api = []
+    for (mod, nombre), fs_ in grupos.items():
+        fs_.sort(key=lambda f: (-len(f["params"]), f["sig"]))
+        prim = fs_[0]
+        d = gen_api.doc_de(docs, prim)
+        ov, vistos = [], {tuple(prim["params"])}
+        for f in fs_[1:]:
+            if tuple(f["params"]) in vistos:
+                continue                    # un alias con la misma firma no aporta otra forma
+            vistos.add(tuple(f["params"]))
+            dd = gen_api.doc_de(docs, f)
+            ov.append({"p": f["params"], "pn": dd.get("params", []), "r": f["ret"]})
         api.append({
-            "n": f["nombre"].lower(), "m": f["modulo"], "c": f["cat"],
-            "p": f["params"], "pn": d.get("params", []), "r": f["ret"],
+            "n": nombre.lower(), "m": mod, "c": prim["cat"],
+            "p": prim["params"], "pn": d.get("params", []), "r": prim["ret"],
             "d": d.get("desc", ""), "rd": d.get("ret", ""), "e": d.get("ejemplo", ""),
-            "g": GUIA_DE.get(f["cat"], "") if f["modulo"] == "3d" else "",
+            "g": GUIA_DE.get(prim["cat"], "") if mod == "3d" else "", "ov": ov,
         })
     return {"guias": guias, "api": api, "doc": sum(1 for a in api if a["d"])}
 
@@ -189,6 +202,7 @@ function pagina(){const r=location.hash.slice(1)||"guia/"+D.guias[0].id;const p=
   h='<p><span class="etq">'+(MOD[a.m]||a.m)+'</span><span class="etq">'+a.c+'</span></p><h1>'+a.n+'</h1><div class="firma">'+firma(a)+'</div>';
   h+=a.d?'<p>'+esc(a.d)+'</p>':'<p class="aviso">Esta funcion aun no esta documentada: solo se conoce su firma (los tipos de sus parametros).</p>';
   if(a.p.length&&a.pn.length){h+='<h3>Parametros</h3><div class="tabla"><table><thead><tr><th>Nombre</th><th>Tipo</th></tr></thead><tbody>'+a.p.map((t,i)=>'<tr><td><code>'+esc(a.pn[i]||"?")+'</code></td><td>'+esc(t)+'</td></tr>').join("")+'</tbody></table></div>'}
+  if(a.ov&&a.ov.length)h+='<h3>Otras formas de llamarla</h3>'+a.ov.map(o=>'<div class="firma">'+firma({n:a.n,p:o.p,pn:o.pn,r:o.r})+'</div>').join("");
   if(a.rd||a.r)h+='<h3>Devuelve</h3><p>'+(a.rd?esc(a.rd):'<code>'+a.r+'</code>')+'</p>';
   if(a.e)h+='<h3>Ejemplo</h3><div class="bloque"><button class="copiar" type="button">Copiar</button><pre><code class="lang-bennugd">'+esc(a.e)+'</code></pre></div>';
   if(g)h+='<h3>Mas ejemplos</h3><p>Programa completo con esta funcion: <a href="#guia/'+g.id+'">'+esc(g.t)+'</a>.</p>';

@@ -46,12 +46,17 @@ def leer():
                 continue
             nombre, params, ret = m.groups()
             funcs.append({
-                "nombre": nombre, "modulo": modulo,
+                "nombre": nombre, "modulo": modulo, "sig": params,
                 "params": [TIPO_PARAM.get(c, "?") for c in params],
                 "ret": TIPO_RET.get(ret, ""),
                 "cat": categoria(nombre, modulo),
             })
     return funcs
+
+
+def doc_de(docs, f):
+    """Doc de una funcion: primero la de su firma exacta (NOMBRE(II)), luego la general (NOMBRE)."""
+    return docs.get("%s(%s)" % (f["nombre"], f["sig"]), docs.get(f["nombre"], {}))
 
 
 def firma(f, d):
@@ -76,12 +81,12 @@ def main():
     funcs = leer()
     nombres = {f["nombre"] for f in funcs}
     for k in docs:
-        if k not in nombres:
+        if k.split("(")[0] not in nombres:
             print("AVISO: api_docs.json documenta '%s', que ya no existe" % k, file=sys.stderr)
 
     if "--pendientes" in sys.argv:
         for f in funcs:
-            if f["nombre"] not in docs:
+            if f["nombre"] not in docs and "%s(%s)" % (f["nombre"], f["sig"]) not in docs:
                 print(f["modulo"], f["nombre"])
         return
 
@@ -91,7 +96,7 @@ def main():
            "struct ApiFunc { const char *nombre, *modulo, *cat, *firma, *desc, *ejemplo; };",
            "static const ApiFunc API_FUNCS[] = {"]
     for f in funcs:
-        d = docs.get(f["nombre"], {})
+        d = doc_de(docs, f)
         out.append("  {%s,%s,%s,%s,%s,%s}," % (
             c_str(f["nombre"].lower()), c_str(f["modulo"]), c_str(f["cat"]),
             c_str(firma(f, d)), c_str(d.get("desc", "")), c_str(d.get("ejemplo", ""))))
@@ -102,7 +107,7 @@ def main():
     # ---- Markdown ----
     md = ["# Referencia de la API", "",
           "Generada automaticamente desde los modulos del motor (%d funciones, %d documentadas)." %
-          (len(funcs), sum(1 for f in funcs if f["nombre"] in docs)), ""]
+          (len(funcs), sum(1 for f in funcs if f["nombre"] in docs or "%s(%s)" % (f["nombre"], f["sig"]) in docs)), ""]
     por_mod = {}
     for f in funcs:
         por_mod.setdefault(f["modulo"], {}).setdefault(f["cat"], []).append(f)
@@ -111,7 +116,7 @@ def main():
         for cat in sorted(por_mod[mod]):
             md.append("### %s" % cat)
             for f in por_mod[mod][cat]:
-                d = docs.get(f["nombre"], {})
+                d = doc_de(docs, f)
                 md.append("#### `%s`" % firma(f, d))
                 if d.get("desc"):
                     md.append(d["desc"])
@@ -121,7 +126,7 @@ def main():
                     md += ["", "```", d["ejemplo"], "```"]
                 md.append("")
     open(os.path.join(EDIT, "docs", "API.md"), "w", encoding="utf-8").write("\n".join(md) + "\n")
-    print("%d funciones, %d documentadas" % (len(funcs), sum(1 for f in funcs if f["nombre"] in docs)))
+    print("%d funciones, %d documentadas" % (len(funcs), sum(1 for f in funcs if f["nombre"] in docs or "%s(%s)" % (f["nombre"], f["sig"]) in docs)))
 
 
 if __name__ == "__main__":

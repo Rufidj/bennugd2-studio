@@ -1,6 +1,6 @@
 # Referencia de la API
 
-Generada automaticamente desde los modulos del motor (1150 funciones, 166 documentadas).
+Generada automaticamente desde los modulos del motor (1150 funciones, 491 documentadas).
 
 ## Modulo 3d
 ### camera
@@ -1348,17 +1348,36 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 
 ## Modulo gfx
 ### general
-#### `advance(double) -> int`
+#### `advance(double distancia) -> int`
+Mueve el proceso 'distancia' en la direccion de su variable angle. Los angulos de BennuGD van en MILESIMAS DE GRADO (90000 = 90 grados) y la Y de pantalla crece hacia abajo, asi que con angle = 90000 el proceso sube.
 
-#### `xadvance(int, double) -> int`
+```
+angle = 45000;
+advance(4);   // avanza 4 pixeles en diagonal hacia arriba a la derecha
+```
 
-#### `get_angle(int) -> int`
+#### `xadvance(int angulo, double distancia) -> int`
+Como ADVANCE pero con el angulo dado, sin tocar la variable angle.
 
-#### `get_angle(int, int) -> int`
+#### `get_angle(int proceso) -> int`
+Angulo (en milesimas de grado) desde este proceso hasta otro, indicado por su identificador.
 
-#### `get_dist(int) -> double`
+**Devuelve:** angulo
 
-#### `get_dist(int, int) -> double`
+#### `get_angle(int proceso_a, int proceso_b) -> int`
+Angulo (en milesimas de grado) desde el primer proceso hasta el segundo.
+
+**Devuelve:** angulo
+
+#### `get_dist(int proceso) -> double`
+Distancia en pixeles desde este proceso hasta otro, indicado por su identificador.
+
+**Devuelve:** distancia
+
+#### `get_dist(int proceso_a, int proceso_b) -> double`
+Distancia en pixeles entre dos procesos.
+
+**Devuelve:** distancia
 
 #### `get_real_point(int, double, double, pointer, pointer) -> int`
 
@@ -1366,9 +1385,19 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 
 #### `get_real_point(int, pointer, pointer) -> int`
 
-#### `collision(int, int) -> int`
+#### `collision(int proceso, int objetivo) -> int`
+Igual, pero para el proceso indicado en vez de para este.
 
-#### `collision(int) -> int`
+**Devuelve:** identificador del proceso con el que choca, o 0
+
+#### `collision(int objetivo) -> int`
+Comprueba si este proceso choca con otros. Se le pasa el tipo de proceso (TYPE nombre), el identificador de uno concreto, o -1 para el raton. La colision se calcula con la forma real del grafico de cada proceso.
+
+**Devuelve:** identificador del proceso con el que choca, o 0
+
+```
+IF (collision(TYPE bala)) vida--; END
+```
 
 #### `scroll_start(int, int, int, int, int, int, int, int, int) -> int`
 
@@ -1386,91 +1415,173 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 
 #### `screen_get() -> int`
 
-#### `rgb(byte, byte, byte) -> int`
+#### `rgb(byte r, byte g, byte b) -> int`
+Crea un color con rojo, verde y azul (0 a 255 cada uno), opaco. El numero que devuelve se usa en DRAWING_COLOR, MAP_CLEAR, MAP_PUT_PIXEL...
 
-#### `rgb(int, int, byte, byte, byte) -> int`
+**Devuelve:** el color
 
-#### `rgba(byte, byte, byte, byte) -> int`
+```
+color = rgb(255, 128, 0);   // naranja
+```
 
-#### `rgba(int, int, byte, byte, byte, byte) -> int`
+#### `rgb(int archivo, int grafico, byte r, byte g, byte b) -> int`
+Alias que acepta un mapa (se ignora) y devuelve el mismo color.
 
-#### `rgb_get(int, pointer, pointer, pointer) -> int`
+**Devuelve:** el color
+
+#### `rgba(byte r, byte g, byte b, byte alfa) -> int`
+Crea un color con rojo, verde, azul y alfa (0 a 255 cada uno; alfa 255 = opaco).
+
+**Devuelve:** el color
+
+#### `rgba(int archivo, int grafico, byte r, byte g, byte b, byte alfa) -> int`
+Alias que acepta un mapa (se ignora) y devuelve el mismo color.
+
+**Devuelve:** el color
+
+#### `rgb_get(int color, pointer &r, pointer &g, pointer &b) -> int`
+Separa un color en rojo, verde y azul, en tres variables que se pasan por puntero.
 
 #### `rgb_get(int, int, int, pointer, pointer, pointer) -> int`
 
-#### `rgba_get(int, pointer, pointer, pointer, pointer) -> int`
+#### `rgba_get(int color, pointer &r, pointer &g, pointer &b, pointer &alfa) -> int`
+Separa un color en rojo, verde, azul y alfa, en cuatro variables que se pasan por puntero.
 
 #### `rgba_get(int, int, int, pointer, pointer, pointer, pointer) -> int`
 
-#### `fade(int, int, int, int, int) -> int`
+#### `fade(int r, int g, int b, int alfa, int velocidad) -> int`
+Funde la pantalla hacia un color. Los cuatro primeros valores son el color de destino (rojo, verde, azul y su alfa/intensidad) y 'velocidad' es lo rapido que se hace.
 
 #### `fade(int, int, int, int, int, int) -> int`
 
-#### `fade_on(int) -> int`
+#### `fade_on(int velocidad) -> int`
+Quita el fundido: la pantalla vuelve a verse (alfa 0) con la velocidad dada.
 
-#### `fade_on(int, int) -> int`
+#### `fade_on(int velocidad, int region) -> int`
+Quita el fundido solo en la region indicada.
 
-#### `fade_off(int) -> int`
+#### `fade_off(int velocidad) -> int`
+Funde la pantalla a negro con la velocidad dada (el alfa de destino es 255).
 
-#### `fade_off(int, int) -> int`
+#### `fade_off(int velocidad, int region) -> int`
+Funde a negro solo la region indicada.
 
-#### `set_mode(int, int) -> int`
+#### `set_mode(int ancho, int alto) -> int`
+Cambia el tamano de la pantalla (o de la ventana) en pixeles.
 
-#### `set_mode(int, int, int) -> int`
+```
+set_mode(1280, 720);
+```
 
-#### `set_fps(int, int) -> int`
+#### `set_mode(int ancho, int alto, int flags) -> int`
+Cambia el tamano de la pantalla con banderas de modo.
 
-#### `window_set_title(string) -> int`
+#### `set_fps(int fps, int saltos) -> int`
+Fotogramas por segundo del juego. El segundo valor es cuantos fotogramas se pueden saltar al dibujar si el juego va lento (0 = ninguno).
 
-#### `window_set_icon(int, int) -> int`
+**Devuelve:** los fps fijados
 
-#### `window_move(int, int) -> int`
+```
+set_fps(60, 0);
+```
 
-#### `window_set_pos(int, int) -> int`
+#### `window_set_title(string titulo) -> int`
+Pone el titulo de la ventana.
 
-#### `window_get_pos(pointer, pointer) -> int`
+#### `window_set_icon(int archivo, int grafico) -> int`
+Pone el icono de la ventana a partir de un grafico.
+
+#### `window_move(int x, int y) -> int`
+Mueve la ventana a una posicion del escritorio.
+
+#### `window_set_pos(int x, int y) -> int`
+Alias de WINDOW_MOVE.
+
+#### `window_get_pos(pointer &x, pointer &y) -> int`
+Lee la posicion de la ventana en dos variables que se pasan por puntero.
 
 #### `window_get_size(pointer, pointer, pointer, pointer, pointer, pointer) -> int`
 
-#### `desktop_get_size(pointer, pointer) -> int`
+#### `desktop_get_size(pointer &ancho, pointer &alto) -> int`
+Lee el tamano del escritorio en dos variables que se pasan por puntero.
 
 #### `window_hide() -> int`
+Oculta la ventana.
 
 #### `window_show() -> int`
+Muestra la ventana.
 
 #### `window_minimize() -> int`
+Minimiza la ventana.
 
 #### `window_maximize() -> int`
+Maximiza la ventana.
 
 #### `window_raise() -> int`
+Trae al frente la ventana.
 
 #### `window_restore() -> int`
+Restaura la ventana.
 
 #### `display_get_orientation() -> int`
 
 #### `window_set_dpi_aware() -> int`
 
-#### `write(int, int, int, int, string) -> int`
+#### `write(int fuente, int x, int y, int alineacion, string texto) -> int`
+Escribe un texto en pantalla y devuelve su identificador. El texto se queda hasta que lo borras con WRITE_DELETE (o hasta que acaba el programa), no hay que volver a escribirlo cada frame. La alineacion es una de ALIGN_TOP_LEFT, ALIGN_TOP, ALIGN_TOP_RIGHT, ALIGN_CENTER_LEFT, ALIGN_CENTER, ALIGN_CENTER_RIGHT, ALIGN_BOTTOM_LEFT, ALIGN_BOTTOM, ALIGN_BOTTOM_RIGHT. La fuente es un identificador de FNT_LOAD o TTF_LOAD (0 = la fuente del sistema).
 
-#### `write(int, int, int, int, int, string) -> int`
+**Devuelve:** identificador del texto
 
-#### `write_move(int, int, int) -> int`
+```
+txt = write(0, 10, 10, ALIGN_TOP_LEFT, "Hola");
+...
+write_delete(txt);
+```
 
-#### `write_move(int, int, int, int) -> int`
+#### `write(int fuente, int x, int y, int z, int alineacion, string texto) -> int`
+Igual, indicando tambien la profundidad (z): menor z se dibuja delante.
 
-#### `write_delete(int) -> int`
+**Devuelve:** identificador del texto
 
-#### `write_in_map(int, string, int) -> int`
+#### `write_move(int texto, int x, int y) -> int`
+Mueve un texto ya escrito.
+
+#### `write_move(int texto, int x, int y, int z) -> int`
+Mueve un texto ya escrito, cambiando tambien su profundidad.
+
+#### `write_delete(int texto) -> int`
+Borra un texto escrito con WRITE o WRITE_VAR (0 borra todos).
+
+#### `write_in_map(int fuente, string texto, int alineacion) -> int`
+Dibuja un texto dentro de un grafico nuevo y devuelve su codigo, en vez de ponerlo en pantalla.
+
+**Devuelve:** codigo del grafico
 
 #### `write_in_map(int, int, int, int, int, string, int) -> int`
 
-#### `text_width(int, string) -> int`
+#### `text_width(int fuente, string texto) -> int`
+Ancho en pixeles que ocupa un texto con una fuente.
 
-#### `text_height(int, string) -> int`
+**Devuelve:** ancho
 
-#### `write_var(int, int, int, int, ..., ?, ?) -> int`
+#### `text_height(int fuente, string texto) -> int`
+Alto en pixeles que ocupa un texto con una fuente.
 
-#### `write_var(int, int, int, int, int, ..., ?, ?) -> int`
+**Devuelve:** alto
+
+#### `write_var(int fuente, int x, int y, int alineacion, ... variable, ?, ?) -> int`
+Escribe el valor de una variable y lo mantiene actualizado solo: si la variable cambia, el texto cambia. Se pasa la propia variable.
+
+**Devuelve:** identificador del texto
+
+```
+write_var(0, 10, 30, ALIGN_TOP_LEFT, puntos);
+```
+
+#### `write_var(int fuente, int x, int y, int z, int alineacion, ... variable, ?, ?) -> int`
+Igual, indicando tambien la profundidad (z).
+
+**Devuelve:** identificador del texto
 
 #### `write_value(int, int, int, int, int, pointer) -> int`
 
@@ -1490,61 +1601,117 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 
 #### `map_block_copy(int, int, int, int, int, int, int, int, int, int) -> int`
 
-#### `map_put(int, int, int, int, int, int) -> int`
+#### `map_put(int archivo_destino, int grafico_destino, int archivo_origen, int grafico_origen, int x, int y) -> int`
+Copia un grafico (origen) sobre otro (destino) en la posicion (x, y).
 
-#### `map_put(int, int, int, int, int, int, int, int, int, int, byte, byte, byte, byte) -> int`
+#### `map_put(int archivo_destino, int grafico_destino, int archivo_origen, int grafico_origen, int x, int y, int angulo, int escala_x, int escala_y, int flags, byte r, byte g, byte b, byte alfa) -> int`
+Copia un grafico sobre otro con todas las opciones: angulo (milesimas de grado), escala en porcentaje (100 = tamano normal), banderas (B_HMIRROR, B_VMIRROR, B_TRANSLUCENT...), tinte (r, g, b) y alfa (0 a 255).
 
-#### `map_put(int, int, int, int, int, int, int, int, int, int, byte, byte, byte, byte, int) -> int`
+#### `map_put(int archivo_destino, int grafico_destino, int archivo_origen, int grafico_origen, int x, int y, int angulo, int escala_x, int escala_y, int flags, byte r, byte g, byte b, byte alfa, int mezcla) -> int`
+Igual, con modo de mezcla (BLEND_NORMAL, BLEND_ADD, BLEND_MULTIPLY, BLEND_SUBTRACT...).
 
 #### `map_put(int, int, int, int, int, int, int, int, int, int, byte, byte, byte, byte, int, int, int, int, int, int, int) -> int`
 
-#### `map_new(int, int) -> int`
+#### `map_new(int ancho, int alto) -> int`
+Crea un grafico vacio del tamano indicado en la biblioteca del sistema (archivo 0) y devuelve su codigo (0 si falla).
 
-#### `map_new(int, int, int) -> int`
+**Devuelve:** codigo del grafico
 
-#### `map_clear(int, int) -> int`
+```
+g = map_new(32, 32);
+map_clear(0, g, rgb(255, 0, 0));   // lo rellena de rojo
+```
 
-#### `map_clear(int, int, int) -> int`
+#### `map_new(int ancho, int alto, int flags) -> int`
+Igual, y con la bandera B_CLEAR ademas lo deja limpio.
 
-#### `map_clear(int, int, int, int, int, int) -> int`
+**Devuelve:** codigo del grafico
+
+#### `map_clear(int archivo, int grafico) -> int`
+Limpia un grafico (lo deja transparente).
+
+#### `map_clear(int archivo, int grafico, int color) -> int`
+Rellena un grafico entero de un color.
+
+#### `map_clear(int archivo, int grafico, int x0, int y0, int x1, int y1) -> int`
+Rellena de un color solo un rectangulo (x0, y0, x1, y1).
 
 #### `map_clear(int, int, int, int, int, int, int) -> int`
 
-#### `map_clone(int, int) -> int`
+#### `map_clone(int archivo, int grafico) -> int`
+Crea una copia de un grafico y devuelve el codigo de la copia.
+
+**Devuelve:** codigo de la copia
 
 #### `map_name(int, int) -> string`
 
 #### `map_set_name(int, int, string) -> int`
 
-#### `map_exists(int, int) -> int`
+#### `map_exists(int archivo, int grafico) -> int`
+Indica si existe un grafico.
+
+**Devuelve:** 1 si existe
 
 #### `map_del(int, int) -> int`
 
-#### `map_unload(int, int) -> int`
+#### `map_unload(int archivo, int grafico) -> int`
+Libera un grafico de memoria.
 
-#### `map_load(string) -> int`
+#### `map_load(string fichero) -> int`
+Carga una imagen (PNG, JPG...) como grafico en la biblioteca del sistema y devuelve su codigo (0 si falla).
 
-#### `map_load(string, pointer) -> int`
+**Devuelve:** codigo del grafico
 
-#### `map_save(int, int, string) -> int`
+```
+graph = map_load("Assets/Sprites/heroe.png");
+```
 
-#### `map_get_pixel(int, int, int, int) -> int`
+#### `map_load(string fichero, pointer &codigo) -> int`
+Carga una imagen EN SEGUNDO PLANO: el codigo se guarda en la variable que se pasa por puntero cuando termina.
 
-#### `map_put_pixel(int, int, int, int, int) -> int`
+#### `map_save(int archivo, int grafico, string fichero) -> int`
+Guarda un grafico en un fichero de imagen. Devuelve -1 si el grafico no existe.
 
-#### `fpg_add(int, int, int, int) -> int`
+**Devuelve:** 0 si va bien, -1 si no
+
+#### `map_get_pixel(int archivo, int grafico, int x, int y) -> int`
+Color de un pixel de un grafico (-1 si el grafico no existe).
+
+**Devuelve:** el color
+
+#### `map_put_pixel(int archivo, int grafico, int x, int y, int color) -> int`
+Pone un pixel de un color en un grafico.
+
+#### `fpg_add(int archivo, int codigo, int archivo_origen, int grafico_origen) -> int`
+Anade a una coleccion una copia de un grafico, con el codigo indicado.
 
 #### `fpg_new() -> int`
+Crea una coleccion de graficos vacia y devuelve su identificador.
 
-#### `fpg_exists(int) -> int`
+**Devuelve:** identificador del archivo
 
-#### `fpg_load(string) -> int`
+#### `fpg_exists(int archivo) -> int`
+Indica si existe una coleccion de graficos.
 
-#### `fpg_load(string, pointer) -> int`
+**Devuelve:** 1 si existe
+
+#### `fpg_load(string fichero) -> int`
+Carga una coleccion de graficos (.fpg) y devuelve su identificador de archivo (0 si falla). Cada grafico se pide luego con (archivo, codigo): las variables file y graph de un proceso. Los .fpg de BennuGD pueden venir comprimidos con gzip.
+
+**Devuelve:** identificador del archivo
+
+```
+file = fpg_load("Assets/heroe.fpg");
+graph = 1;
+```
+
+#### `fpg_load(string fichero, pointer &archivo) -> int`
+Carga un .fpg EN SEGUNDO PLANO: el identificador se guarda en la variable que se pasa por puntero cuando termina.
 
 #### `fpg_del(int) -> int`
 
-#### `fpg_unload(int) -> int`
+#### `fpg_unload(int archivo) -> int`
+Libera una coleccion de graficos.
 
 #### `map_info_set(int, int, int, int) -> int`
 
@@ -1606,15 +1773,24 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 
 #### `fnt_new(int, int, int, int, int, int, int, int, int, int, int, int, string, int, int, int, int, int) -> int`
 
-#### `fnt_load(string) -> int`
+#### `fnt_load(string fichero) -> int`
+Carga una fuente de mapa de bits (.fnt) desde un fichero y devuelve su identificador (0 si falla). Los ficheros .fnt de BennuGD pueden venir comprimidos con gzip.
 
-#### `fnt_load(string, pointer) -> int`
+**Devuelve:** identificador de la fuente
 
-#### `fnt_unload(int) -> int`
+#### `fnt_load(string fichero, pointer &identificador) -> int`
+Carga una fuente .fnt EN SEGUNDO PLANO: el identificador se guarda en la variable que se pasa por puntero cuando termina.
 
-#### `ttf_load(string) -> int`
+#### `fnt_unload(int fuente) -> int`
+Libera una fuente.
 
-#### `ttf_set_size(int, int) -> int`
+#### `ttf_load(string fichero) -> int`
+Carga una fuente TrueType (.ttf) y devuelve su identificador. Se usa igual que una fuente .fnt en WRITE. Ajusta su tamano con TTF_SET_SIZE.
+
+**Devuelve:** identificador de la fuente
+
+#### `ttf_set_size(int fuente, int tamano) -> int`
+Tamano de una fuente TrueType, en puntos.
 
 #### `ttf_get_family(int) -> string`
 
@@ -1624,9 +1800,11 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 
 #### `glyph_set(int, int, int, int) -> int`
 
-#### `drawing_color(int) -> int`
+#### `drawing_color(int color) -> int`
+Color con el que se dibujaran los siguientes DRAW_*.
 
-#### `drawing_color(int, int) -> int`
+#### `drawing_color(int dibujo, int color) -> int`
+Cambia el color de un dibujo ya creado.
 
 #### `drawing_rgba(byte, byte, byte, byte) -> int`
 
@@ -1642,33 +1820,66 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 
 #### `drawing_z() -> int`
 
-#### `drawing_z(int) -> int`
+#### `drawing_z(int z) -> int`
+Profundidad (z) de los siguientes dibujos: menor z se dibuja delante.
 
 #### `drawing_z(int, int) -> int`
 
-#### `drawing_map(int, int) -> int`
+#### `drawing_map(int archivo, int grafico) -> int`
+Hace que los siguientes DRAW_* dibujen dentro de un grafico en vez de en pantalla. Con (0, 0), que no es un grafico, se vuelve a dibujar en pantalla.
 
-#### `draw_delete(int) -> int`
+#### `draw_delete(int dibujo) -> int`
+Borra un dibujo creado con un DRAW_* (0 borra todos).
 
-#### `draw_move(int, int, int) -> int`
+#### `draw_move(int dibujo, int x, int y) -> int`
+Mueve un dibujo ya creado.
 
 #### `draw_coords(int, pointer, pointer, pointer) -> int`
 
-#### `draw_point(int, int) -> int`
+#### `draw_point(int x, int y) -> int`
+Dibuja un punto con el color de DRAWING_COLOR.
 
-#### `draw_point(int, int, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_line(int, int, int, int) -> int`
+#### `draw_point(int x, int y, int color) -> int`
+Dibuja un punto de un color concreto.
 
-#### `draw_line(int, int, int, int, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_rectangle(int, int, int, int) -> int`
+#### `draw_line(int x0, int y0, int x1, int y1) -> int`
+Dibuja una linea con el color de DRAWING_COLOR.
 
-#### `draw_rectangle(int, int, int, int, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_rectangle_filled(int, int, int, int) -> int`
+```
+drawing_color(rgb(255, 255, 0));
+lin = draw_line(10, 10, 200, 100);
+```
 
-#### `draw_rectangle_filled(int, int, int, int, int) -> int`
+#### `draw_line(int x0, int y0, int x1, int y1, int color) -> int`
+Dibuja una linea de un color concreto.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_rectangle(int x, int y, int ancho, int alto) -> int`
+Dibuja el borde de un rectangulo (x, y, ancho, alto) con el color de DRAWING_COLOR.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_rectangle(int x, int y, int ancho, int alto, int color) -> int`
+Dibuja el borde de un rectangulo de un color concreto.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_rectangle_filled(int x, int y, int ancho, int alto) -> int`
+Dibuja un rectangulo relleno (x, y, ancho, alto) con el color de DRAWING_COLOR.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_rectangle_filled(int x, int y, int ancho, int alto, int color) -> int`
+Dibuja un rectangulo relleno de un color concreto.
+
+**Devuelve:** identificador del dibujo
 
 #### `draw_points(int, pointer) -> int`
 
@@ -1686,13 +1897,25 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 
 #### `draw_rectangles_filled(int, pointer, int) -> int`
 
-#### `draw_circle(int, int, int) -> int`
+#### `draw_circle(int x, int y, int radio) -> int`
+Dibuja el borde de un circulo (centro y radio) con el color de DRAWING_COLOR.
 
-#### `draw_circle(int, int, int, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_circle_filled(int, int, int) -> int`
+#### `draw_circle(int x, int y, int radio, int color) -> int`
+Dibuja el borde de un circulo de un color concreto.
 
-#### `draw_circle_filled(int, int, int, int) -> int`
+**Devuelve:** identificador del dibujo
+
+#### `draw_circle_filled(int x, int y, int radio) -> int`
+Dibuja un circulo relleno (centro y radio) con el color de DRAWING_COLOR.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_circle_filled(int x, int y, int radio, int color) -> int`
+Dibuja un circulo relleno de un color concreto.
+
+**Devuelve:** identificador del dibujo
 
 #### `draw_curve(int, int, int, int, int, int, int, int, int) -> int`
 
@@ -1856,99 +2079,248 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 
 ## Modulo input
 ### general
-#### `key(int) -> int`
+#### `key(int tecla) -> int`
+Indica si una tecla esta pulsada AHORA. Se le pasa una constante de tecla (_A, _SPACE, _ESC, _UP, _LEFT...). Una tecla pulsada y soltada dentro del mismo fotograma tambien cuenta como pulsada, para que el juego no se pierda pulsaciones rapidas.
 
-#### `keyup(int) -> int`
+**Devuelve:** 1 si esta pulsada, 0 si no
 
-#### `key_up(int) -> int`
+```
+IF (key(_SPACE)) saltar(); END
+IF (key(_LEFT)) x -= 4; END
+```
 
-#### `keydown(int) -> int`
+#### `keyup(int tecla) -> int`
+Alias de KEY_UP.
 
-#### `key_down(int) -> int`
+**Devuelve:** 1 solo en el fotograma de soltarla
+
+#### `key_up(int tecla) -> int`
+Indica si una tecla se ACABA de soltar: vale 1 solo en el fotograma en que pasa de pulsada a suelta.
+
+**Devuelve:** 1 solo en el fotograma de soltarla
+
+#### `keydown(int tecla) -> int`
+Alias de KEY_DOWN.
+
+**Devuelve:** 1 solo en el fotograma de la pulsacion
+
+#### `key_down(int tecla) -> int`
+Indica si una tecla se ACABA de pulsar: vale 1 solo en el fotograma en que pasa de suelta a pulsada. Util para acciones de un solo disparo (saltar, disparar, abrir un menu).
+
+**Devuelve:** 1 solo en el fotograma de la pulsacion
+
+```
+IF (key_down(_SPACE)) disparar(); END   // un disparo por pulsacion, aunque mantengas la tecla
+```
 
 #### `joy_name() -> string`
+Nombre del mando elegido.
 
-#### `joy_name(int) -> string`
+**Devuelve:** el nombre
 
-#### `joy_select(int) -> int`
+#### `joy_name(int mando) -> string`
+Nombre del mando. Sin argumento, el del mando elegido; con un numero, el de ese mando.
+
+**Devuelve:** el nombre
+
+#### `joy_select(int mando) -> int`
+Elige el mando con el que trabajan las funciones JOY_* que no llevan numero de mando. BennuGD2 arranca SIN ningun mando elegido: hasta que se elige, JOY_GETBUTTON y JOY_GETAXIS devuelven siempre 0. Normalmente se hace una vez al empezar.
+
+**Devuelve:** el mando elegido
+
+```
+IF (joy_numjoysticks() > 0) joy_select(0); END
+```
 
 #### `joy_number() -> int`
+Alias antiguo de JOY_NUMJOYSTICKS.
+
+**Devuelve:** cantidad de mandos
 
 #### `joy_numjoysticks() -> int`
+Numero de mandos conectados.
+
+**Devuelve:** cantidad de mandos
 
 #### `joy_buttons() -> int`
+Numero de botones (nombre antiguo) del mando elegido.
 
-#### `joy_buttons(int) -> int`
+**Devuelve:** cantidad
+
+#### `joy_buttons(int mando) -> int`
+Numero de botones (nombre antiguo) del mando indicado.
+
+**Devuelve:** cantidad
 
 #### `joy_numbuttons() -> int`
+Numero de botones del mando elegido.
 
-#### `joy_numbuttons(int) -> int`
+**Devuelve:** cantidad
+
+#### `joy_numbuttons(int mando) -> int`
+Numero de botones del mando indicado.
+
+**Devuelve:** cantidad
 
 #### `joy_axes() -> int`
+Numero de ejes (nombre antiguo) del mando elegido.
 
-#### `joy_axes(int) -> int`
+**Devuelve:** cantidad
+
+#### `joy_axes(int mando) -> int`
+Numero de ejes (nombre antiguo) del mando indicado.
+
+**Devuelve:** cantidad
 
 #### `joy_numaxes() -> int`
+Numero de ejes del mando elegido.
 
-#### `joy_numaxes(int) -> int`
+**Devuelve:** cantidad
+
+#### `joy_numaxes(int mando) -> int`
+Numero de ejes del mando indicado.
+
+**Devuelve:** cantidad
 
 #### `joy_numhats() -> int`
+Numero de cruces (sombreros / POV hats) del mando elegido.
 
-#### `joy_numhats(int) -> int`
+**Devuelve:** cantidad
+
+#### `joy_numhats(int mando) -> int`
+Numero de cruces (sombreros / POV hats) del mando indicado.
+
+**Devuelve:** cantidad
 
 #### `joy_numballs() -> int`
+Numero de bolas (trackballs) del mando elegido.
 
-#### `joy_numballs(int) -> int`
+**Devuelve:** cantidad
 
-#### `joy_getaxis(int) -> int`
+#### `joy_numballs(int mando) -> int`
+Numero de bolas (trackballs) del mando indicado.
 
-#### `joy_getaxis(int, int) -> int`
+**Devuelve:** cantidad
 
-#### `joy_getposition(int) -> int`
+#### `joy_getaxis(int eje) -> int`
+Posicion de un eje del mando elegido con JOY_SELECT (de -32768 a 32767).
 
-#### `joy_getposition(int, int) -> int`
+**Devuelve:** posicion del eje
 
-#### `joy_getbutton(int) -> int`
+#### `joy_getaxis(int mando, int eje) -> int`
+Posicion de un eje del mando indicado. Los ejes se piden con JOY_AXIS_LEFTX, JOY_AXIS_LEFTY, JOY_AXIS_RIGHTX, JOY_AXIS_RIGHTY (sticks) y JOY_AXIS_TRIGGERLEFT, JOY_AXIS_TRIGGERRIGHT (gatillos). El valor va de -32768 a 32767 y es 0 en reposo; para tener -1.0 .. 1.0, dividelo entre 32767.0. Los sticks nunca vuelven a 0 exacto: ignora un margen pequeno (zona muerta).
 
-#### `joy_getbutton(int, int) -> int`
+**Devuelve:** posicion del eje
 
-#### `joy_gethat(int) -> int`
+```
+ax = joy_getaxis(0, JOY_AXIS_LEFTX) / 32767.0;
+IF (abs(ax) < 0.15) ax = 0.0; END   // zona muerta
+```
 
-#### `joy_gethat(int, int) -> int`
+#### `joy_getposition(int eje) -> int`
+Alias antiguo de JOY_GETAXIS para el mando elegido.
 
-#### `joy_getball(int, pointer, pointer) -> int`
+**Devuelve:** posicion del eje
 
-#### `joy_getball(int, int, pointer, pointer) -> int`
+#### `joy_getposition(int mando, int eje) -> int`
+Alias antiguo de JOY_GETAXIS.
 
-#### `joy_getaccel(pointer, pointer, pointer) -> int`
+**Devuelve:** posicion del eje
 
-#### `joy_getaccel(int, pointer, pointer, pointer) -> int`
+#### `joy_getbutton(int boton) -> int`
+Estado de un boton del mando elegido con JOY_SELECT.
+
+**Devuelve:** 1 si esta pulsado
+
+#### `joy_getbutton(int mando, int boton) -> int`
+Estado de un boton del mando indicado. Los botones se piden con las constantes JOY_BUTTON_A, _B, _X, _Y, _START, _BACK, _LEFTSHOULDER, _RIGHTSHOULDER, _DPAD_UP/DOWN/LEFT/RIGHT, _LEFTSTICK, _RIGHTSTICK, _GUIDE y _TOUCHPAD.
+
+**Devuelve:** 1 si esta pulsado
+
+```
+IF (joy_getbutton(0, JOY_BUTTON_A)) saltar(); END
+```
+
+#### `joy_gethat(int cruz) -> int`
+Estado de una cruz del mando elegido.
+
+**Devuelve:** direccion de la cruz
+
+#### `joy_gethat(int mando, int cruz) -> int`
+Estado de una cruz (POV hat) del mando indicado: JOY_HAT_CENTERED, _UP, _DOWN, _LEFT, _RIGHT, _LEFTUP, _LEFTDOWN, _RIGHTUP o _RIGHTDOWN.
+
+**Devuelve:** direccion de la cruz
+
+#### `joy_getball(int bola, pointer &dx, pointer &dy) -> int`
+Lee cuanto se ha movido una bola del mando elegido, en dos variables que se pasan por puntero.
+
+#### `joy_getball(int mando, int bola, pointer &dx, pointer &dy) -> int`
+Lee cuanto se ha movido una bola (trackball) del mando indicado, en dos variables que se pasan por puntero.
+
+#### `joy_getaccel(pointer &x, pointer &y, pointer &z) -> int`
+Lee el acelerometro del mando elegido en tres variables que se pasan por puntero.
+
+#### `joy_getaccel(int mando, pointer &x, pointer &y, pointer &z) -> int`
+Lee el acelerometro del mando indicado en tres variables que se pasan por puntero.
 
 #### `joy_is_attached() -> int`
+Indica si el mando elegido esta conectado.
 
-#### `joy_is_attached(int) -> int`
+**Devuelve:** 1 si esta conectado
 
-#### `joy_query(int) -> int`
+#### `joy_is_attached(int mando) -> int`
+Indica si un mando esta conectado. Sin argumento, el elegido.
 
-#### `joy_query(int, int) -> int`
+**Devuelve:** 1 si esta conectado
 
-#### `joy_query(int, int, int) -> int`
+#### `joy_query(int elemento) -> int`
+Informacion general de los mandos: se pide con un 'elemento'.
 
-#### `joy_set(int, int, int, int) -> int`
+**Devuelve:** el valor pedido
 
-#### `joy_set(int, int, int, int, int) -> int`
+#### `joy_query(int mando, int elemento) -> int`
+Informacion especifica de un mando: se pide con un 'elemento'.
+
+**Devuelve:** el valor pedido
+
+#### `joy_query(int mando, int elemento, int arg) -> int`
+Informacion especifica de un mando: se pide con un 'elemento' y, segun cual sea, un argumento extra.
+
+**Devuelve:** el valor pedido
+
+#### `joy_set(int mando, int elemento, int arg1, int arg2) -> int`
+Cambia un ajuste de un mando: se indica el 'elemento' y hasta dos argumentos.
+
+#### `joy_set(int mando, int elemento, int arg1, int arg2, int arg3) -> int`
+Cambia un ajuste de un mando: se indica el 'elemento' y hasta tres argumentos.
 
 #### `number_joy() -> int`
+Alias antiguo de JOY_NUMJOYSTICKS.
 
-#### `select_joy(int) -> int`
+**Devuelve:** cantidad de mandos
 
-#### `get_joy_button(int) -> int`
+#### `select_joy(int mando) -> int`
+Alias antiguo de JOY_SELECT.
 
-#### `get_joy_button(int, int) -> int`
+#### `get_joy_button(int boton) -> int`
+Alias antiguo de JOY_GETBUTTON para el mando elegido.
 
-#### `get_joy_position(int) -> int`
+**Devuelve:** 1 si esta pulsado
 
-#### `get_joy_position(int, int) -> int`
+#### `get_joy_button(int mando, int boton) -> int`
+Alias antiguo de JOY_GETBUTTON.
+
+**Devuelve:** 1 si esta pulsado
+
+#### `get_joy_position(int eje) -> int`
+Alias antiguo de JOY_GETAXIS para el mando elegido.
+
+**Devuelve:** posicion del eje
+
+#### `get_joy_position(int mando, int eje) -> int`
+Alias antiguo de JOY_GETAXIS.
+
+**Devuelve:** posicion del eje
 
 ## Modulo misc
 ### general
@@ -1985,18 +2357,39 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 #### `dirread(int) -> string`
 
 #### `get_base_path() -> string`
+Carpeta desde la que se ejecuta el programa.
 
-#### `get_pref_path(string, string) -> string`
+**Devuelve:** la ruta
 
-#### `save(string, ..., ?, ?) -> int`
+#### `get_pref_path(string organizacion, string aplicacion) -> string`
+Carpeta en la que guardar datos del jugador (partidas, opciones), propia del programa y del sistema. Hay que darle el nombre de la organizacion y de la aplicacion.
 
-#### `load(string, ..., ?, ?) -> int`
+**Devuelve:** la ruta
+
+#### `save(string fichero, ... variable, ?, ?) -> int`
+Guarda una variable (o una estructura) en un fichero. Es la forma mas simple de guardar partidas.
+
+**Devuelve:** bytes guardados
+
+#### `load(string fichero, ... variable, ?, ?) -> int`
+Lee un fichero escrito con SAVE y lo deja en una variable (o estructura).
+
+**Devuelve:** bytes leidos
 
 #### `file(string) -> string`
 
-#### `fopen(string, int) -> int`
+#### `fopen(string fichero, int modo) -> int`
+Abre un fichero y devuelve su manejador (0 si falla). El modo es O_READ (0, leer), O_READWRITE (1), O_WRITE (2, escribir), O_ZREAD (3, leer comprimido) u O_ZWRITE (4, escribir comprimido).
 
-#### `fclose(int) -> int`
+**Devuelve:** manejador del fichero
+
+```
+f = fopen("datos.txt", O_READ);
+IF (f) linea = fgets(f); fclose(f); END
+```
+
+#### `fclose(int fichero) -> int`
+Cierra un fichero abierto con FOPEN.
 
 #### `fread(int, ..., ?, ?) -> int`
 
@@ -2008,81 +2401,179 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 
 #### `fseek(int, int, int) -> int`
 
-#### `frewind(int)`
+#### `frewind(int fichero)`
+Vuelve al principio de un fichero abierto.
 
-#### `ftell(int) -> int`
+#### `ftell(int fichero) -> int`
+Posicion actual de lectura o escritura de un fichero abierto.
+
+**Devuelve:** posicion
 
 #### `fflush(int) -> int`
 
-#### `fputs(int, string) -> int`
+#### `fputs(int fichero, string texto) -> int`
+Escribe una cadena en un fichero.
 
-#### `fgets(int) -> string`
+#### `fgets(int fichero) -> string`
+Lee una linea de texto de un fichero (sin el salto de linea final). Devuelve una cadena vacia al llegar al final.
 
-#### `feof(int) -> int`
+**Devuelve:** la linea
 
-#### `flength(int) -> int`
+#### `feof(int fichero) -> int`
+Indica si se ha llegado al final de un fichero.
 
-#### `fexists(string) -> int`
+**Devuelve:** 1 si es el final
 
-#### `fremove(string) -> int`
+#### `flength(int fichero) -> int`
+Tamano de un fichero abierto, en bytes.
 
-#### `fmove(string, string) -> int`
+**Devuelve:** bytes
 
-#### `max(double, double) -> double`
+#### `fexists(string fichero) -> int`
+Indica si existe un fichero.
 
-#### `min(double, double) -> double`
+**Devuelve:** 1 si existe
 
-#### `sgn(double) -> double`
+#### `fremove(string fichero) -> int`
+Borra un fichero.
 
-#### `sgn(int) -> int`
+#### `fmove(string origen, string destino) -> int`
+Mueve o renombra un fichero.
 
-#### `round(double) -> double`
+#### `max(double a, double b) -> double`
+El mayor de dos numeros.
 
-#### `floor(double) -> double`
+**Devuelve:** el mayor
 
-#### `ceil(double) -> double`
+#### `min(double a, double b) -> double`
+El menor de dos numeros.
 
-#### `trunc(double) -> double`
+**Devuelve:** el menor
 
-#### `frac(double) -> double`
+#### `sgn(double valor) -> double`
+Signo de un numero: -1, 0 o 1.
+
+**Devuelve:** el signo
+
+#### `sgn(int valor) -> int`
+Signo de un numero: -1, 0 o 1.
+
+**Devuelve:** el signo
+
+#### `round(double valor) -> double`
+Redondea al entero mas cercano (devuelve un decimal con valor entero).
+
+**Devuelve:** el redondeo
+
+#### `floor(double valor) -> double`
+Redondea hacia abajo.
+
+**Devuelve:** el redondeo
+
+#### `ceil(double valor) -> double`
+Redondea hacia arriba.
+
+**Devuelve:** el redondeo
+
+#### `trunc(double valor) -> double`
+Quita la parte decimal.
+
+**Devuelve:** el entero
+
+#### `frac(double valor) -> double`
+Parte decimal de un numero.
+
+**Devuelve:** la parte decimal
 
 #### `decimal(double) -> double`
 
-#### `rad(int) -> double`
+#### `rad(int angulo) -> double`
+Convierte milesimas de grado a radianes.
 
-#### `deg(double) -> int`
+**Devuelve:** radianes
 
-#### `abs(double) -> double`
+#### `deg(double radianes) -> int`
+Convierte radianes a milesimas de grado.
 
-#### `exp(double) -> double`
+**Devuelve:** angulo
 
-#### `log(double) -> double`
+#### `abs(double valor) -> double`
+Valor absoluto.
 
-#### `log10(double) -> double`
+**Devuelve:** valor sin signo
 
-#### `pow(double, double) -> double`
+#### `exp(double valor) -> double`
+e elevado a un valor.
 
-#### `sqrt(double) -> double`
+**Devuelve:** resultado
 
-#### `fmod(double, double) -> double`
+#### `log(double valor) -> double`
+Logaritmo natural.
+
+**Devuelve:** resultado
+
+#### `log10(double valor) -> double`
+Logaritmo en base 10.
+
+**Devuelve:** resultado
+
+#### `pow(double base, double exponente) -> double`
+Potencia: base elevada al exponente.
+
+**Devuelve:** el resultado
+
+#### `sqrt(double valor) -> double`
+Raiz cuadrada.
+
+**Devuelve:** la raiz
+
+#### `fmod(double a, double b) -> double`
+Resto de dividir a entre b (con decimales).
+
+**Devuelve:** el resto
 
 #### `mmod(double, double) -> double`
 
 #### `modulus(double, double) -> double`
 
-#### `cos(int) -> double`
+#### `cos(int angulo) -> double`
+Coseno de un angulo. Los angulos de BennuGD van en MILESIMAS DE GRADO (90000 = 90 grados, 360000 = una vuelta). Devuelve un decimal entre -1 y 1.
 
-#### `sin(int) -> double`
+**Devuelve:** el coseno
 
-#### `tan(int) -> double`
+#### `sin(int angulo) -> double`
+Seno de un angulo. Los angulos de BennuGD van en MILESIMAS DE GRADO (90000 = 90 grados, 360000 = una vuelta). Devuelve un decimal entre -1 y 1.
 
-#### `acos(double) -> double`
+**Devuelve:** el seno
 
-#### `asin(double) -> double`
+```
+y = sin(angle) * 100;   // angle esta en milesimas de grado
+```
 
-#### `atan(double) -> double`
+#### `tan(int angulo) -> double`
+Tangente de un angulo. Los angulos de BennuGD van en MILESIMAS DE GRADO (90000 = 90 grados, 360000 = una vuelta).
 
-#### `atan2(double, double) -> double`
+**Devuelve:** la tangente
+
+#### `acos(double valor) -> double`
+Arcocoseno: devuelve el angulo en milesimas de grado.
+
+**Devuelve:** angulo
+
+#### `asin(double valor) -> double`
+Arcoseno: devuelve el angulo en milesimas de grado.
+
+**Devuelve:** angulo
+
+#### `atan(double valor) -> double`
+Arcotangente: devuelve el angulo en milesimas de grado.
+
+**Devuelve:** angulo
+
+#### `atan2(double y, double x) -> double`
+Arcotangente de y entre x, resolviendo el cuadrante: devuelve el angulo en milesimas de grado.
+
+**Devuelve:** angulo
 
 #### `isinf(double) -> int`
 
@@ -2100,49 +2591,111 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 
 #### `project(double, double, double, double, double, double, pointer, pointer, pointer, pointer) -> double`
 
-#### `fget_angle(double, double, double, double) -> int`
+#### `fget_angle(double x0, double y0, double x1, double y1) -> int`
+Angulo en milesimas de grado desde el punto (x0, y0) hasta (x1, y1), con la Y de pantalla creciendo hacia abajo: 0 = hacia la derecha, 90000 = hacia arriba.
 
-#### `fget_dist(double, double, double, double) -> double`
+**Devuelve:** angulo
 
-#### `distance(double, double, double, double) -> double`
+#### `fget_dist(double x0, double y0, double x1, double y1) -> double`
+Distancia entre dos puntos (x0, y0) y (x1, y1).
 
-#### `dist(double, double, double, double) -> double`
+**Devuelve:** distancia
 
-#### `near_angle(int, int, int) -> int`
+#### `distance(double x0, double y0, double x1, double y1) -> double`
+Alias de FGET_DIST: distancia entre dos puntos.
+
+**Devuelve:** distancia
+
+#### `dist(double x0, double y0, double x1, double y1) -> double`
+Alias de FGET_DIST: distancia entre dos puntos.
+
+**Devuelve:** distancia
+
+#### `near_angle(int angulo, int destino, int paso) -> int`
+Acerca un angulo a otro como mucho 'paso' por el camino mas corto (para girar suavemente hacia un objetivo). Angulos en milesimas de grado.
+
+**Devuelve:** el angulo nuevo
 
 #### `get_distx(int, double) -> double`
 
 #### `get_disty(int, double) -> double`
 
-#### `mag(double, double) -> double`
+#### `mag(double dx, double dy) -> double`
+Modulo de un vector: raiz de dx^2 + dy^2.
 
-#### `clamp(double, double, double) -> double`
+**Devuelve:** longitud
 
-#### `clamp(int, int, int) -> int`
+#### `clamp(double valor, double minimo, double maximo) -> double`
+Limita un valor decimal al rango [minimo, maximo].
 
-#### `between(double, double, double) -> int`
+**Devuelve:** el valor limitado
 
-#### `between(int, int, int) -> int`
+#### `clamp(int valor, int minimo, int maximo) -> int`
+Limita un valor al rango [minimo, maximo].
 
-#### `towards(double, double, double) -> double`
+**Devuelve:** el valor limitado
 
-#### `towards(int, int, int) -> int`
+```
+vida = clamp(vida, 0, 100);
+```
 
-#### `wrap(int, int, int) -> int`
+#### `between(double valor, double limite_a, double limite_b) -> int`
+Lo mismo con decimales.
 
-#### `lerp(double, double, double) -> double`
+**Devuelve:** 1 si esta dentro
 
-#### `invlerp(double, double, double) -> double`
+#### `between(int valor, int limite_a, int limite_b) -> int`
+Indica si un valor esta entre dos limites, ambos incluidos (el orden de los limites da igual).
+
+**Devuelve:** 1 si esta dentro
+
+#### `towards(double valor, double destino, double paso) -> double`
+Lo mismo con decimales.
+
+**Devuelve:** el valor nuevo
+
+#### `towards(int valor, int destino, int paso) -> int`
+Acerca un valor a un destino como mucho 'paso', sin pasarse.
+
+**Devuelve:** el valor nuevo
+
+```
+x = towards(x, 200, 3);   // avanza 3 pixeles por frame hasta 200
+```
+
+#### `wrap(int valor, int limite_a, int limite_b) -> int`
+Mantiene un valor dentro de un rango dando la vuelta (ambos limites incluidos): wrap(11, 0, 9) = 1.
+
+**Devuelve:** el valor dentro del rango
+
+#### `lerp(double a, double b, double t) -> double`
+Interpolacion lineal: a + t * (b - a). Con t = 0 da a; con t = 1 da b.
+
+**Devuelve:** el valor interpolado
+
+#### `invlerp(double a, double b, double valor) -> double`
+Inversa de LERP: en que punto (0 a 1) entre a y b esta un valor.
+
+**Devuelve:** la fraccion
 
 #### `rangechk(double, double, double) -> int`
 
 #### `rangechk(int, int, int) -> int`
 
-#### `remap(double, double, double, double, double) -> double`
+#### `remap(double valor, double desde_min, double desde_max, double hasta_min, double hasta_max) -> double`
+Convierte un valor de un rango a otro: remap(5, 0, 10, 0, 100) = 50.
 
-#### `remap(int, int, int, int, int) -> int`
+**Devuelve:** el valor convertido
 
-#### `normalize(double, double, double) -> double`
+#### `remap(int valor, int desde_min, int desde_max, int hasta_min, int hasta_max) -> int`
+Lo mismo con enteros.
+
+**Devuelve:** el valor convertido
+
+#### `normalize(double valor, double bajo, double alto) -> double`
+Convierte un valor del rango [bajo, alto] a un numero entre 0 y 1.
+
+**Devuelve:** la fraccion
 
 #### `normalize(int, int, int) -> double`
 
@@ -2198,27 +2751,54 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 
 #### `memory_total() -> int`
 
-#### `get_id(int) -> int`
+#### `get_id(int tipo) -> int`
+Recorre los procesos de un tipo (TYPE nombre): cada llamada devuelve el identificador del siguiente y 0 cuando no quedan. Con 0 recorre todos los procesos.
 
-#### `get_type(int) -> int`
+**Devuelve:** identificador, o 0 al terminar
 
-#### `get_status(int) -> int64`
+```
+WHILE (id = get_id(TYPE enemigo))
+    // id es un enemigo
+END
+```
 
-#### `signal(int, int) -> int`
+#### `get_type(int proceso) -> int`
+Tipo de un proceso a partir de su identificador.
+
+**Devuelve:** el tipo
+
+#### `get_status(int proceso) -> int64`
+Estado de un proceso a partir de su identificador (en marcha, dormido, congelado o muerto).
+
+**Devuelve:** el estado
+
+#### `signal(int proceso, int senal) -> int`
+Envia una senal a un proceso (por su identificador o por su tipo con TYPE nombre), o a todos con ALL_PROCESS. Las senales habituales son S_KILL (matarlo), S_SLEEP, S_FREEZE y S_WAKEUP; sumando S_TREE se aplica tambien a sus hijos.
+
+```
+signal(TYPE enemigo, S_KILL);   // quita todos los enemigos
+```
 
 #### `signal_action(int, int) -> int`
 
 #### `signal_action(int, int, int) -> int`
 
 #### `let_me_alone() -> int`
+Mata a todos los procesos menos al que la llama.
 
-#### `exit(string, int) -> int`
+#### `exit(string mensaje, int codigo) -> int`
+Termina el programa. Se puede indicar un mensaje, que se escribe en la consola, y un codigo de salida.
 
-#### `exit(string) -> int`
+#### `exit(string mensaje) -> int`
+Termina el programa con un mensaje.
 
 #### `exit() -> int`
+Termina el programa.
 
-#### `exists(int) -> int`
+#### `exists(int proceso) -> int`
+Indica si un proceso esta vivo, por su identificador o por su tipo (TYPE nombre).
+
+**Devuelve:** 1 si existe
 
 #### `pause() -> int`
 
@@ -2228,21 +2808,41 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 
 #### `resume(int) -> int`
 
-#### `rand_seed(int) -> int`
+#### `rand_seed(int semilla) -> int`
+Fija la semilla del generador de numeros al azar: con la misma semilla salen siempre los mismos numeros.
 
-#### `rand(int, int) -> int`
+#### `rand(int minimo, int maximo) -> int`
+Numero entero al azar entre dos valores, ambos incluidos (el orden da igual).
+
+**Devuelve:** un entero al azar
+
+```
+dado = rand(1, 6);
+```
 
 #### `regex(string, string) -> int`
 
 #### `regex_replace(string, string, string) -> string`
 
-#### `split(string, string, pointer, int) -> int`
+#### `split(string separador, string texto, pointer &trozos, int max) -> int`
+Parte una cadena por un separador (expresion regular) y guarda los trozos en un array de cadenas. Devuelve cuantos trozos salieron.
 
-#### `join(string, pointer, int) -> string`
+**Devuelve:** cantidad de trozos
 
-#### `say(string)`
+#### `join(string separador, pointer &trozos, int cantidad) -> string`
+Une los elementos de un array de cadenas con un separador.
 
-#### `say_fast(string)`
+**Devuelve:** la cadena unida
+
+#### `say(string texto)`
+Escribe una linea de texto en la consola (salida estandar) para depurar. Es la forma de ver mensajes mientras el juego corre.
+
+```
+say("vidas: " + itoa(vidas));
+```
+
+#### `say_fast(string texto)`
+Como SAY pero sin esperar a volcar la salida: mas rapida, para mensajes muy frecuentes.
 
 #### `isort(pointer, int, int, int, byte, byte) -> int`
 
@@ -2254,55 +2854,131 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 
 #### `sort(..., ?, ?) -> int`
 
-#### `strlen(string) -> int`
+#### `strlen(string texto) -> int`
+Longitud de una cadena en caracteres.
 
-#### `len(string) -> int`
+**Devuelve:** la longitud
 
-#### `ucase(string) -> string`
+#### `len(string texto) -> int`
+Alias de STRLEN.
 
-#### `lcase(string) -> string`
+**Devuelve:** la longitud
 
-#### `strcasecmp(string, string) -> int`
+#### `ucase(string texto) -> string`
+Pasa una cadena a mayusculas.
 
-#### `substr(string, int, int) -> string`
+**Devuelve:** la cadena
 
-#### `substr(string, int) -> string`
+#### `lcase(string texto) -> string`
+Pasa una cadena a minusculas.
 
-#### `find(string, string) -> int`
+**Devuelve:** la cadena
 
-#### `find(string, string, int) -> int`
+#### `strcasecmp(string a, string b) -> int`
+Compara dos cadenas sin distinguir mayusculas de minusculas: 0 si son iguales.
 
-#### `rfind(string, string) -> int`
+**Devuelve:** 0 si son iguales
 
-#### `rfind(string, string, int) -> int`
+#### `substr(string texto, int desde, int longitud) -> string`
+Trozo de una cadena desde un caracter (empezando en 0) y con una longitud. Una longitud negativa deja fuera ese numero de caracteres del final.
+
+**Devuelve:** el trozo
+
+#### `substr(string texto, int desde) -> string`
+Trozo de una cadena desde un caracter (empezando en 0) hasta el final.
+
+**Devuelve:** el trozo
+
+#### `find(string texto, string buscar) -> int`
+Posicion de la primera aparicion de un trozo en una cadena (empezando en 0), o -1 si no esta.
+
+**Devuelve:** posicion o -1
+
+#### `find(string texto, string buscar, int desde) -> int`
+Igual, empezando a buscar en una posicion.
+
+**Devuelve:** posicion o -1
+
+#### `rfind(string texto, string buscar) -> int`
+Posicion de la ULTIMA aparicion de un trozo en una cadena, o -1 si no esta.
+
+**Devuelve:** posicion o -1
+
+#### `rfind(string texto, string buscar, int desde) -> int`
+Igual, buscando hacia atras desde una posicion.
+
+**Devuelve:** posicion o -1
 
 #### `strtok(string, string) -> string`
 
-#### `lpad(string, int) -> string`
+#### `lpad(string texto, int longitud) -> string`
+Alarga una cadena hasta una longitud anadiendo espacios por la IZQUIERDA (para alinear numeros).
 
-#### `rpad(string, int) -> string`
+**Devuelve:** la cadena
 
-#### `itoa(int) -> string`
+#### `rpad(string texto, int longitud) -> string`
+Alarga una cadena hasta una longitud anadiendo espacios por la DERECHA.
 
-#### `ftoa(double) -> string`
+**Devuelve:** la cadena
 
-#### `atoi(string) -> int`
+#### `itoa(int numero) -> string`
+Convierte un entero en cadena.
 
-#### `atof(string) -> double`
+**Devuelve:** la cadena
 
-#### `asc(string) -> byte`
+```
+write(0, 10, 10, ALIGN_TOP_LEFT, "Puntos: " + itoa(puntos));
+```
 
-#### `chr(int) -> string`
+#### `ftoa(double numero) -> string`
+Convierte un decimal en cadena.
 
-#### `trim(string) -> string`
+**Devuelve:** la cadena
 
-#### `strrev(string) -> string`
+#### `atoi(string texto) -> int`
+Convierte una cadena en entero.
 
-#### `format(int) -> string`
+**Devuelve:** el entero
 
-#### `format(double) -> string`
+#### `atof(string texto) -> double`
+Convierte una cadena en decimal.
 
-#### `format(double, int) -> string`
+**Devuelve:** el decimal
+
+#### `asc(string texto) -> byte`
+Codigo del primer caracter de una cadena.
+
+**Devuelve:** el codigo
+
+#### `chr(int codigo) -> string`
+Cadena de un solo caracter a partir de su codigo.
+
+**Devuelve:** la cadena
+
+#### `trim(string texto) -> string`
+Quita los espacios del principio y del final de una cadena.
+
+**Devuelve:** la cadena
+
+#### `strrev(string texto) -> string`
+Da la vuelta a una cadena.
+
+**Devuelve:** la cadena al reves
+
+#### `format(int numero) -> string`
+Da formato a un entero con separador de miles.
+
+**Devuelve:** la cadena
+
+#### `format(double numero) -> string`
+Da formato a un decimal con separador de miles.
+
+**Devuelve:** la cadena
+
+#### `format(double numero, int decimales) -> string`
+Da formato a un decimal con un numero de decimales y separador de miles.
+
+**Devuelve:** la cadena
 
 #### `getenv(string) -> string`
 
@@ -2331,12 +3007,34 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 #### `get_pref_language() -> string`
 
 #### `uptime() -> int64`
+Alias de GET_TIMER: milisegundos desde que arranco el programa.
+
+**Devuelve:** milisegundos
 
 #### `get_timer() -> int64`
+Milisegundos desde que arranco el programa. Sirve para medir tiempos.
+
+**Devuelve:** milisegundos
+
+```
+t0 = get_timer();
+...
+transcurrido = get_timer() - t0;
+```
 
 #### `time() -> int64`
+Segundos desde el 1 de enero de 1970 (la hora del sistema).
 
-#### `ftime(string, int) -> string`
+**Devuelve:** segundos
+
+#### `ftime(string formato, int hora) -> string`
+Da formato a una hora con los codigos de strftime (%Y, %m, %d, %H, %M, %S...).
+
+**Devuelve:** la cadena
+
+```
+say(ftime("%H:%M:%S", time()));
+```
 
 #### `string_new_array() -> pointer`
 
@@ -2419,180 +3117,404 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 ## Modulo sound
 ### general
 #### `soundsys_init() -> int`
+Inicia el sistema de sonido. No hace falta llamarla: se inicia sola al cargar el primer sonido o musica. Antes de iniciarlo se pueden fijar sound.freq, sound.mode y sound.channels.
+
+**Devuelve:** 0 si va bien, -1 si falla
 
 #### `soundsys_quit() -> int`
+Cierra el sistema de sonido y libera sus recursos.
 
-#### `music_load(string) -> int`
+#### `music_load(string fichero) -> int`
+Carga una musica (MP3, OGG, WAV, MOD...) desde un fichero. Devuelve un identificador para el resto de funciones MUSIC_*; 0 si no se pudo cargar. Inicia el sonido si hacia falta.
 
-#### `music_load(string, pointer) -> int`
+**Devuelve:** identificador de la musica, 0 si falla
 
-#### `music_unload(int) -> int`
+```
+m = music_load("Assets/Music/tema.ogg");
+music_play(m);   // sin fin
+```
 
-#### `music_unload(pointer) -> int`
+#### `music_load(string fichero, pointer &identificador) -> int`
+Carga una musica EN SEGUNDO PLANO, sin parar el juego: el identificador se guarda en la variable que se pasa por puntero cuando termina.
 
-#### `music_play(int, int) -> int`
+#### `music_unload(int musica) -> int`
+Libera una musica cargada.
 
-#### `music_play(int) -> int`
+#### `music_unload(pointer &musica) -> int`
+Libera una musica cargada con carga en segundo plano, y deja su variable a 0.
+
+#### `music_play(int musica, int bucles) -> int`
+Reproduce una musica repitiendola 'bucles' veces (0 = una vez, -1 = sin fin). Solo suena una musica a la vez: empezar otra corta la anterior.
+
+**Devuelve:** 0 si va bien, -1 si hay error
+
+#### `music_play(int musica) -> int`
+Reproduce una musica en bucle sin fin.
+
+**Devuelve:** 0 si va bien, -1 si hay error
 
 #### `music_stop() -> int`
+Para la musica que suena.
 
 #### `music_pause() -> int`
+Pausa la musica.
 
 #### `music_resume() -> int`
+Reanuda una musica pausada.
 
 #### `music_rewind() -> int`
+Vuelve al principio de la musica.
 
-#### `music_fade_in(int, int, int) -> int`
+#### `music_fade_in(int musica, int bucles, int ms) -> int`
+Empieza una musica subiendo el volumen poco a poco durante 'ms' milisegundos.
 
-#### `music_fade_in(int, int, int, double) -> int`
+**Devuelve:** 0 si va bien, -1 si hay error
 
-#### `music_fade_off(int) -> int`
+#### `music_fade_in(int musica, int bucles, int ms, double posicion) -> int`
+Igual que la anterior, empezando en un punto de la musica ('posicion' en segundos).
+
+**Devuelve:** 0 si va bien, -1 si hay error
+
+#### `music_fade_off(int ms) -> int`
+Baja el volumen de la musica poco a poco durante 'ms' milisegundos y la para.
 
 #### `music_is_playing() -> int`
+Indica si hay una musica sonando.
+
+**Devuelve:** 1 si suena
 
 #### `music_is_paused() -> int`
+Indica si la musica esta en pausa.
+
+**Devuelve:** 1 si esta en pausa
 
 #### `music_is_fading() -> int`
+Indica si la musica esta subiendo o bajando de volumen.
 
-#### `music_set_volume(int) -> int`
+**Devuelve:** distinto de 0 si esta en un fundido
 
-#### `music_get_volume(int) -> int`
+#### `music_set_volume(int volumen) -> int`
+Volumen de la musica, de 0 a 128 (los valores fuera de rango se recortan).
 
-#### `music_set_playback_position(double) -> int`
+**Devuelve:** 0 si va bien, -1 si el sonido no esta iniciado
 
-#### `music_set_time_position(double) -> int`
+```
+music_set_volume(64);   // la mitad
+```
 
-#### `music_get_playback_position(int) -> double`
+#### `music_get_volume(int musica) -> int`
+Volumen de una musica (necesita SDL_mixer 2.6 o mas reciente; con una anterior devuelve -1).
 
-#### `music_get_time_position(int) -> double`
+**Devuelve:** volumen
 
-#### `music_get_duration(int) -> double`
+#### `music_set_playback_position(double segundos) -> int`
+Salta a un punto de la musica, en segundos.
+
+#### `music_set_time_position(double segundos) -> int`
+Alias de MUSIC_SET_PLAYBACK_POSITION.
+
+#### `music_get_playback_position(int musica) -> double`
+Posicion actual de la musica, en segundos.
+
+**Devuelve:** segundos
+
+#### `music_get_time_position(int musica) -> double`
+Alias de MUSIC_GET_PLAYBACK_POSITION.
+
+**Devuelve:** segundos
+
+#### `music_get_duration(int musica) -> double`
+Duracion de una musica, en segundos.
+
+**Devuelve:** segundos
 
 #### `music_get_duration() -> double`
+Duracion de la musica que suena, en segundos.
 
-#### `music_get_loop_start(int) -> double`
+**Devuelve:** segundos
+
+#### `music_get_loop_start(int musica) -> double`
+Segundo en que esta el comienzo del bucle propio de la musica, si el fichero lo define.
+
+**Devuelve:** segundos
 
 #### `music_get_loop_start() -> double`
+Lo mismo para la musica que suena.
 
-#### `music_get_loop_end(int) -> double`
+**Devuelve:** segundos
+
+#### `music_get_loop_end(int musica) -> double`
+Segundo en que esta el final del bucle propio de la musica, si el fichero lo define.
+
+**Devuelve:** segundos
 
 #### `music_get_loop_end() -> double`
+Lo mismo para la musica que suena.
 
-#### `music_get_loop_len(int) -> double`
+**Devuelve:** segundos
+
+#### `music_get_loop_len(int musica) -> double`
+Duracion del bucle propio de la musica, en segundos, si el fichero lo define.
+
+**Devuelve:** segundos
 
 #### `music_get_loop_len() -> double`
+Lo mismo para la musica que suena.
 
-#### `sound_load(string) -> int`
+**Devuelve:** segundos
 
-#### `sound_load(string, pointer) -> int`
+#### `sound_load(string fichero) -> int`
+Carga un efecto de sonido (WAV, OGG...) desde un fichero. Devuelve un identificador para SOUND_PLAY; 0 si no se pudo cargar.
 
-#### `sound_unload(int) -> int`
+**Devuelve:** identificador del sonido, 0 si falla
 
-#### `sound_unload(pointer) -> int`
+```
+s = sound_load("Assets/Sounds/salto.wav");
+sound_play(s);
+```
 
-#### `sound_play(int, int) -> int`
+#### `sound_load(string fichero, pointer &identificador) -> int`
+Carga un efecto de sonido EN SEGUNDO PLANO: el identificador se guarda en la variable que se pasa por puntero cuando termina.
 
-#### `sound_play(int) -> int`
+#### `sound_unload(int sonido) -> int`
+Libera un sonido cargado.
 
-#### `sound_play(int, int, int) -> int`
+#### `sound_unload(pointer &sonido) -> int`
+Libera un sonido cargado con carga en segundo plano y deja su variable a 0.
 
-#### `sound_play(int, int, int, int) -> int`
+#### `sound_play(int sonido, int bucles) -> int`
+Reproduce un sonido en el primer canal libre, repitiendolo 'bucles' veces (0 = una vez, -1 = sin fin). Se pueden oir varios a la vez, cada uno en su canal.
 
-#### `sound_stop(int) -> int`
+**Devuelve:** el canal usado, o -1 si no hay ninguno libre
 
-#### `sound_pause(int) -> int`
+#### `sound_play(int sonido) -> int`
+Reproduce un sonido una vez en el primer canal libre.
 
-#### `sound_resume(int) -> int`
+**Devuelve:** el canal usado, o -1 si no hay ninguno libre
 
-#### `sound_fade_in(int, int, int, int) -> int`
+#### `sound_play(int sonido, int bucles, int canal) -> int`
+Reproduce un sonido en un canal concreto (-1 = el primero libre).
 
-#### `sound_fade_in(int, int, int, int, int) -> int`
+**Devuelve:** el canal usado, o -1
 
-#### `sound_fade_off(int, int) -> int`
+#### `sound_play(int sonido, int bucles, int canal, int ms) -> int`
+Reproduce un sonido en un canal y lo corta a los 'ms' milisegundos aunque no haya acabado.
 
-#### `sound_is_playing(int) -> int`
+**Devuelve:** el canal usado, o -1
 
-#### `sound_is_paused(int) -> int`
+#### `sound_stop(int canal) -> int`
+Para el sonido de un canal (-1 = todos).
 
-#### `sound_is_fading(int) -> int`
+#### `sound_pause(int canal) -> int`
+Pausa el sonido de un canal (-1 = todos).
 
-#### `sound_set_volume(int, int) -> int`
+#### `sound_resume(int canal) -> int`
+Reanuda el sonido de un canal pausado (-1 = todos).
 
-#### `sound_set_volume(int) -> int`
+#### `sound_fade_in(int sonido, int bucles, int ms, int canal) -> int`
+Reproduce un sonido en un canal subiendo el volumen durante 'ms' milisegundos.
 
-#### `sound_set_location(int, int, int) -> int`
+**Devuelve:** el canal usado, o -1
 
-#### `sound_set_spatial_position(int, int, int) -> int`
+#### `sound_fade_in(int sonido, int bucles, int ms, int canal, int tiempo) -> int`
+Igual, y ademas lo corta a los 'tiempo' milisegundos.
 
-#### `set_position(int, int, int) -> int`
+**Devuelve:** el canal usado, o -1
 
-#### `channel_set_expire(int, int) -> int`
+#### `sound_fade_off(int canal, int ms) -> int`
+Baja el volumen del sonido de un canal durante 'ms' milisegundos y lo para.
 
-#### `channel_set_expire(int) -> int`
+#### `sound_is_playing(int canal) -> int`
+Indica si suena algo en un canal (-1 = cuenta los canales que suenan).
 
-#### `channel_set_volume(int, int) -> int`
+**Devuelve:** 1 si suena (o cuantos, con -1)
 
-#### `channel_set_volume(int) -> int`
+#### `sound_is_paused(int canal) -> int`
+Indica si el sonido de un canal esta en pausa.
 
-#### `set_master_volume(int) -> int`
+**Devuelve:** 1 si esta en pausa
 
-#### `channel_set_panning(int, int, int) -> int`
+#### `sound_is_fading(int canal) -> int`
+Indica si un canal esta en un fundido.
 
-#### `set_panning(int, int, int) -> int`
+**Devuelve:** distinto de 0 si esta en un fundido
 
-#### `channel_set_distance(int, int) -> int`
+#### `sound_set_volume(int sonido, int volumen) -> int`
+Volumen propio de un sonido, de 0 a 128. Se aplica cada vez que suena.
 
-#### `set_distance(int, int) -> int`
+#### `sound_set_volume(int volumen) -> int`
+Volumen de TODOS los canales, de 0 a 128.
 
-#### `reserve_channels(int) -> int`
+#### `sound_set_location(int canal, int angulo, int distancia) -> int`
+Sonido posicional: angulo (0 a 360, 0 = delante, 90 = derecha) y distancia (0 a 255) de un canal respecto al oyente. Solo funciona mientras el canal esta sonando: si no suena nada en ese canal devuelve -1 y no hace nada.
 
-#### `reverse_stereo(int, int) -> int`
+**Devuelve:** 0 si va bien, -1 si no
+
+#### `sound_set_spatial_position(int canal, int angulo, int distancia) -> int`
+Alias de SOUND_SET_LOCATION.
+
+**Devuelve:** 0 si va bien, -1 si no
+
+#### `set_position(int canal, int angulo, int distancia) -> int`
+Alias de SOUND_SET_LOCATION.
+
+**Devuelve:** 0 si va bien, -1 si no
+
+#### `channel_set_expire(int canal, int ms) -> int`
+Hace que un canal se pare solo pasados 'ms' milisegundos (-1 = sin limite).
+
+#### `channel_set_expire(int ms) -> int`
+Hace que todos los canales se paren solos pasados 'ms' milisegundos.
+
+#### `channel_set_volume(int canal, int volumen) -> int`
+Volumen de un canal, de 0 a 128.
+
+#### `channel_set_volume(int volumen) -> int`
+Volumen de todos los canales, de 0 a 128.
+
+#### `set_master_volume(int volumen) -> int`
+Volumen general de todo el sonido, de 0 a 128.
+
+**Devuelve:** 0 si va bien, -1 si el sonido no esta iniciado
+
+#### `channel_set_panning(int canal, int izquierda, int derecha) -> int`
+Reparto izquierda/derecha de un canal: volumen de cada lado, de 0 a 255 (255 y 255 = centrado, 255 y 0 = solo izquierda). Solo funciona mientras el canal esta sonando: si no suena nada en ese canal devuelve -1 y no hace nada.
+
+**Devuelve:** 0 si va bien, -1 si no
+
+#### `set_panning(int canal, int izquierda, int derecha) -> int`
+Alias de CHANNEL_SET_PANNING.
+
+**Devuelve:** 0 si va bien, -1 si no
+
+#### `channel_set_distance(int canal, int distancia) -> int`
+Distancia de un canal, de 0 (cerca, a todo volumen) a 255 (lejos, casi inaudible). Solo funciona mientras el canal esta sonando: si no suena nada en ese canal devuelve -1 y no hace nada.
+
+**Devuelve:** 0 si va bien, -1 si no
+
+#### `set_distance(int canal, int distancia) -> int`
+Alias de CHANNEL_SET_DISTANCE.
+
+**Devuelve:** 0 si va bien, -1 si no
+
+#### `reserve_channels(int cantidad) -> int`
+Reserva los 'cantidad' primeros canales para que no se usen como libres (para sonidos que tu eliges el canal). Devuelve cuantos se reservaron.
+
+**Devuelve:** canales reservados
+
+#### `reverse_stereo(int canal, int invertir) -> int`
+Invierte (1) o no (0) los canales izquierdo y derecho de un canal. Solo funciona mientras el canal esta sonando: si no suena nada en ese canal devuelve -1 y no hace nada.
+
+**Devuelve:** 0 si va bien, -1 si no
 
 #### `get_num_music_decoders() -> int`
+Numero de decodificadores de musica disponibles (formatos que se pueden leer).
 
-#### `get_music_decoder(int) -> string`
+**Devuelve:** cantidad
 
-#### `has_music_decoder(string) -> int`
+#### `get_music_decoder(int indice) -> string`
+Nombre de un decodificador de musica, por su indice.
 
-#### `music_get_type(int) -> int`
+**Devuelve:** el nombre
 
-#### `music_get_title(int) -> string`
+#### `has_music_decoder(string nombre) -> int`
+Indica si hay un decodificador con ese nombre.
 
-#### `music_get_title_tag(int) -> string`
+**Devuelve:** 1 si existe
 
-#### `music_get_artist_tag(int) -> string`
+#### `music_get_type(int musica) -> int`
+Devuelve el tipo de formato de una musica, segun lo que traiga el fichero.
 
-#### `music_get_album_tag(int) -> string`
+**Devuelve:** el valor
 
-#### `music_get_copyright_tag(int) -> string`
+#### `music_get_title(int musica) -> string`
+Devuelve el titulo de una musica, segun lo que traiga el fichero.
+
+**Devuelve:** el valor
+
+#### `music_get_title_tag(int musica) -> string`
+Devuelve el etiqueta de titulo de una musica, segun lo que traiga el fichero.
+
+**Devuelve:** el valor
+
+#### `music_get_artist_tag(int musica) -> string`
+Devuelve el etiqueta de artista de una musica, segun lo que traiga el fichero.
+
+**Devuelve:** el valor
+
+#### `music_get_album_tag(int musica) -> string`
+Devuelve el etiqueta de album de una musica, segun lo que traiga el fichero.
+
+**Devuelve:** el valor
+
+#### `music_get_copyright_tag(int musica) -> string`
+Devuelve el etiqueta de copyright de una musica, segun lo que traiga el fichero.
+
+**Devuelve:** el valor
 
 #### `music_get_type() -> int`
+Devuelve el tipo de formato de la musica que suena.
+
+**Devuelve:** el valor
 
 #### `music_get_title() -> string`
+Devuelve el titulo de la musica que suena.
+
+**Devuelve:** el valor
 
 #### `music_get_title_tag() -> string`
+Devuelve el etiqueta de titulo de la musica que suena.
+
+**Devuelve:** el valor
 
 #### `music_get_artist_tag() -> string`
+Devuelve el etiqueta de artista de la musica que suena.
+
+**Devuelve:** el valor
 
 #### `music_get_album_tag() -> string`
+Devuelve el etiqueta de album de la musica que suena.
+
+**Devuelve:** el valor
 
 #### `music_get_copyright_tag() -> string`
+Devuelve el etiqueta de copyright de la musica que suena.
 
-#### `sound_group_channel(int, int) -> int`
+**Devuelve:** el valor
 
-#### `sound_group_channels(int, int, int) -> int`
+#### `sound_group_channel(int canal, int grupo) -> int`
+Mete un canal en un grupo (una etiqueta numerica), para tratar varios canales a la vez.
 
-#### `sound_group_available(int) -> int`
+#### `sound_group_channels(int desde, int hasta, int grupo) -> int`
+Mete un rango de canales en un grupo.
 
-#### `sound_group_count(int) -> int`
+**Devuelve:** cuantos canales se agruparon
 
-#### `sound_group_oldest(int) -> int`
+#### `sound_group_available(int grupo) -> int`
+Primer canal libre de un grupo, o -1 si no hay.
 
-#### `sound_group_newer(int) -> int`
+**Devuelve:** canal o -1
 
-#### `sound_group_halt(int) -> int`
+#### `sound_group_count(int grupo) -> int`
+Cuantos canales tiene un grupo.
 
-#### `sound_group_fade_out(int, int) -> int`
+**Devuelve:** cantidad
+
+#### `sound_group_oldest(int grupo) -> int`
+El canal del grupo que lleva mas tiempo sonando.
+
+**Devuelve:** canal o -1
+
+#### `sound_group_newer(int grupo) -> int`
+El canal del grupo que empezo a sonar hace menos.
+
+**Devuelve:** canal o -1
+
+#### `sound_group_halt(int grupo) -> int`
+Para todos los sonidos de un grupo.
+
+#### `sound_group_fade_out(int grupo, int ms) -> int`
+Baja el volumen de todos los sonidos de un grupo durante 'ms' milisegundos y los para.
 
 ## Modulo video
 ### general

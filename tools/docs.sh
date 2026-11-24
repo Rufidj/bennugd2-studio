@@ -6,6 +6,10 @@ cd "$(dirname "$0")"
 python3 gen_docs_nucleo.py
 python3 gen_docs_objetos.py
 python3 gen_docs_carretera.py
+python3 gen_docs_entrada.py
+python3 gen_docs_sonido.py
+python3 gen_docs_graficos.py
+python3 gen_docs_misc.py
 python3 gen_docs_jolt.py      # corrige/amplia lo anterior: va el ultimo
 python3 gen_api.py
 python3 verificar_ejemplos.py

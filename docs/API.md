@@ -1,0 +1,2806 @@
+# Referencia de la API
+
+Generada automaticamente desde los modulos del motor (1150 funciones, 166 documentadas).
+
+## Modulo 3d
+### camera
+#### `g3d_camera_create() -> int`
+Crea una camara.
+
+**Devuelve:** id de la camara
+
+#### `g3d_camera_set_active(int camara) -> int`
+Hace activa una camara: es la que se usa para renderizar.
+
+#### `g3d_camera_set_position(int camara, float x, float y, float z) -> int`
+Coloca la camara en el mundo.
+
+#### `g3d_camera_look_at(int camara, float objetivo_x, float objetivo_y, float objetivo_z, float arriba_x, float arriba_y, float arriba_z) -> int`
+Orienta la camara hacia un punto. (ux,uy,uz) es el vector que apunta hacia arriba, normalmente (0,1,0).
+
+```
+g3d_camera_set_position(cam, 0, 5, -10);
+g3d_camera_look_at(cam, 0, 1, 0, 0, 1, 0);
+```
+
+#### `g3d_camera_set_projection(int camara, int tipo) -> int`
+OBSOLETA: no hace nada. Usa G3D_CAMERA_SET_FOV.
+
+#### `g3d_camera_set_fov(int camara, float fov_grados) -> int`
+Campo de vision vertical de la camara, en GRADOS (por defecto 75). Fija aspecto 16:9, near 0.1 y far 1000.
+
+#### `g3d_camera_safe_distance(float objetivo_x, float objetivo_y, float objetivo_z, float dir_x, float dir_y, float dir_z, float distancia, float radio) -> float`
+Para camaras en tercera persona: dado el punto objetivo (t), la direccion hacia donde esta la camara (d), la distancia deseada y un radio, devuelve la distancia a la que se puede poner la camara sin atravesar cajas de colision ni terreno.
+
+**Devuelve:** distancia segura (<= distancia)
+
+### char
+#### `g3d_char_create(float x, float y, float z, float radio, float altura) -> int`
+Crea un controlador de personaje (capsula) que camina por el terreno y las cajas de colision, con gravedad.
+
+**Devuelve:** id del personaje
+
+```
+pj = g3d_char_create(0, 2, 0, 0.4, 1.8);
+// cada frame:
+g3d_char_move(pj, vel_x, vel_z);
+g3d_char_update(pj, dt);
+```
+
+#### `g3d_char_destroy(int personaje) -> int`
+Destruye un personaje.
+
+#### `g3d_char_move(int personaje, float vx, float vz) -> int`
+Velocidad horizontal deseada para el siguiente G3D_CHAR_UPDATE (en el plano X,Z).
+
+#### `g3d_char_jump(int personaje, float velocidad) -> int`
+Salta con la velocidad vertical indicada, solo si esta en el suelo. Dentro del agua da una brazada hacia arriba.
+
+#### `g3d_char_set_water(int personaje, int en_agua, float superficie_y) -> int`
+Marca al personaje dentro (1) o fuera (0) del agua y la altura Y de la superficie. Hay que llamarla cada frame: activa la flotacion y el nado libre.
+
+#### `g3d_char_update(int personaje, float dt) -> int`
+Avanza la simulacion del personaje (movimiento, gravedad, colisiones). Llamar una vez por frame.
+
+#### `g3d_char_set_position(int personaje, float x, float y, float z) -> int`
+Coloca al personaje y le anula la velocidad.
+
+#### `g3d_char_set_push(int personaje, float fuerza) -> int`
+Fuerza maxima con la que empuja cuerpos rigidos. 0 = no mueve nada, pero sigue chocando.
+
+#### `g3d_char_set_tuning(int personaje, float escalon, float pendiente_grados) -> int`
+Ajusta la altura maxima de escalon y la pendiente maxima transitable en grados (se ignora fuera de 1..89). Un valor de escalon negativo no cambia el actual.
+
+#### `g3d_char_x(int personaje) -> float`
+Posicion X del personaje.
+
+**Devuelve:** X
+
+#### `g3d_char_y(int personaje) -> float`
+Posicion Y del personaje.
+
+**Devuelve:** Y
+
+#### `g3d_char_z(int personaje) -> float`
+Posicion Z del personaje.
+
+**Devuelve:** Z
+
+#### `g3d_char_grounded(int personaje) -> int`
+Indica si el personaje esta apoyado en el suelo.
+
+**Devuelve:** 1 si esta en el suelo
+
+#### `g3d_char_clear_all() -> int`
+Destruye todos los personajes.
+
+### cloth
+#### `g3d_cloth_create(float, float, int, int, float, float, float) -> int`
+
+#### `g3d_cloth_create_oriented(float, float, int, int, float, float, float, float, float) -> int`
+
+#### `g3d_cloth_pin(int, int) -> int`
+
+#### `g3d_cloth_set_wind(int, float, float, float, float) -> int`
+
+#### `g3d_cloth_set_collider(int, float, float, float, float) -> int`
+
+#### `g3d_cloth_clear_collider(int) -> int`
+
+#### `g3d_cloth_set_texture(int, int) -> int`
+
+#### `g3d_cloth_update(int, float) -> int`
+
+#### `g3d_cloth_push(float, float, float, float) -> int`
+
+#### `g3d_cloth_push_capsule(float, float, float, float, float, float, float) -> int`
+
+#### `g3d_cloth_pin_move(int, int, int, float, float, float) -> int`
+
+### collide
+#### `g3d_collide_move(float, float, float, float, float, float, float) -> int`
+
+#### `g3d_collide_x() -> float`
+
+#### `g3d_collide_z() -> float`
+
+#### `g3d_collide_floor(float, float, float, float) -> float`
+
+### collider
+#### `g3d_collider_add_box(float min_x, float min_y, float min_z, float max_x, float max_y, float max_z) -> int`
+Anade una caja de colision (AABB) en coordenadas del mundo. Los extremos se ordenan solos.
+
+**Devuelve:** id de la caja
+
+#### `g3d_collider_clear() -> int`
+Elimina todas las cajas de colision.
+
+#### `g3d_collider_set_box(int caja, float min_x, float min_y, float min_z, float max_x, float max_y, float max_z) -> int`
+Cambia las dimensiones de una caja ya creada.
+
+#### `g3d_collider_remove_box(int caja) -> int`
+Elimina una caja de colision.
+
+#### `g3d_collider_add_mesh(int modelo, int submalla, float x, float y, float z, float escala) -> int`
+Anade la malla EXACTA (triangulo a triangulo) de una submalla de un modelo como colision estatica: paredes, suelos, escaleras. No se mueve nunca (Jolt no admite malla movil). Para una malla de varias submallas usa G3D_COLLIDER_ADD_MODEL.
+
+#### `g3d_collider_add_model(int modelo, float x, float y, float z, float escala) -> int`
+Anade el modelo ENTERO (todas sus submallas juntas) como una sola colision estatica exacta. Es la forma de dar colision a un nivel o un objeto completo con una sola llamada en vez de un bucle por submallas. Devuelve -1 si el modelo no tiene submallas.
+
+**Devuelve:** -1 si falla
+
+```
+g3d_collider_add_model(m_nivel, 0, 0, 0, 1.0);
+```
+
+#### `g3d_collider_add_model_yaw(int modelo, float x, float y, float z, float escala, float giro_grados) -> int`
+Igual que G3D_COLLIDER_ADD_MODEL pero con la malla girada alrededor de Y. OJO: el giro va en GRADOS normales (no en milesimas de grado). Util para una pista importada que hay que orientar. Solo existe con Jolt.
+
+**Devuelve:** -1 si falla
+
+### draw
+#### `g3d_draw_calls() -> int`
+
+### entity
+#### `g3d_entity_spawn(int escena, int modelo, float x, float y, float z) -> int`
+Crea una entidad con un modelo en una escena.
+
+**Devuelve:** id de la entidad
+
+#### `g3d_entity_destroy(int entidad) -> int`
+Destruye una entidad.
+
+#### `g3d_entity_set_position(int entidad, float x, float y, float z) -> int`
+Posicion de la entidad en el mundo. OJO: si la entidad pertenece a un proceso C_3D, el proceso la pisa en cada frame con sus variables (x, y, z); usala solo en entidades sin proceso.
+
+#### `g3d_entity_set_rotation(int entidad, float pitch, float yaw, float roll) -> int`
+Rotacion de la entidad. Los angulos van en MILESIMAS DE GRADO, como los de BennuGD (90000 = 90 grados). OJO: si la entidad pertenece a un proceso C_3D, el proceso la pisa en cada frame con sus variables (angle_x/y/z); usala solo en entidades sin proceso.
+
+```
+g3d_entity_set_rotation(e, 0, 90000, 0);   // girada 90 grados sobre Y
+```
+
+#### `g3d_entity_set_scale(int entidad, float sx, float sy, float sz) -> int`
+Escala de la entidad en cada eje (1.0 = tamano original). OJO: si la entidad pertenece a un proceso C_3D, el proceso la pisa en cada frame con sus variables (size, size_x/y/z); usala solo en entidades sin proceso.
+
+#### `g3d_entity_get_position(int entidad, pointer &x, pointer &y, pointer &z) -> int`
+Lee la posicion de la entidad en tres variables float que se pasan por puntero.
+
+#### `g3d_entity_get_rotation(int entidad, pointer &pitch, pointer &yaw, pointer &roll) -> int`
+Lee la rotacion de la entidad en tres variables que se pasan por puntero.
+
+#### `g3d_entity_set_parent(int entidad, int padre) -> int`
+Hace que una entidad cuelgue de otra (hereda su transformacion).
+
+#### `g3d_entity_set_collider(int entidad, int solido) -> int`
+Marca (1) o desmarca (0) la entidad como solida para la colision.
+
+#### `g3d_entity_set_mesh(int entidad, int malla) -> int`
+Cambia la malla de la entidad.
+
+#### `g3d_entity_set_material(int entidad, int material) -> int`
+Asigna un material a la entidad.
+
+#### `g3d_entity_set_alpha(int entidad, int alfa) -> int`
+Opacidad con la convencion de BennuGD: 0 (invisible) a 255 (opaco). OJO: si la entidad pertenece a un proceso C_3D, el proceso la pisa en cada frame con sus variables (alpha); usala solo en entidades sin proceso.
+
+#### `g3d_entity_set_color(int entidad, int r, int g, int b) -> int`
+Tinte de color, de 0 a 255 por canal (255,255,255 = sin tinte). OJO: si la entidad pertenece a un proceso C_3D, el proceso la pisa en cada frame con sus variables (color_r/g/b); usala solo en entidades sin proceso.
+
+#### `g3d_entity_set_xray(int entidad, int marcar) -> int`
+Marca (1) una entidad, p. ej. un muro, para que G3D_XRAY_UPDATE la desvanezca cuando tapa al objetivo.
+
+#### `g3d_entity_set_blend(int entidad, int modo) -> int`
+Modo de mezcla con las constantes de BennuGD (BLEND_NORMAL, BLEND_ADD, BLEND_MULTIPLY, BLEND_SUBTRACT). Se aplica a todo el arbol del modelo. OJO: si la entidad pertenece a un proceso C_3D, el proceso la pisa en cada frame con sus variables (blendmode); usala solo en entidades sin proceso.
+
+### fbx
+#### `g3d_fbx_set_recenter(int) -> int`
+
+### fire
+#### `g3d_fire_add(float, float, float, float) -> int`
+
+#### `g3d_fire_clear() -> int`
+
+### flow
+#### `g3d_flow_add(float, float, float, float, float, float, float, float, float) -> int`
+
+#### `g3d_flow_add_river(int, float, float, float, float, float, float, float, float) -> int`
+
+#### `g3d_flow_set_texture(int) -> int`
+
+#### `g3d_flow_set_color(float, float, float) -> int`
+
+#### `g3d_flow_set_foam(float) -> int`
+
+#### `g3d_flow_set_speed(float) -> int`
+
+#### `g3d_flow_clear() -> int`
+
+#### `g3d_flow_set_clip(float) -> int`
+
+### fluid
+#### `g3d_fluid_add(float, float, float, float, float, float) -> int`
+
+#### `g3d_fluid_clear() -> int`
+
+#### `g3d_fluid_style(float, float, float, float, float, float, float, float, float, float) -> int`
+
+#### `g3d_fluid_block_reset() -> int`
+
+#### `g3d_fluid_set_texture(int) -> int`
+
+### general
+#### `g3d_raycast(float, float, float, float, float, float, float) -> float`
+
+#### `g3d_triangles() -> int`
+
+#### `g3d_culled() -> int`
+
+#### `g3d_raycast(float, float, float, float, float, float, pointer, pointer, pointer) -> int`
+
+### gltf
+#### `g3d_gltf_set_recenter(int) -> int`
+
+#### `g3d_gltf_set_chunking(float) -> int`
+
+### ibl
+#### `g3d_ibl_refresh() -> int`
+
+### instances
+#### `g3d_instances_create(int, int) -> int`
+
+#### `g3d_instances_add(int, float, float, float, float, float) -> int`
+
+#### `g3d_instances_set(int, int, float, float, float, float, float) -> int`
+
+#### `g3d_instances_create_skinned(int, int, int) -> int`
+
+#### `g3d_instances_set_wind(int, float) -> int`
+
+#### `g3d_instances_set_alpha_cut(int, int) -> int`
+
+#### `g3d_instances_set_distance(int, float) -> int`
+
+#### `g3d_instances_clear(int) -> int`
+
+#### `g3d_instances_count(int) -> int`
+
+### lake
+#### `g3d_lake_add(float, float, float, float) -> int`
+
+#### `g3d_lake_add_r(float, float, float, float, float) -> int`
+
+#### `g3d_lake_spill_level(float, float) -> float`
+
+### light
+#### `g3d_light_create(int tipo, float r, float g, float b) -> int`
+Crea una luz. Tipo: G3D_LIGHT_DIRECTIONAL (0), G3D_LIGHT_POINT (1) o G3D_LIGHT_SPOT (2). Maximo 32 luces. La variante de 1 parametro crea la luz en blanco.
+
+**Devuelve:** id de la luz, o -1 si se llego al maximo
+
+```
+sol = g3d_light_create(G3D_LIGHT_DIRECTIONAL, 1.0, 0.95, 0.8);
+g3d_light_set_direction(sol, -0.4, -1.0, -0.3);
+```
+
+#### `g3d_light_create(int tipo) -> int`
+Crea una luz. Tipo: G3D_LIGHT_DIRECTIONAL (0), G3D_LIGHT_POINT (1) o G3D_LIGHT_SPOT (2). Maximo 32 luces. La variante de 1 parametro crea la luz en blanco.
+
+**Devuelve:** id de la luz, o -1 si se llego al maximo
+
+```
+sol = g3d_light_create(G3D_LIGHT_DIRECTIONAL, 1.0, 0.95, 0.8);
+g3d_light_set_direction(sol, -0.4, -1.0, -0.3);
+```
+
+#### `g3d_light_set_position(int luz, float x, float y, float z) -> int`
+Posicion de una luz puntual o foco.
+
+#### `g3d_light_set_direction(int luz, float x, float y, float z) -> int`
+Direccion hacia la que apunta una luz direccional o un foco.
+
+#### `g3d_light_set_intensity(int luz, float intensidad) -> int`
+Intensidad de la luz. Los valores negativos se tratan como 0.
+
+#### `g3d_light_set_color(int luz, float r, float g, float b) -> int`
+Color de la luz, componentes de 0.0 a 1.0.
+
+#### `g3d_light_set_range(int luz, float alcance) -> int`
+Alcance de una luz puntual o foco.
+
+#### `g3d_light_set_cone(int luz, float grados) -> int`
+Angulo del cono de un foco, en grados.
+
+#### `g3d_light_enable_shadow(int luz, int activar) -> int`
+Activa (1) o desactiva (0) las sombras de una luz.
+
+#### `g3d_light_set_shadow_quality(int luz, int resolucion) -> int`
+Resolucion del mapa de sombras. Afecta tambien a la del renderer (equivale a G3D_SET_SHADOW_RESOLUTION).
+
+### load
+#### `g3d_load_gltf(string) -> int`
+
+#### `g3d_load_tr(string) -> int`
+
+#### `g3d_load_gltf_fractured(string) -> int`
+
+#### `g3d_load_obj(string) -> int`
+
+#### `g3d_load_fbx(string) -> int`
+
+#### `g3d_load_md3(string) -> int`
+
+#### `g3d_load_texture(string) -> int`
+
+### lvl
+#### `g3d_lvl_load(string) -> int`
+
+#### `g3d_lvl_free(int) -> int`
+
+#### `g3d_lvl_planes(int) -> int`
+
+#### `g3d_lvl_w(int, int) -> int`
+
+#### `g3d_lvl_h(int, int) -> int`
+
+#### `g3d_lvl_cell(int, int, int, int, int) -> int`
+
+#### `g3d_lvl_links(int) -> string`
+
+### material
+#### `g3d_material_create() -> int`
+
+#### `g3d_material_set_color(int, float, float, float, float) -> int`
+
+#### `g3d_material_set_metallic(int, float) -> int`
+
+#### `g3d_material_set_roughness(int, float) -> int`
+
+#### `g3d_material_set_texture(int, int, int) -> int`
+
+#### `g3d_material_set_map(int, int, int) -> int`
+
+#### `g3d_material_set_outline(int, int) -> int`
+
+### mirror
+#### `g3d_mirror_create(float, float, float, float, float, float, float, float) -> int`
+
+#### `g3d_mirror_set_flip(int, int) -> int`
+
+#### `g3d_mirror_set_tint(int, float, float, float) -> int`
+
+#### `g3d_mirror_clear() -> int`
+
+#### `g3d_mirror_set_distance(float) -> int`
+
+### model
+#### `g3d_model_despawn(int raiz) -> int`
+Destruye una entidad raiz creada con G3D_MODEL_SPAWN, todas sus mallas hijas y sus materiales privados. Usala al crear y quitar modelos constantemente para no agotar los huecos de entidades y materiales. Tambien vale para una sola entidad con material (p. ej. un trozo de fractura).
+
+#### `g3d_model_mesh(int) -> int`
+
+#### `g3d_model_texture(int) -> int`
+
+#### `g3d_model_submesh_count(int) -> int`
+
+#### `g3d_model_height(int modelo) -> float`
+Altura total del modelo: la extension maxima en Y entre todas sus mallas.
+
+**Devuelve:** altura
+
+#### `g3d_model_size(int modelo) -> float`
+Mayor dimension del modelo (ancho, alto o fondo) entre todas sus mallas. Util para encuadrar un modelo con una camara libre sea cual sea su escala.
+
+**Devuelve:** extension maxima
+
+#### `g3d_model_orient(int modelo, float rx, float ry, float rz) -> int`
+Corrige la orientacion del modelo: aplica una rotacion a sus vertices y vuelve a apoyarlo en el suelo. Sirve para modelos cuya pose original viene inclinada. OJO: los angulos van en RADIANES (a diferencia de las rotaciones de entidad, que van en milesimas de grado).
+
+#### `g3d_model_anim_count(int modelo) -> int`
+Numero de animaciones que trae el modelo.
+
+**Devuelve:** cantidad
+
+#### `g3d_model_anim_duration(int modelo, int animacion) -> float`
+Duracion de una animacion.
+
+**Devuelve:** duracion, en la misma unidad de tiempo que usa G3D_MODEL_ANIMATE
+
+#### `g3d_model_animate(int modelo, int animacion, float tiempo, int bucle) -> int`
+Pone al modelo (con esqueleto) en la pose de una animacion en el instante dado. Con loop=1 el tiempo se repite al pasar de la duracion. Llamala cada frame con un tiempo creciente. No hace nada si el modelo no tiene esqueleto.
+
+```
+t = t + dt;
+g3d_model_animate(m, ANIM_CAMINAR, t, 1);
+```
+
+#### `g3d_model_animate_blend(int modelo, int anim_a, float tiempo_a, int anim_b, float tiempo_b, float peso, int bucle) -> int`
+Mezcla dos animaciones (p. ej. quieto <-> andar <-> correr). Peso 0 = solo la primera, 1 = solo la segunda; entre medias interpola traslacion y escala y hace slerp de la rotacion. Cada animacion lleva su propio tiempo.
+
+#### `g3d_model_animate_all(int modelo, float tiempo, int bucle) -> int`
+Reproduce a la vez TODAS las animaciones del modelo. Funciona tambien sin esqueleto (toldos, ventiladores, puertas), moviendo los nodos, y si hay esqueleto tambien lo deforma.
+
+#### `g3d_model_rest_pose(int modelo) -> int`
+Devuelve el modelo a su pose de reposo.
+
+#### `g3d_model_lock_root(int modelo, int activar) -> int`
+Con 1, quita el movimiento de raiz de las animaciones: el personaje anima en el sitio en vez de desplazarse por la pantalla. Afecta a G3D_MODEL_ANIMATE y a ANIMATE_BLEND.
+
+#### `g3d_model_submesh(int, int) -> int`
+
+#### `g3d_model_submesh_texture(int, int) -> int`
+
+#### `g3d_model_submesh_is_water(int, int) -> int`
+
+#### `g3d_model_node_find(int modelo, string nombre) -> int`
+Busca un nodo (hueso) del esqueleto por nombre. La busqueda ignora mayusculas y acepta un trozo del nombre. Buscalo una vez y luego lee su posicion cada frame, p. ej. para acoplar un arma a una mano.
+
+**Devuelve:** indice del nodo, o -1 si no existe
+
+```
+mano = g3d_model_node_find(m, "hand_r");
+// cada frame, despues de animar:
+x = g3d_model_node_x(m, mano);
+```
+
+#### `g3d_model_node_x(int modelo, int nodo) -> float`
+Posicion X en el mundo de un nodo del esqueleto, tras la ultima animacion.
+
+**Devuelve:** X
+
+#### `g3d_model_node_y(int modelo, int nodo) -> float`
+Posicion Y en el mundo de un nodo del esqueleto, tras la ultima animacion.
+
+**Devuelve:** Y
+
+#### `g3d_model_node_z(int modelo, int nodo) -> float`
+Posicion Z en el mundo de un nodo del esqueleto, tras la ultima animacion.
+
+**Devuelve:** Z
+
+#### `g3d_model_submesh_cx(int, int) -> float`
+
+#### `g3d_model_submesh_cy(int, int) -> float`
+
+#### `g3d_model_submesh_cz(int, int) -> float`
+
+#### `g3d_model_submesh_hx(int, int) -> float`
+
+#### `g3d_model_submesh_hy(int, int) -> float`
+
+#### `g3d_model_submesh_hz(int, int) -> float`
+
+#### `g3d_model_spawn(int escena, int modelo, float x, float y, float z, float alto, float giro_y) -> int`
+Crea en la escena un modelo completo (todas sus mallas) colgando de una entidad raiz vacia. Mover, rotar o escalar esa raiz mueve todo el modelo. El modelo se escala uniformemente para que mida 'alto' de alto (si alto <= 0 se queda 1:1). El giro va en MILESIMAS DE GRADO.
+
+**Devuelve:** id de la entidad raiz, o -1 si el modelo no es valido
+
+```
+m = g3d_load_gltf("personaje.glb");
+raiz = g3d_model_spawn(escena, m, 0, 0, 0, 1.8, 0);
+```
+
+#### `g3d_model_set_gpu_skin(int modelo, int activar) -> int`
+Activa (1) o desactiva (0) el skinning por GPU del modelo.
+
+#### `g3d_model_submesh_lod(int, int, int) -> int`
+
+#### `g3d_model_submesh_map(int, int, int) -> int`
+
+### mouse
+#### `g3d_mouse_capture(int) -> int`
+
+#### `g3d_mouse_update() -> int`
+
+#### `g3d_mouse_dx() -> int`
+
+#### `g3d_mouse_dy() -> int`
+
+### paint
+#### `g3d_paint_create(int, int) -> int`
+
+#### `g3d_paint_fill(int, int, float) -> int`
+
+#### `g3d_paint_get_texture(int) -> int`
+
+#### `g3d_paint_save(int, string) -> int`
+
+### particles
+#### `g3d_particles_create(float, float, float, float, float, float, float, float, float, float, float, float, float, int) -> int`
+
+#### `g3d_particles_set_color(int, float, float, float) -> int`
+
+#### `g3d_particles_set_floor(int, float) -> int`
+
+#### `g3d_particles_clear() -> int`
+
+### physics
+#### `g3d_physics_body_create(int, int, float, float) -> int`
+
+#### `g3d_physics_body_set_velocity(int, float, float, float) -> int`
+
+#### `g3d_physics_step(float) -> int`
+
+#### `g3d_physics_set_gravity(float) -> int`
+
+### pick
+#### `g3d_pick_terrain(int, float, float, float, float, int) -> int`
+
+#### `g3d_pick_entity(int, float, float, float, float) -> int`
+
+#### `g3d_pick_x() -> float`
+
+#### `g3d_pick_y() -> float`
+
+#### `g3d_pick_z() -> float`
+
+### prefab
+#### `g3d_prefab_create(string) -> int`
+
+#### `g3d_prefab_add_box(int, float, float, float, float, float, float, float, float, float, float, float, float, int) -> int`
+
+#### `g3d_prefab_piece_texture(int, string) -> int`
+
+#### `g3d_prefab_save(int, string) -> int`
+
+#### `g3d_prefab_load(string) -> int`
+
+#### `g3d_prefab_instantiate(int, int, float, float, float, float) -> int`
+
+#### `g3d_prefab_count(int) -> int`
+
+### primitive
+#### `g3d_primitive_cube() -> int`
+
+#### `g3d_primitive_column(int) -> int`
+
+#### `g3d_primitive_wedge() -> int`
+
+#### `g3d_primitive_sphere(int) -> int`
+
+#### `g3d_primitive_plane() -> int`
+
+#### `g3d_primitive_terrain(int, float, float, float, int) -> int`
+
+#### `g3d_primitive_cliffs(int, float, float, float, int, float, float) -> int`
+
+#### `g3d_primitive_mountain(int, float, float, float, int, float) -> int`
+
+### ray
+#### `g3d_ray_hit_x() -> float`
+
+#### `g3d_ray_hit_y() -> float`
+
+#### `g3d_ray_hit_z() -> float`
+
+#### `g3d_ray_entity() -> int`
+
+### render
+#### `g3d_render_width() -> int`
+
+#### `g3d_render_height() -> int`
+
+### rigidbody
+#### `g3d_rigidbody_create(float x, float y, float z, float hx, float hy, float hz, float masa) -> int`
+Crea un cuerpo rigido en forma de caja. hx, hy, hz son las MEDIAS dimensiones (la mitad del ancho, alto y fondo); si valen menos de 0.01 se usa 0.5. Masa 0 o negativa = cuerpo FIJO: choca con todo pero no lo mueve nada (decorado solido). Rebote por defecto 0.12 y rozamiento 0.55. En PC la fisica de cuerpos rigidos la hace Jolt; en Vita y PS5 se usa un motor propio mas simple.
+
+**Devuelve:** id del cuerpo, o -1 si no quedan huecos
+
+```
+caja = g3d_rigidbody_create(0, 5, 0, 0.5, 0.5, 0.5, 10);
+// cada frame:
+g3d_rigidbody_step(dt);
+```
+
+#### `g3d_rigidbody_create_sphere(float x, float y, float z, float radio, float masa) -> int`
+Crea un cuerpo rigido esferico. Un radio menor de 0.01 se cambia por 0.5. Masa 0 = fijo.
+
+**Devuelve:** id del cuerpo
+
+#### `g3d_rigidbody_create_capsule(float x, float y, float z, float radio, float medio_alto, float masa) -> int`
+Crea un cuerpo rigido en capsula. medio_alto es la mitad del alto de la parte CILINDRICA: la altura total de la capsula es 2 * (medio_alto + radio). Valores menores de 0.01 se cambian por 0.5. Masa 0 = fijo.
+
+**Devuelve:** id del cuerpo
+
+#### `g3d_rigidbody_create_cylinder(float x, float y, float z, float radio, float medio_alto, float masa) -> int`
+Crea un cuerpo rigido cilindrico. medio_alto es la mitad del alto total. Valores menores de 0.01 se cambian por 0.5. Masa 0 = fijo.
+
+**Devuelve:** id del cuerpo
+
+#### `g3d_rigidbody_create_convex(float x, float y, float z, int modelo, int submalla, float escala, float masa) -> int`
+Crea un cuerpo rigido con la envolvente convexa de UNA submalla de un modelo (p. ej. un trozo de una fractura). El cuerpo se coloca en el centroide de la malla y gira sobre el. Falla (devuelve -1) si la submalla tiene menos de 4 vertices.
+
+**Devuelve:** id del cuerpo, o -1 si falla
+
+#### `g3d_rigidbody_set_ccd(int cuerpo, int activar) -> int`
+Activa (1) la deteccion continua de colisiones del cuerpo, para que objetos pequenos y rapidos (una bala) no atraviesen paredes finas. Con 0 vuelve a la deteccion normal. Solo tiene efecto con Jolt.
+
+#### `g3d_rigidbody_create_convex_model(float x, float y, float z, int modelo, float escala, float masa) -> int`
+Crea un cuerpo rigido con la envolvente convexa de TODAS las submallas del modelo: se ajusta a su forma sin tener que dar tamanos. Es lo que hay que usar para lo que se mueve (un barril, una caja, una roca que rueda). Solo existe con Jolt: sin el, devuelve -1.
+
+**Devuelve:** id del cuerpo, o -1 si falla
+
+```
+barril = g3d_rigidbody_create_convex_model(0, 5, 0, m_barril, 1.0, 20);
+```
+
+#### `g3d_rigidbody_destroy(int cuerpo) -> int`
+Destruye un cuerpo rigido.
+
+#### `g3d_rigidbody_clear() -> int`
+Destruye todos los cuerpos rigidos.
+
+#### `g3d_rigidbody_step(float dt) -> int`
+Avanza la simulacion de fisica. Llamala una vez por frame. dt se limita a 0.05 s. Antes de simular se incorpora el terreno de la escena como colision, asi que los cuerpos chocan con el suelo sin hacer nada mas.
+
+#### `g3d_rigidbody_apply_impulse(int cuerpo, float ix, float iy, float iz) -> int`
+Aplica un impulso lineal: cambia la velocidad en impulso / masa. Despierta al cuerpo si estaba dormido (un cuerpo quieto durante un rato se duerme y, sin despertarlo, ignoraria el impulso).
+
+#### `g3d_rigidbody_set_velocity(int cuerpo, float vx, float vy, float vz) -> int`
+Fija la velocidad lineal del cuerpo. Despierta al cuerpo si dormia.
+
+#### `g3d_rigidbody_set_damping(int cuerpo, float lineal, float angular) -> int`
+Amortiguacion lineal y angular. Un valor negativo deja el actual sin cambiar.
+
+#### `g3d_rigidbody_apply_angular_impulse(int cuerpo, float ax, float ay, float az) -> int`
+Aplica un impulso de giro: hace girar al cuerpo sin moverlo de sitio. Despierta al cuerpo si dormia.
+
+#### `g3d_rigidbody_set_upright(int cuerpo, float fuerza) -> int`
+Fuerza con la que el cuerpo se endereza solo, llevando su 'arriba' hacia el 'arriba' del mundo (0 = no se endereza; los negativos cuentan como 0). Funciona con cualquier orientacion.
+
+#### `g3d_rigidbody_set_buoyancy(int cuerpo, float agua_y, float densidad_relativa) -> int`
+Flotacion. Indica el nivel Y del agua y la densidad del cuerpo RELATIVA al agua: menor que 1 flota (0.5 = flota a media agua), 1 queda a flor y mayor que 1 se hunde. 0 o menos desactiva la flotacion. El empuje se reparte por el volumen sumergido, no en el centro, asi que un cuerpo ancho y bajo aguanta, uno alto y estrecho vuelca, y un golpe fuerte tumba a cualquiera. Hay que repetir la llamada si el nivel del agua cambia.
+
+```
+g3d_rigidbody_set_buoyancy(barril, g3d_scene_water_level(), 0.6);   // flota
+```
+
+#### `g3d_rigidbody_set_bounce(int cuerpo, float rebote, float rozamiento) -> int`
+Rebote (restitucion) y rozamiento, ambos de 0 a 1. Un valor negativo deja el actual sin cambiar.
+
+#### `g3d_rigidbody_x(int cuerpo) -> float`
+Posicion X del centro del cuerpo.
+
+**Devuelve:** X
+
+#### `g3d_rigidbody_y(int cuerpo) -> float`
+Posicion Y del centro del cuerpo.
+
+**Devuelve:** Y
+
+#### `g3d_rigidbody_z(int cuerpo) -> float`
+Posicion Z del centro del cuerpo.
+
+**Devuelve:** Z
+
+#### `g3d_rigidbody_grounded(int cuerpo) -> int`
+CON JOLT (PC) devuelve 1 si el cuerpo esta EN REPOSO (dormido), 0 si se esta moviendo; no distingue 'apoyado en el suelo' de 'quieto en el aire'. Sin Jolt (Vita/PS5) indica apoyo en el suelo.
+
+**Devuelve:** 1 si esta en reposo
+
+#### `g3d_rigidbody_set_angular_velocity(int cuerpo, float wx, float wy, float wz) -> int`
+Fija la velocidad angular del cuerpo. Despierta al cuerpo si dormia.
+
+#### `g3d_rigidbody_angle_x(int cuerpo) -> float`
+Orientacion del cuerpo en X (pitch), ya en MILESIMAS DE GRADO para pasarsela directamente a G3D_ENTITY_SET_ROTATION.
+
+**Devuelve:** angulo
+
+#### `g3d_rigidbody_angle_y(int cuerpo) -> float`
+Orientacion del cuerpo en Y (yaw), en MILESIMAS DE GRADO.
+
+**Devuelve:** angulo
+
+#### `g3d_rigidbody_angle_z(int cuerpo) -> float`
+Orientacion del cuerpo en Z (roll), en MILESIMAS DE GRADO.
+
+**Devuelve:** angulo
+
+#### `g3d_rigidbody_render_x(int cuerpo) -> float`
+X donde dibujar un modelo con el origen en los pies para que se apoye bien en el suelo y ruede alrededor de su centro. Es la posicion del cuerpo menos el desplazamiento de modelo girado.
+
+**Devuelve:** X
+
+#### `g3d_rigidbody_render_y(int cuerpo) -> float`
+Y donde dibujar el modelo (ver G3D_RIGIDBODY_RENDER_X).
+
+**Devuelve:** Y
+
+#### `g3d_rigidbody_render_z(int cuerpo) -> float`
+Z donde dibujar el modelo (ver G3D_RIGIDBODY_RENDER_X).
+
+**Devuelve:** Z
+
+#### `g3d_rigidbody_set_model_offset(int cuerpo, float ox, float oy, float oz) -> int`
+Desplazamiento entre el centro del cuerpo y el origen del modelo, que usan G3D_RIGIDBODY_RENDER_X/Y/Z. Por defecto es (0, medio_alto, 0), pensado para modelos con el origen en los pies.
+
+```
+g3d_entity_set_position(raiz, g3d_rigidbody_render_x(c), g3d_rigidbody_render_y(c), g3d_rigidbody_render_z(c));
+g3d_entity_set_rotation(raiz, g3d_rigidbody_angle_x(c), g3d_rigidbody_angle_y(c), g3d_rigidbody_angle_z(c));
+```
+
+### river
+#### `g3d_river_begin(float, float) -> int`
+
+#### `g3d_river_point(float, float) -> int`
+
+#### `g3d_river_block() -> int`
+
+#### `g3d_river_falls() -> int`
+
+#### `g3d_river_end() -> int`
+
+### road
+#### `g3d_road_create(int cerrada) -> int`
+Crea una carretera vacia. Una carretera es SOLO informacion de por donde se puede circular: una lista de nodos unidos por curvas suaves. NO se dibuja ni cambia el suelo: el aspecto es el de tu terreno pintado o tu modelo (.glb), y el suelo el de tu terreno o tu colision. Todo lo demas (salida, meta, vueltas, rivales) lo hace el juego. Maximo 8 carreteras. Las que dibujas en el editor con la herramienta Carretera ya vienen creadas (id 0, 1...) al empezar tu codigo.
+
+**Devuelve:** id de la carretera, o -1 si no quedan huecos
+
+```
+carretera = g3d_road_create(1);   // 1 = circuito cerrado, 0 = abierta
+g3d_road_add_node(carretera, 0, 0, 0, 12, 0, 0, 0, 0);
+g3d_road_add_node(carretera, 60, 0, 0, 12, 0, 0, 0, 0);
+g3d_road_add_node(carretera, 60, 60, 0, 12, 0, 0, 0, 0);
+g3d_road_build(carretera);
+```
+
+#### `g3d_road_destroy(int carretera) -> int`
+Destruye una carretera.
+
+#### `g3d_road_clear() -> int`
+Destruye todas las carreteras. g3d_scene_load tambien las borra antes de cargar las de la escena.
+
+#### `g3d_road_add_node(int carretera, float x, float z, float y, float ancho, float peralte_grados, int sigue_terreno, float dy, int superficie) -> int`
+Anade un nodo a la carretera. Las curvas entre nodos son suaves (tangentes Catmull-Rom). Ancho, peralte, altura y dy se interpolan hasta el nodo siguiente. Con sigue=1 la carretera va pegada al terreno (altura = terreno + dy) y 'y' se ignora; con sigue=0 va a la altura fija 'y'. La superficie es una etiqueta del tramo que SALE de este nodo: 0 asfalto, 1 tierra, 2 hielo, 3 barro, o lo que decida tu juego. Un peralte positivo sube el borde derecho (curvas a la izquierda). Maximo 512 nodos por carretera.
+
+**Devuelve:** indice del nodo, o -1
+
+#### `g3d_road_set_tangent(int carretera, int nodo, float tx, float tz) -> int`
+Tangente propia de un nodo: la direccion y la 'fuerza' con la que la curva pasa por el. (0, 0) = automatica (la normal: la curva sale de los nodos vecinos). Sirve para curvas muy cerradas, o para reproducir un trazado dibujado en el editor, que guarda la tangente de los nodos que el usuario ha arrastrado. Hay que llamarla antes de G3D_ROAD_BUILD.
+
+#### `g3d_road_build(int carretera) -> int`
+Calcula la linea central de la carretera. Hay que llamarla despues de anadir los nodos y, si algun nodo sigue el terreno, DESPUES de cargar el terreno. g3d_scene_load ya la llama por ti para las carreteras de la escena. Una carretera cerrada necesita al menos 3 nodos; una abierta, 2.
+
+**Devuelve:** numero de muestras de la linea central (unas cada 2 m), 0 si no hay trazado valido
+
+#### `g3d_road_count() -> int`
+Numero de carreteras ya calculadas.
+
+**Devuelve:** cantidad
+
+#### `g3d_road_nodes(int carretera) -> int`
+Numero de nodos de una carretera.
+
+**Devuelve:** cantidad
+
+#### `g3d_road_closed(int carretera) -> int`
+Indica si la carretera es un circuito cerrado.
+
+**Devuelve:** 1 si es cerrada
+
+#### `g3d_road_length(int carretera) -> float`
+Longitud de la linea central de la carretera, en metros (unidades de mundo), contando la vuelta entera si es cerrada.
+
+**Devuelve:** longitud
+
+#### `g3d_road_x(int carretera, float distancia) -> float`
+Posicion X del punto de la linea central situado a 'distancia' metros del principio. En una carretera cerrada la distancia da la vuelta (y admite negativos); en una abierta se recorta a los extremos.
+
+**Devuelve:** X
+
+#### `g3d_road_y(int carretera, float distancia) -> float`
+Altura del punto de la carretera a 'distancia' metros del principio (ver G3D_ROAD_X).
+
+**Devuelve:** Y
+
+#### `g3d_road_z(int carretera, float distancia) -> float`
+Posicion Z del punto de la carretera a 'distancia' metros del principio (ver G3D_ROAD_X).
+
+**Devuelve:** Z
+
+#### `g3d_road_yaw(int carretera, float distancia) -> float`
+Hacia donde mira la carretera en ese punto, como rumbo en MILESIMAS DE GRADO: 0 mira hacia +Z y crece hacia +X (adelante = (sin rumbo, cos rumbo)), igual que el rumbo de un vehiculo. Vista desde una camara detras del coche (mirando a +Z), un rumbo creciente es un giro a la izquierda.
+
+**Devuelve:** rumbo
+
+#### `g3d_road_width(int carretera, float distancia) -> float`
+Ancho de la carretera en ese punto, en metros.
+
+**Devuelve:** ancho
+
+#### `g3d_road_surface(int carretera, float distancia) -> int`
+Etiqueta de superficie del tramo en ese punto (la que se puso en G3D_ROAD_ADD_NODE).
+
+**Devuelve:** superficie
+
+#### `g3d_road_nearest(float x, float z) -> int`
+Busca el punto de carretera mas cercano a (x, z), de entre todas las carreteras, y guarda el resultado para las funciones G3D_ROAD_NEAR_*. Es la base de casi todo: en que vuelta va un coche, quien va primero, hacia donde apunta un rival o si se ha salido de la pista.
+
+**Devuelve:** id de la carretera mas cercana, o -1 si no hay ninguna
+
+```
+g3d_road_nearest(g3d_vehicle_x(v), g3d_vehicle_z(v));
+IF (NOT g3d_road_near_on())
+    say("Fuera de la pista");
+END
+```
+
+#### `g3d_road_near_dist() -> float`
+De la ultima G3D_ROAD_NEAREST: distancia recorrida a lo largo de la carretera del punto mas cercano. Con ella se sabe en que vuelta va un coche (salta de casi 'largo' a casi 0 al cruzar la meta) o quien va por delante.
+
+**Devuelve:** distancia en metros
+
+#### `g3d_road_near_offset() -> float`
+De la ultima G3D_ROAD_NEAREST: separacion lateral al centro de la carretera. Positiva hacia la izquierda de quien avanza por ella (hacia +X cuando el rumbo es 0), negativa hacia la derecha.
+
+**Devuelve:** metros
+
+#### `g3d_road_near_y() -> float`
+De la ultima G3D_ROAD_NEAREST: altura de la carretera en ese punto.
+
+**Devuelve:** altura
+
+#### `g3d_road_near_width() -> float`
+De la ultima G3D_ROAD_NEAREST: ancho de la carretera en ese punto.
+
+**Devuelve:** ancho en metros
+
+#### `g3d_road_near_surface() -> int`
+De la ultima G3D_ROAD_NEAREST: etiqueta de superficie del tramo.
+
+**Devuelve:** superficie
+
+#### `g3d_road_near_on() -> int`
+De la ultima G3D_ROAD_NEAREST: indica si el punto esta dentro del ancho de la carretera (separacion lateral menor o igual que la mitad del ancho).
+
+**Devuelve:** 1 si esta en la carretera
+
+#### `g3d_road_near_yaw() -> float`
+De la ultima G3D_ROAD_NEAREST: rumbo de la carretera en ese punto, en MILESIMAS DE GRADO (ver G3D_ROAD_YAW).
+
+**Devuelve:** rumbo
+
+#### `g3d_road_show(int carretera, int escena) -> int`
+OPCIONAL: dibuja la carretera, creando su malla (una por superficie) como entidades de la escena. Normalmente NO se usa: tu carretera ya esta pintada en el terreno o es un modelo. Sirve para ver una carretera inventada por codigo (como en las guias) o para depurar. No la vuelve suelo: para eso G3D_ROAD_SET_GROUND. Hay que llamarla despues de G3D_ROAD_BUILD. Cada superficie tiene un color de serie (asfalto gris oscuro, tierra marron, hielo azul claro, barro marron oscuro).
+
+**Devuelve:** numero de entidades creadas (una por superficie usada)
+
+```
+g3d_road_build(carretera);
+g3d_road_show(carretera, escena);
+```
+
+#### `g3d_road_set_ground(int carretera, int activar) -> int`
+Hace que la carretera cuente como SUELO (para el vehiculo, el personaje y las colisiones, via G3D_SCENE_TERRAIN_HEIGHT): dentro de su ancho, la altura es la de la carretera, con su peralte. Por defecto NO lo es (0): una carretera marcada en el editor solo dice por donde se puede circular y el suelo es el de tu terreno o tu modelo. Util para carreteras inventadas por codigo junto a G3D_ROAD_SHOW. Los cuerpos rigidos de Jolt no la notan.
+
+#### `g3d_road_hide(int carretera) -> int`
+Quita el dibujo de la carretera (sigue existiendo y siendo suelo).
+
+#### `g3d_road_entity(int carretera, int superficie) -> int`
+Entidad con la que se dibuja una superficie de la carretera. Sirve para cambiar su aspecto con las funciones de siempre: g3d_entity_set_material, g3d_material_set_texture, g3d_entity_set_color... La textura se repite cada 8 m a lo largo de la carretera.
+
+**Devuelve:** id de la entidad, o -1 si la carretera no tiene esa superficie
+
+```
+// una textura de asfalto en la superficie 0
+m = g3d_material_create();
+g3d_material_set_texture(m, 0, g3d_load_texture("asfalto.png"));
+g3d_entity_set_material(g3d_road_entity(carretera, 0), m);
+```
+
+#### `g3d_road_set_color(int superficie, float r, float g, float b) -> int`
+Cambia el color de serie de una superficie (de 0 a 7), con componentes de 0.0 a 1.0. Afecta tambien a las carreteras ya dibujadas.
+
+### rope
+#### `g3d_rope_create(float, float, float, float, float, float, int, float, float) -> int`
+
+#### `g3d_rope_pin(int, int, int) -> int`
+
+#### `g3d_rope_pin_move(int, int, float, float, float) -> int`
+
+#### `g3d_rope_set_texture(int, int) -> int`
+
+#### `g3d_rope_points(int) -> int`
+
+#### `g3d_rope_x(int, int) -> float`
+
+#### `g3d_rope_y(int, int) -> float`
+
+#### `g3d_rope_z(int, int) -> float`
+
+#### `g3d_rope_update(int, float) -> int`
+
+#### `g3d_rope_load(int, int, float) -> int`
+
+#### `g3d_rope_set_wind(int, float, float, float, float) -> int`
+
+#### `g3d_rope_destroy(int) -> int`
+
+### scatter
+#### `g3d_scatter_clear() -> int`
+
+#### `g3d_scatter_load(string, float) -> int`
+
+#### `g3d_scatter_group(string) -> int`
+
+#### `g3d_scatter_model(int, int, int, float, float, float, float, int) -> int`
+
+#### `g3d_scatter_mesh(int, int, int, int, float, float, float, float, int) -> int`
+
+### scene
+#### `g3d_scene_create(string nombre) -> int`
+Crea una escena vacia.
+
+**Devuelve:** id de la escena
+
+#### `g3d_scene_destroy(int escena) -> int`
+Destruye una escena.
+
+#### `g3d_scene_set_active(int escena) -> int`
+Hace activa una escena: es la que se renderiza.
+
+#### `g3d_scene_load(string fichero) -> int`
+Carga un mapa .lvl (terreno, luces, entidades, camara), crea la escena y la deja activa.
+
+**Devuelve:** id de la escena, o -1 si el fichero no existe
+
+```
+escena = g3d_scene_load("mapa.lvl");
+```
+
+#### `g3d_scene_terrain_height(float x, float z) -> float`
+Altura del terreno de la escena cargada en el punto (x, z). Sobre terreno de voxeles usa la superficie real esculpida.
+
+**Devuelve:** altura en Y; 0 si no hay terreno
+
+#### `g3d_scene_water_level() -> float`
+Altura Y del agua de la escena cargada.
+
+**Devuelve:** nivel del agua
+
+#### `g3d_scene_has_spawn() -> int`
+Indica si el mapa cargado define un punto de inicio del jugador.
+
+**Devuelve:** 1 si existe
+
+#### `g3d_scene_spawn_x() -> float`
+Coordenada X del punto de inicio del jugador.
+
+**Devuelve:** X
+
+#### `g3d_scene_spawn_y() -> float`
+Coordenada Y del punto de inicio del jugador.
+
+**Devuelve:** Y
+
+#### `g3d_scene_spawn_z() -> float`
+Coordenada Z del punto de inicio del jugador.
+
+**Devuelve:** Z
+
+#### `g3d_scene_player_radius() -> float`
+Radio de colision del jugador definido en el mapa.
+
+**Devuelve:** radio
+
+#### `g3d_scene_player_height() -> float`
+Altura del jugador definida en el mapa.
+
+**Devuelve:** altura
+
+#### `g3d_scene_player_climb() -> float`
+Altura maxima de escalon que puede subir el jugador, definida en el mapa.
+
+**Devuelve:** altura de escalon
+
+### set
+#### `g3d_set_sun(float) -> int`
+
+#### `g3d_set_clear_color(float, float, float, float) -> int`
+
+#### `g3d_set_ambient_light(float, float, float, float) -> int`
+
+#### `g3d_set_fog(int, float, float, float, float, float) -> int`
+
+#### `g3d_set_wireframe_mode(int) -> int`
+
+#### `g3d_set_shadows(int) -> int`
+
+#### `g3d_set_shadow_resolution(int) -> int`
+
+#### `g3d_set_hdr(int) -> int`
+
+#### `g3d_set_ibl(int, float) -> int`
+
+#### `g3d_set_occlusion(int) -> int`
+
+#### `g3d_set_smaa(int) -> int`
+
+#### `g3d_set_fsr(int, float, float) -> int`
+
+#### `g3d_set_fsr_height(int, int, float) -> int`
+
+#### `g3d_set_exposure(float) -> int`
+
+#### `g3d_set_bloom(int, float, float) -> int`
+
+#### `g3d_set_tonemap(int) -> int`
+
+#### `g3d_set_ssao(int, float, float) -> int`
+
+#### `g3d_set_underwater(int, float, float, float, float) -> int`
+
+#### `g3d_set_lod(float) -> int`
+
+#### `g3d_set_culling(int) -> int`
+
+#### `g3d_set_backface_cull(int) -> int`
+
+#### `g3d_set_spawn_parent(int) -> int`
+
+#### `g3d_set_terrain_collider(int) -> int`
+
+### sky
+#### `g3d_sky_set_gradient(float, float, float, float, float, float) -> int`
+
+#### `g3d_sky_set_clouds(float, float) -> int`
+
+#### `g3d_sky_set_low_clouds(float, float, float, float) -> int`
+
+#### `g3d_sky_set_texture(int) -> int`
+
+#### `g3d_sky_enable(int) -> int`
+
+### sprite
+#### `g3d_sprite_create(int escena, float x, float y, float z) -> int`
+Crea un sprite 2D dentro del mundo 3D (estilo HD-2D). Es un quad que se dibuja en el pase opaco con recorte alfa, asi que tapa y es tapado por la geometria 3D sin ordenar nada. La textura sale de un grafico normal de BennuGD2, por lo que se anima como en 2D, cambiando el grafico.
+
+**Devuelve:** id del sprite
+
+#### `g3d_sprite_destroy(int sprite) -> int`
+Destruye un sprite.
+
+#### `g3d_sprite_set_height(int sprite, float alto) -> int`
+Fija el alto del sprite en unidades de mundo.
+
+#### `g3d_sprite_set_pixels_per_unit(int sprite, float pixeles_por_unidad) -> int`
+Cuantos pixeles del grafico entran en una unidad de mundo. Es lo comodo para pixel art: el tamano sale del propio grafico.
+
+#### `g3d_sprite_set_anchor(int sprite, float ax, float ay) -> int`
+Punto del grafico que se coloca en (x, y, z), de 0 a 1. (0.5, 1.0) = centro-abajo: los pies del personaje sobre el suelo.
+
+#### `g3d_sprite_set_billboard(int sprite, int modo) -> int`
+Como se encara a la camara: G3D_SPRITE_UPRIGHT (0) gira solo en horizontal y sigue de pie (personajes); G3D_SPRITE_FACING (1) mira siempre de frente (objetos, efectos).
+
+#### `g3d_sprite_set_cutout(int sprite, float umbral) -> int`
+Umbral de alfa: los pixeles con alfa por debajo se descartan y dejan un agujero.
+
+#### `g3d_sprite_set_shadow(int sprite, int activar) -> int`
+Activa (1) o desactiva (0) que el sprite proyecte sombra: el mismo quad con el mismo recorte alfa entra en el mapa de sombras.
+
+#### `g3d_sprite_dir(int sprite, float angulo, int ndirs) -> int`
+Que postura dibujar segun desde donde se mira: 0 = de frente a la camara, y va girando hasta ndirs-1. Con esto el .prg elige el grafico de entre sus N posturas. El angulo va en MILESIMAS DE GRADO, como el local 'angle'.
+
+**Devuelve:** indice de la postura (0 .. ndirs-1)
+
+#### `g3d_sprite_set_smooth(int sprite, int activar) -> int`
+Filtrado de la textura. Por defecto es nearest (pixel art); con 1 es bilineal suavizado.
+
+#### `g3d_sprite_set_lit(int sprite, int activar) -> int`
+Con 1 (por defecto) le afecta la luz de la escena, de modo que se apaga de noche y con el ciclo de dia en vez de ir siempre a pleno brillo.
+
+#### `g3d_sprite_set_snap(int sprite, int activar) -> int`
+Con 1 (por defecto) la posicion en pantalla se redondea a pixeles enteros, para que el pixel art no tiemble al moverse.
+
+#### `g3d_sprite_set_cell(int sprite, int x, int y, int ancho, int alto) -> int`
+Recorte en pixeles dentro del grafico, para hojas de sprites irregulares (el editor saca estas medidas al detectar los fotogramas).
+
+### stream
+#### `g3d_stream_init(float, int) -> int`
+
+#### `g3d_stream_update(float, float) -> int`
+
+#### `g3d_stream_load_count() -> int`
+
+#### `g3d_stream_load_x(int) -> int`
+
+#### `g3d_stream_load_z(int) -> int`
+
+#### `g3d_stream_unload_count() -> int`
+
+#### `g3d_stream_unload_x(int) -> int`
+
+#### `g3d_stream_unload_z(int) -> int`
+
+#### `g3d_stream_loaded_count() -> int`
+
+### terrain
+#### `g3d_terrain_paint(int, int, int, float, float, float, float, float) -> int`
+
+#### `g3d_terrain_get_height(int, float, float) -> float`
+
+#### `g3d_terrain_raise(int, float, float, float, float) -> int`
+
+#### `g3d_terrain_hole(int, float, float, float, int) -> int`
+
+#### `g3d_terrain_smooth(int, float, float, float, float) -> int`
+
+#### `g3d_terrain_flatten(int, float, float, float, float, float) -> int`
+
+#### `g3d_terrain_load(int, string) -> int`
+
+### tr
+#### `g3d_tr_probe(string) -> int`
+
+### vehicle
+#### `g3d_vehicle_create(float x, float y, float z, float rumbo) -> int`
+Crea un vehiculo arcade (direccion tipo bicicleta y seguimiento del terreno con 4 ruedas). Valores por defecto: batalla 4.0, via 2.4, motor 26, velocidad maxima 55, giro maximo 32 grados, freno 40, resistencia 0.8. El rumbo va en MILESIMAS DE GRADO. Maximo 8 vehiculos.
+
+**Devuelve:** id del vehiculo, o -1 si no quedan huecos
+
+#### `g3d_vehicle_destroy(int vehiculo) -> int`
+Destruye un vehiculo.
+
+#### `g3d_vehicle_update(int vehiculo, float dt, float acelerador, float direccion, float freno) -> int`
+Avanza el vehiculo. acelerador de -1 a 1 (negativo = marcha atras), direccion de -1 a 1 y freno de 0 a 1 (los valores fuera de rango se recortan). Una direccion POSITIVA hace crecer el rumbo, es decir, gira hacia +X: a la izquierda de la pantalla si la camara va detras mirando a +Z. Con la velocidad la direccion pierde hasta un 40 % de autoridad. Solo acelera con las ruedas en el suelo. dt se limita a 0.1 s.
+
+```
+g3d_vehicle_update(coche, dt, acel, giro, freno);
+```
+
+#### `g3d_vehicle_set_geometry(int vehiculo, float batalla, float via, float altura) -> int`
+Dimensiones: distancia entre ejes (batalla), distancia entre ruedas de un mismo eje (via) y altura de la suspension. Los valores demasiado pequenos se ignoran (batalla y via deben ser mayores que 0.1; la altura, 0 o mas).
+
+#### `g3d_vehicle_set_tuning(int vehiculo, float motor, float vel_maxima, float giro_max_grados, float freno, float resistencia) -> int`
+Ajuste de conduccion: fuerza del motor, velocidad maxima, giro maximo en GRADOS, fuerza de frenado y resistencia. Un valor 0 o negativo deja el actual sin cambiar.
+
+#### `g3d_vehicle_x(int vehiculo) -> float`
+Posicion X del centro del chasis.
+
+**Devuelve:** X
+
+#### `g3d_vehicle_y(int vehiculo) -> float`
+Posicion Y del centro del chasis.
+
+**Devuelve:** Y
+
+#### `g3d_vehicle_z(int vehiculo) -> float`
+Posicion Z del centro del chasis.
+
+**Devuelve:** Z
+
+#### `g3d_vehicle_yaw(int vehiculo) -> float`
+Rumbo del vehiculo, en MILESIMAS DE GRADO.
+
+**Devuelve:** angulo
+
+#### `g3d_vehicle_pitch(int vehiculo) -> float`
+Inclinacion adelante/atras segun el terreno, en MILESIMAS DE GRADO.
+
+**Devuelve:** angulo
+
+#### `g3d_vehicle_roll(int vehiculo) -> float`
+Inclinacion lateral segun el terreno, en MILESIMAS DE GRADO.
+
+**Devuelve:** angulo
+
+#### `g3d_vehicle_speed(int vehiculo) -> float`
+Velocidad hacia delante, con signo (negativa = marcha atras).
+
+**Devuelve:** velocidad
+
+### voxterrain
+#### `g3d_voxterrain_floor(float, float, float) -> float`
+
+#### `g3d_voxterrain_solid(float, float, float) -> int`
+
+#### `g3d_voxterrain_blocked(float, float, float, float, float) -> int`
+
+#### `g3d_voxterrain_worldsize() -> float`
+
+#### `g3d_voxterrain_walk(float, float, float, float, float, float, float, float) -> int`
+
+#### `g3d_voxterrain_walkx() -> float`
+
+#### `g3d_voxterrain_walky() -> float`
+
+#### `g3d_voxterrain_walkz() -> float`
+
+### wall
+#### `g3d_wall_ray(float, float, float, float, float, float, float) -> float`
+
+### water
+#### `g3d_water_set_ssr(int, float) -> int`
+
+#### `g3d_water_set_ocean(float, float, float) -> int`
+
+#### `g3d_water_set_tessellation(int) -> int`
+
+#### `g3d_water_set_surf(float, float, float, float) -> int`
+
+#### `g3d_water_set_surf_wave(float, float) -> int`
+
+#### `g3d_water_set_foam(float, float) -> int`
+
+#### `g3d_water_set_splash(float, float) -> int`
+
+#### `g3d_water_set_caustics(float) -> int`
+
+#### `g3d_water_set_underwater_look(float, float) -> int`
+
+#### `g3d_water_create(float, float, int) -> int`
+
+#### `g3d_water_level_at(float, float) -> float`
+
+#### `g3d_water_set_waves(float, float, float) -> int`
+
+#### `g3d_water_set_color(float, float, float, float, float, float) -> int`
+
+#### `g3d_water_set_enabled(int) -> int`
+
+#### `g3d_water_set_texture(int) -> int`
+
+#### `g3d_water_set_reflection(int, float) -> int`
+
+#### `g3d_water_set_reflection_flip(int) -> int`
+
+#### `g3d_water_ripple(float, float, float) -> int`
+
+#### `g3d_water_add_ripple_source(float, float, float) -> int`
+
+#### `g3d_water_clear_ripple_sources() -> int`
+
+#### `g3d_water_splash(float, float, float, float) -> int`
+
+### waterfall
+#### `g3d_waterfall_add(float, float, float, float, float, float, float) -> int`
+
+### watersim
+#### `g3d_watersim_clear_sources() -> int`
+
+#### `g3d_watersim_settle(float) -> int`
+
+#### `g3d_watersim_add_source(float, float, float) -> int`
+
+#### `g3d_watersim_set_viscosity(float) -> int`
+
+#### `g3d_watersim_set_evaporation(float) -> int`
+
+### world
+#### `g3d_world_rebase(float, float, float) -> int`
+
+### worldgen
+#### `g3d_worldgen_set(int, float, float, float) -> int`
+
+#### `g3d_worldgen_height(float, float) -> float`
+
+#### `g3d_worldgen_tile(int, int, int, float, int, float, float, int) -> int`
+
+#### `g3d_worldgen_tile_free(int) -> int`
+
+#### `g3d_worldgen_set_water_depth(float) -> int`
+
+#### `g3d_worldgen_set_biome_textures(int, int, int, int, float) -> int`
+
+### xray
+#### `g3d_xray_update(float, float, float, float, float, float, float, float, float) -> int`
+
+### zone
+#### `g3d_zone_clear() -> int`
+
+#### `g3d_zone_init(int, float) -> int`
+
+#### `g3d_zone_load(string) -> int`
+
+#### `g3d_zone_blocked(float, float, int) -> int`
+
+## Modulo ads
+### general
+#### `ads_initialize() -> int`
+
+#### `ads_load_interstitial(string) -> int`
+
+#### `ads_show_interstitial() -> int`
+
+#### `ads_is_interstitial_loaded() -> int`
+
+#### `ads_load_rewarded(string) -> int`
+
+#### `ads_show_rewarded() -> int`
+
+#### `ads_is_rewarded_loaded() -> int`
+
+#### `ads_show_banner(string, int) -> int`
+
+#### `ads_hide_banner() -> int`
+
+#### `ads_poll_event() -> int`
+
+#### `ads_check_consent() -> int`
+
+#### `ads_show_consent_form() -> int`
+
+#### `ads_set_child_directed(int) -> int`
+
+## Modulo debug
+### general
+#### `trace(int) -> int`
+
+## Modulo gfx
+### general
+#### `advance(double) -> int`
+
+#### `xadvance(int, double) -> int`
+
+#### `get_angle(int) -> int`
+
+#### `get_angle(int, int) -> int`
+
+#### `get_dist(int) -> double`
+
+#### `get_dist(int, int) -> double`
+
+#### `get_real_point(int, double, double, pointer, pointer) -> int`
+
+#### `get_real_point(int, int, pointer, pointer) -> int`
+
+#### `get_real_point(int, pointer, pointer) -> int`
+
+#### `collision(int, int) -> int`
+
+#### `collision(int) -> int`
+
+#### `scroll_start(int, int, int, int, int, int, int, int, int) -> int`
+
+#### `scroll_start(int, int, int, int, int, int, int) -> int`
+
+#### `scroll_start(int, int, int, int, int, int) -> int`
+
+#### `scroll_stop(int) -> int`
+
+#### `scroll_move(int) -> int`
+
+#### `region_define(int, int, int, int, int) -> int`
+
+#### `region_out(int, int) -> int`
+
+#### `screen_get() -> int`
+
+#### `rgb(byte, byte, byte) -> int`
+
+#### `rgb(int, int, byte, byte, byte) -> int`
+
+#### `rgba(byte, byte, byte, byte) -> int`
+
+#### `rgba(int, int, byte, byte, byte, byte) -> int`
+
+#### `rgb_get(int, pointer, pointer, pointer) -> int`
+
+#### `rgb_get(int, int, int, pointer, pointer, pointer) -> int`
+
+#### `rgba_get(int, pointer, pointer, pointer, pointer) -> int`
+
+#### `rgba_get(int, int, int, pointer, pointer, pointer, pointer) -> int`
+
+#### `fade(int, int, int, int, int) -> int`
+
+#### `fade(int, int, int, int, int, int) -> int`
+
+#### `fade_on(int) -> int`
+
+#### `fade_on(int, int) -> int`
+
+#### `fade_off(int) -> int`
+
+#### `fade_off(int, int) -> int`
+
+#### `set_mode(int, int) -> int`
+
+#### `set_mode(int, int, int) -> int`
+
+#### `set_fps(int, int) -> int`
+
+#### `window_set_title(string) -> int`
+
+#### `window_set_icon(int, int) -> int`
+
+#### `window_move(int, int) -> int`
+
+#### `window_set_pos(int, int) -> int`
+
+#### `window_get_pos(pointer, pointer) -> int`
+
+#### `window_get_size(pointer, pointer, pointer, pointer, pointer, pointer) -> int`
+
+#### `desktop_get_size(pointer, pointer) -> int`
+
+#### `window_hide() -> int`
+
+#### `window_show() -> int`
+
+#### `window_minimize() -> int`
+
+#### `window_maximize() -> int`
+
+#### `window_raise() -> int`
+
+#### `window_restore() -> int`
+
+#### `display_get_orientation() -> int`
+
+#### `window_set_dpi_aware() -> int`
+
+#### `write(int, int, int, int, string) -> int`
+
+#### `write(int, int, int, int, int, string) -> int`
+
+#### `write_move(int, int, int) -> int`
+
+#### `write_move(int, int, int, int) -> int`
+
+#### `write_delete(int) -> int`
+
+#### `write_in_map(int, string, int) -> int`
+
+#### `write_in_map(int, int, int, int, int, string, int) -> int`
+
+#### `text_width(int, string) -> int`
+
+#### `text_height(int, string) -> int`
+
+#### `write_var(int, int, int, int, ..., ?, ?) -> int`
+
+#### `write_var(int, int, int, int, int, ..., ?, ?) -> int`
+
+#### `write_value(int, int, int, int, int, pointer) -> int`
+
+#### `write_value(int, int, int, int, int, int, pointer) -> int`
+
+#### `write_get_rgba(int, pointer, pointer, pointer, pointer) -> int`
+
+#### `write_set_rgba(int, byte, byte, byte, byte) -> int`
+
+#### `map_block_copy(int, int, int, int, int, int, int, int, int, int, int) -> int`
+
+#### `map_block_copy(int, int, int, int, int, int, int, int, int, int, int, byte, byte, byte, byte) -> int`
+
+#### `map_block_copy(int, int, int, int, int, int, int, int, int, int, int, byte, byte, byte, byte, int) -> int`
+
+#### `map_block_copy(int, int, int, int, int, int, int, int, int, int, int, byte, byte, byte, byte, int, int, int, int, int, int, int) -> int`
+
+#### `map_block_copy(int, int, int, int, int, int, int, int, int, int) -> int`
+
+#### `map_put(int, int, int, int, int, int) -> int`
+
+#### `map_put(int, int, int, int, int, int, int, int, int, int, byte, byte, byte, byte) -> int`
+
+#### `map_put(int, int, int, int, int, int, int, int, int, int, byte, byte, byte, byte, int) -> int`
+
+#### `map_put(int, int, int, int, int, int, int, int, int, int, byte, byte, byte, byte, int, int, int, int, int, int, int) -> int`
+
+#### `map_new(int, int) -> int`
+
+#### `map_new(int, int, int) -> int`
+
+#### `map_clear(int, int) -> int`
+
+#### `map_clear(int, int, int) -> int`
+
+#### `map_clear(int, int, int, int, int, int) -> int`
+
+#### `map_clear(int, int, int, int, int, int, int) -> int`
+
+#### `map_clone(int, int) -> int`
+
+#### `map_name(int, int) -> string`
+
+#### `map_set_name(int, int, string) -> int`
+
+#### `map_exists(int, int) -> int`
+
+#### `map_del(int, int) -> int`
+
+#### `map_unload(int, int) -> int`
+
+#### `map_load(string) -> int`
+
+#### `map_load(string, pointer) -> int`
+
+#### `map_save(int, int, string) -> int`
+
+#### `map_get_pixel(int, int, int, int) -> int`
+
+#### `map_put_pixel(int, int, int, int, int) -> int`
+
+#### `fpg_add(int, int, int, int) -> int`
+
+#### `fpg_new() -> int`
+
+#### `fpg_exists(int) -> int`
+
+#### `fpg_load(string) -> int`
+
+#### `fpg_load(string, pointer) -> int`
+
+#### `fpg_del(int) -> int`
+
+#### `fpg_unload(int) -> int`
+
+#### `map_info_set(int, int, int, int) -> int`
+
+#### `map_info(int, int, int, int) -> int`
+
+#### `map_info(int, int, int) -> int`
+
+#### `graphic_set(int, int, int, int) -> int`
+
+#### `graphic_info(int, int, int) -> int`
+
+#### `point_get(int, int, int, pointer, pointer) -> int`
+
+#### `point_set(int, int, int, int, int) -> int`
+
+#### `center_set(int, int, int, int) -> int`
+
+#### `point_get_total(int, int) -> int`
+
+#### `box_set(int, int, int, int, int, int, int, int) -> int`
+
+#### `box_set(int, int, int, int, int, int) -> int`
+
+#### `box_get(int, int, int, pointer, pointer, pointer, pointer, pointer) -> int`
+
+#### `box_get(int, pointer, pointer, pointer, pointer, pointer) -> int`
+
+#### `box_get_by_pos(int, int, int, pointer, pointer, pointer, pointer, pointer, pointer) -> int`
+
+#### `box_get_by_pos(int, pointer, pointer, pointer, pointer, pointer, pointer) -> int`
+
+#### `box_remove(int, int, int) -> int`
+
+#### `box_remove(int) -> int`
+
+#### `box_get_real_vertex(int, int, int, int, pointer, pointer) -> int`
+
+#### `box_get_real_vertex(int, int, int, pointer, pointer) -> int`
+
+#### `box_get_real_vertex(int, pointer, pointer) -> int`
+
+#### `fnt_new() -> int`
+
+#### `fnt_new(int) -> int`
+
+#### `fnt_new(int, int, int, int, int, int, int, int) -> int`
+
+#### `fnt_new(int, int, int, int, int, int, int, int, string) -> int`
+
+#### `fnt_new(int, int, int, int, int, int, int, int, int, int, int, int) -> int`
+
+#### `fnt_new(int, int, int, int, int, int, int, int, int, int, int, int, string) -> int`
+
+#### `fnt_new(int, int, int, int, int, int, int, int, int, int, int, int, int) -> int`
+
+#### `fnt_new(int, int, int, int, int, int, int, int, string, int, int, int, int, int) -> int`
+
+#### `fnt_new(int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int) -> int`
+
+#### `fnt_new(int, int, int, int, int, int, int, int, int, int, int, int, string, int, int, int, int, int) -> int`
+
+#### `fnt_load(string) -> int`
+
+#### `fnt_load(string, pointer) -> int`
+
+#### `fnt_unload(int) -> int`
+
+#### `ttf_load(string) -> int`
+
+#### `ttf_set_size(int, int) -> int`
+
+#### `ttf_get_family(int) -> string`
+
+#### `ttf_get_style(int) -> string`
+
+#### `glyph_get(int, int) -> int`
+
+#### `glyph_set(int, int, int, int) -> int`
+
+#### `drawing_color(int) -> int`
+
+#### `drawing_color(int, int) -> int`
+
+#### `drawing_rgba(byte, byte, byte, byte) -> int`
+
+#### `drawing_rgba(int, byte, byte, byte, byte) -> int`
+
+#### `drawing_blendmode(int) -> int`
+
+#### `drawing_blendmode(int, int) -> int`
+
+#### `drawing_blendmode(int, int, int, int, int, int) -> int`
+
+#### `drawing_blendmode(int, int, int, int, int, int, int) -> int`
+
+#### `drawing_z() -> int`
+
+#### `drawing_z(int) -> int`
+
+#### `drawing_z(int, int) -> int`
+
+#### `drawing_map(int, int) -> int`
+
+#### `draw_delete(int) -> int`
+
+#### `draw_move(int, int, int) -> int`
+
+#### `draw_coords(int, pointer, pointer, pointer) -> int`
+
+#### `draw_point(int, int) -> int`
+
+#### `draw_point(int, int, int) -> int`
+
+#### `draw_line(int, int, int, int) -> int`
+
+#### `draw_line(int, int, int, int, int) -> int`
+
+#### `draw_rectangle(int, int, int, int) -> int`
+
+#### `draw_rectangle(int, int, int, int, int) -> int`
+
+#### `draw_rectangle_filled(int, int, int, int) -> int`
+
+#### `draw_rectangle_filled(int, int, int, int, int) -> int`
+
+#### `draw_points(int, pointer) -> int`
+
+#### `draw_points(int, pointer, int) -> int`
+
+#### `draw_lines(int, pointer) -> int`
+
+#### `draw_lines(int, pointer, int) -> int`
+
+#### `draw_rectangles(int, pointer) -> int`
+
+#### `draw_rectangles(int, pointer, int) -> int`
+
+#### `draw_rectangles_filled(int, pointer) -> int`
+
+#### `draw_rectangles_filled(int, pointer, int) -> int`
+
+#### `draw_circle(int, int, int) -> int`
+
+#### `draw_circle(int, int, int, int) -> int`
+
+#### `draw_circle_filled(int, int, int) -> int`
+
+#### `draw_circle_filled(int, int, int, int) -> int`
+
+#### `draw_curve(int, int, int, int, int, int, int, int, int) -> int`
+
+#### `draw_curve(int, int, int, int, int, int, int, int, int, int) -> int`
+
+#### `draw_arc(int, int, int, int, int) -> int`
+
+#### `draw_arc(int, int, int, int, int, int) -> int`
+
+#### `draw_arc_filled(int, int, int, int, int) -> int`
+
+#### `draw_arc_filled(int, int, int, int, int, int) -> int`
+
+#### `draw_ellipse(int, int, int, int, int) -> int`
+
+#### `draw_ellipse(int, int, int, int, int, int) -> int`
+
+#### `draw_ellipse_filled(int, int, int, int, int) -> int`
+
+#### `draw_ellipse_filled(int, int, int, int, int, int) -> int`
+
+#### `draw_sector(int, int, int, int, int, int) -> int`
+
+#### `draw_sector(int, int, int, int, int, int, int) -> int`
+
+#### `draw_sector_filled(int, int, int, int, int, int) -> int`
+
+#### `draw_sector_filled(int, int, int, int, int, int, int) -> int`
+
+#### `draw_triangle(int, int, int, int, int, int) -> int`
+
+#### `draw_triangle(int, int, int, int, int, int, int) -> int`
+
+#### `draw_triangle_filled(int, int, int, int, int, int) -> int`
+
+#### `draw_triangle_filled(int, int, int, int, int, int, int) -> int`
+
+#### `draw_rectangle_round(int, int, int, int, int) -> int`
+
+#### `draw_rectangle_round(int, int, int, int, int, int) -> int`
+
+#### `draw_rectangle_round_filled(int, int, int, int, int) -> int`
+
+#### `draw_rectangle_round_filled(int, int, int, int, int, int) -> int`
+
+#### `draw_polygon(int, pointer) -> int`
+
+#### `draw_polygon(int, pointer, int) -> int`
+
+#### `draw_polygon_filled(int, pointer) -> int`
+
+#### `draw_polygon_filled(int, pointer, int) -> int`
+
+#### `draw_polyline(int, pointer, int) -> int`
+
+#### `draw_polyline(int, pointer, int, int) -> int`
+
+#### `draw_set_thickness(float) -> float`
+
+#### `draw_set_thickness(int, float) -> float`
+
+#### `draw_get_thickness() -> float`
+
+#### `draw_get_thickness(int) -> float`
+
+#### `path_new(int, int) -> pointer`
+
+#### `path_destroy(pointer) -> int`
+
+#### `path_find(pointer, int, int, int, int, int) -> pointer`
+
+#### `path_find(pointer, int, int, int, int, int, int, int) -> pointer`
+
+#### `path_free_results(pointer) -> int`
+
+#### `texture_set_quality(int) -> int`
+
+#### `map_set_palette(int, int, int, int, pointer) -> int`
+
+#### `map_get_palette(int, int, int, int, pointer) -> int`
+
+#### `shader_get_language() -> int`
+
+#### `shader_get_min_version() -> int`
+
+#### `shader_get_max_version() -> int`
+
+#### `shader_create(string, string) -> pointer`
+
+#### `shader_free(pointer) -> int`
+
+#### `shader_getattributelocation(pointer, string) -> int`
+
+#### `shader_get_param_location(pointer, string) -> int`
+
+#### `shader_create_params(int) -> pointer`
+
+#### `shader_free_params(pointer) -> int`
+
+#### `shader_set_param(pointer, int, int, int) -> int`
+
+#### `shader_set_param(pointer, int, int, float) -> int`
+
+#### `shader_set_param(pointer, int, int, int, int, int) -> int`
+
+#### `shader_set_param(pointer, int, int, int, pointer) -> int`
+
+#### `shader_set_param(pointer, int, int, pointer, int, int, int, int) -> int`
+
+#### `shader_get_param(pointer, int, pointer, pointer) -> int`
+
+#### `shader_get_param(pointer, int, pointer, pointer, pointer) -> int`
+
+#### `shader_get_param(pointer, int, pointer, pointer, pointer, pointer, pointer, pointer) -> int`
+
+#### `media_load(string, pointer) -> pointer`
+
+#### `media_load(string, pointer, int) -> pointer`
+
+#### `media_unload(pointer) -> int`
+
+#### `media_play(pointer) -> int`
+
+#### `media_pause(pointer) -> int`
+
+#### `media_pause(pointer, int) -> int`
+
+#### `media_resume(pointer) -> int`
+
+#### `media_stop(pointer) -> int`
+
+#### `media_get_time(pointer) -> int`
+
+#### `media_get_duration(pointer) -> int`
+
+#### `media_get_status(pointer) -> int`
+
+#### `media_get_mute(pointer) -> int`
+
+#### `media_set_mute(pointer, int) -> int`
+
+#### `media_get_volume(pointer) -> int`
+
+#### `media_set_volume(pointer, int) -> int`
+
+## Modulo iap
+### general
+#### `iap_initialize() -> int`
+
+#### `iap_purchase(string) -> int`
+
+#### `iap_consume(string) -> int`
+
+#### `iap_get_price(string) -> string`
+
+#### `iap_poll_event() -> int`
+
+#### `iap_get_last_purchase_sku() -> string`
+
+#### `iap_get_last_purchase_token() -> string`
+
+## Modulo input
+### general
+#### `key(int) -> int`
+
+#### `keyup(int) -> int`
+
+#### `key_up(int) -> int`
+
+#### `keydown(int) -> int`
+
+#### `key_down(int) -> int`
+
+#### `joy_name() -> string`
+
+#### `joy_name(int) -> string`
+
+#### `joy_select(int) -> int`
+
+#### `joy_number() -> int`
+
+#### `joy_numjoysticks() -> int`
+
+#### `joy_buttons() -> int`
+
+#### `joy_buttons(int) -> int`
+
+#### `joy_numbuttons() -> int`
+
+#### `joy_numbuttons(int) -> int`
+
+#### `joy_axes() -> int`
+
+#### `joy_axes(int) -> int`
+
+#### `joy_numaxes() -> int`
+
+#### `joy_numaxes(int) -> int`
+
+#### `joy_numhats() -> int`
+
+#### `joy_numhats(int) -> int`
+
+#### `joy_numballs() -> int`
+
+#### `joy_numballs(int) -> int`
+
+#### `joy_getaxis(int) -> int`
+
+#### `joy_getaxis(int, int) -> int`
+
+#### `joy_getposition(int) -> int`
+
+#### `joy_getposition(int, int) -> int`
+
+#### `joy_getbutton(int) -> int`
+
+#### `joy_getbutton(int, int) -> int`
+
+#### `joy_gethat(int) -> int`
+
+#### `joy_gethat(int, int) -> int`
+
+#### `joy_getball(int, pointer, pointer) -> int`
+
+#### `joy_getball(int, int, pointer, pointer) -> int`
+
+#### `joy_getaccel(pointer, pointer, pointer) -> int`
+
+#### `joy_getaccel(int, pointer, pointer, pointer) -> int`
+
+#### `joy_is_attached() -> int`
+
+#### `joy_is_attached(int) -> int`
+
+#### `joy_query(int) -> int`
+
+#### `joy_query(int, int) -> int`
+
+#### `joy_query(int, int, int) -> int`
+
+#### `joy_set(int, int, int, int) -> int`
+
+#### `joy_set(int, int, int, int, int) -> int`
+
+#### `number_joy() -> int`
+
+#### `select_joy(int) -> int`
+
+#### `get_joy_button(int) -> int`
+
+#### `get_joy_button(int, int) -> int`
+
+#### `get_joy_position(int) -> int`
+
+#### `get_joy_position(int, int) -> int`
+
+## Modulo misc
+### general
+#### `crypt_new(int, pointer) -> pointer`
+
+#### `crypt_del(pointer) -> int`
+
+#### `crypt_encrypt(pointer, pointer, pointer, int) -> int`
+
+#### `crypt_decrypt(pointer, pointer, pointer, int) -> int`
+
+#### `crypt_encrypt(int, pointer, pointer, pointer, int) -> int`
+
+#### `crypt_decrypt(int, pointer, pointer, pointer, int) -> int`
+
+#### `cd() -> string`
+
+#### `cd(string) -> int`
+
+#### `chdir(string) -> int`
+
+#### `mkdir(string) -> int`
+
+#### `rmdir(string) -> int`
+
+#### `glob(string) -> string`
+
+#### `rm(string) -> int`
+
+#### `diropen(string) -> int`
+
+#### `dirclose(int) -> int`
+
+#### `dirread(int) -> string`
+
+#### `get_base_path() -> string`
+
+#### `get_pref_path(string, string) -> string`
+
+#### `save(string, ..., ?, ?) -> int`
+
+#### `load(string, ..., ?, ?) -> int`
+
+#### `file(string) -> string`
+
+#### `fopen(string, int) -> int`
+
+#### `fclose(int) -> int`
+
+#### `fread(int, ..., ?, ?) -> int`
+
+#### `fread(pointer, int, int) -> int`
+
+#### `fwrite(int, ..., ?, ?) -> int`
+
+#### `fwrite(pointer, int, int) -> int`
+
+#### `fseek(int, int, int) -> int`
+
+#### `frewind(int)`
+
+#### `ftell(int) -> int`
+
+#### `fflush(int) -> int`
+
+#### `fputs(int, string) -> int`
+
+#### `fgets(int) -> string`
+
+#### `feof(int) -> int`
+
+#### `flength(int) -> int`
+
+#### `fexists(string) -> int`
+
+#### `fremove(string) -> int`
+
+#### `fmove(string, string) -> int`
+
+#### `max(double, double) -> double`
+
+#### `min(double, double) -> double`
+
+#### `sgn(double) -> double`
+
+#### `sgn(int) -> int`
+
+#### `round(double) -> double`
+
+#### `floor(double) -> double`
+
+#### `ceil(double) -> double`
+
+#### `trunc(double) -> double`
+
+#### `frac(double) -> double`
+
+#### `decimal(double) -> double`
+
+#### `rad(int) -> double`
+
+#### `deg(double) -> int`
+
+#### `abs(double) -> double`
+
+#### `exp(double) -> double`
+
+#### `log(double) -> double`
+
+#### `log10(double) -> double`
+
+#### `pow(double, double) -> double`
+
+#### `sqrt(double) -> double`
+
+#### `fmod(double, double) -> double`
+
+#### `mmod(double, double) -> double`
+
+#### `modulus(double, double) -> double`
+
+#### `cos(int) -> double`
+
+#### `sin(int) -> double`
+
+#### `tan(int) -> double`
+
+#### `acos(double) -> double`
+
+#### `asin(double) -> double`
+
+#### `atan(double) -> double`
+
+#### `atan2(double, double) -> double`
+
+#### `isinf(double) -> int`
+
+#### `isnan(double) -> int`
+
+#### `finite(double) -> int`
+
+#### `intersect(double, double, double, double, double, double, double, double, pointer, pointer) -> int`
+
+#### `intersect_line_circle(double, double, double, double, double, double, double, pointer, pointer, pointer, pointer) -> int`
+
+#### `intersect_circle(double, double, double, double, double, double, pointer, pointer, pointer, pointer) -> int`
+
+#### `ortho(double, double, double, double, double, double, pointer, pointer) -> double`
+
+#### `project(double, double, double, double, double, double, pointer, pointer, pointer, pointer) -> double`
+
+#### `fget_angle(double, double, double, double) -> int`
+
+#### `fget_dist(double, double, double, double) -> double`
+
+#### `distance(double, double, double, double) -> double`
+
+#### `dist(double, double, double, double) -> double`
+
+#### `near_angle(int, int, int) -> int`
+
+#### `get_distx(int, double) -> double`
+
+#### `get_disty(int, double) -> double`
+
+#### `mag(double, double) -> double`
+
+#### `clamp(double, double, double) -> double`
+
+#### `clamp(int, int, int) -> int`
+
+#### `between(double, double, double) -> int`
+
+#### `between(int, int, int) -> int`
+
+#### `towards(double, double, double) -> double`
+
+#### `towards(int, int, int) -> int`
+
+#### `wrap(int, int, int) -> int`
+
+#### `lerp(double, double, double) -> double`
+
+#### `invlerp(double, double, double) -> double`
+
+#### `rangechk(double, double, double) -> int`
+
+#### `rangechk(int, int, int) -> int`
+
+#### `remap(double, double, double, double, double) -> double`
+
+#### `remap(int, int, int, int, int) -> int`
+
+#### `normalize(double, double, double) -> double`
+
+#### `normalize(int, int, int) -> double`
+
+#### `mem_calloc(int, int) -> pointer`
+
+#### `mem_alloc(int) -> pointer`
+
+#### `mem_free(pointer) -> int`
+
+#### `mem_realloc(pointer, int) -> pointer`
+
+#### `mem_cmp(pointer, pointer, int) -> int`
+
+#### `mem_set(pointer, int, int) -> int`
+
+#### `mem_setw(pointer, int, int) -> int`
+
+#### `mem_setd(pointer, int, int) -> int`
+
+#### `mem_seti(pointer, int, int) -> int`
+
+#### `mem_copy(pointer, pointer, int) -> int`
+
+#### `mem_move(pointer, pointer, int) -> int`
+
+#### `mem_available() -> int`
+
+#### `mem_total() -> int`
+
+#### `calloc(int, int) -> pointer`
+
+#### `alloc(int) -> pointer`
+
+#### `free(pointer) -> int`
+
+#### `realloc(pointer, int) -> pointer`
+
+#### `memcmp(pointer, pointer, int) -> int`
+
+#### `memset(pointer, int, int) -> int`
+
+#### `memsetw(pointer, int, int) -> int`
+
+#### `memsetd(pointer, int, int) -> int`
+
+#### `memseti(pointer, int, int) -> int`
+
+#### `memcopy(pointer, pointer, int) -> int`
+
+#### `memmove(pointer, pointer, int) -> int`
+
+#### `memory_free() -> int`
+
+#### `memory_total() -> int`
+
+#### `get_id(int) -> int`
+
+#### `get_type(int) -> int`
+
+#### `get_status(int) -> int64`
+
+#### `signal(int, int) -> int`
+
+#### `signal_action(int, int) -> int`
+
+#### `signal_action(int, int, int) -> int`
+
+#### `let_me_alone() -> int`
+
+#### `exit(string, int) -> int`
+
+#### `exit(string) -> int`
+
+#### `exit() -> int`
+
+#### `exists(int) -> int`
+
+#### `pause() -> int`
+
+#### `resume() -> int`
+
+#### `pause(int) -> int`
+
+#### `resume(int) -> int`
+
+#### `rand_seed(int) -> int`
+
+#### `rand(int, int) -> int`
+
+#### `regex(string, string) -> int`
+
+#### `regex_replace(string, string, string) -> string`
+
+#### `split(string, string, pointer, int) -> int`
+
+#### `join(string, pointer, int) -> string`
+
+#### `say(string)`
+
+#### `say_fast(string)`
+
+#### `isort(pointer, int, int, int, byte, byte) -> int`
+
+#### `ksort(..., ?, ?, ..., ?, ?) -> int`
+
+#### `ksort(..., ?, ?, ..., ?, ?, int) -> int`
+
+#### `sort(..., ?, ?, int) -> int`
+
+#### `sort(..., ?, ?) -> int`
+
+#### `strlen(string) -> int`
+
+#### `len(string) -> int`
+
+#### `ucase(string) -> string`
+
+#### `lcase(string) -> string`
+
+#### `strcasecmp(string, string) -> int`
+
+#### `substr(string, int, int) -> string`
+
+#### `substr(string, int) -> string`
+
+#### `find(string, string) -> int`
+
+#### `find(string, string, int) -> int`
+
+#### `rfind(string, string) -> int`
+
+#### `rfind(string, string, int) -> int`
+
+#### `strtok(string, string) -> string`
+
+#### `lpad(string, int) -> string`
+
+#### `rpad(string, int) -> string`
+
+#### `itoa(int) -> string`
+
+#### `ftoa(double) -> string`
+
+#### `atoi(string) -> int`
+
+#### `atof(string) -> double`
+
+#### `asc(string) -> byte`
+
+#### `chr(int) -> string`
+
+#### `trim(string) -> string`
+
+#### `strrev(string) -> string`
+
+#### `format(int) -> string`
+
+#### `format(double) -> string`
+
+#### `format(double, int) -> string`
+
+#### `getenv(string) -> string`
+
+#### `exec(int, string, int, pointer) -> int`
+
+#### `system_keyboard_open(string, string, int, int) -> int`
+
+#### `system_keyboard_status() -> int`
+
+#### `system_keyboard_ok() -> int`
+
+#### `system_keyboard_text() -> string`
+
+#### `system_keyboard_close() -> int`
+
+#### `system_progress_open(string, int) -> int`
+
+#### `system_progress_set(int) -> int`
+
+#### `system_progress_message(string) -> int`
+
+#### `system_progress_update() -> int`
+
+#### `system_progress_close() -> int`
+
+#### `get_pref_language() -> string`
+
+#### `uptime() -> int64`
+
+#### `get_timer() -> int64`
+
+#### `time() -> int64`
+
+#### `ftime(string, int) -> string`
+
+#### `string_new_array() -> pointer`
+
+#### `string_new_array(int) -> pointer`
+
+#### `string_resize_array(pointer, int) -> pointer`
+
+#### `string_del_array(pointer) -> int`
+
+#### `string_size_array(pointer) -> int`
+
+#### `string_newa() -> pointer`
+
+#### `string_newa(int) -> pointer`
+
+#### `string_resizea(pointer, int) -> pointer`
+
+#### `string_dela(pointer) -> int`
+
+#### `string_sizea(pointer) -> int`
+
+#### `string_dump() -> int`
+
+#### `isalpha(byte) -> int`
+
+#### `isspace(byte) -> int`
+
+#### `isnum(byte) -> int`
+
+#### `isxnum(byte) -> int`
+
+#### `isalnum(byte) -> int`
+
+#### `iswordchar(byte) -> int`
+
+#### `iswordfirst(byte) -> int`
+
+#### `toupper(byte) -> int`
+
+#### `tolower(byte) -> int`
+
+#### `list_create() -> pointer`
+
+#### `list_create(int) -> pointer`
+
+#### `list_free(pointer) -> int`
+
+#### `list_empty(pointer) -> int`
+
+#### `list_insertitem(pointer, pointer) -> int`
+
+#### `list_removeitem(pointer, pointer) -> int`
+
+#### `list_walk(pointer, pointer) -> pointer`
+
+#### `list_size(pointer) -> int`
+
+## Modulo net
+### general
+#### `net_open(int, int, string, int) -> pointer`
+
+#### `net_wait(pointer, int, pointer) -> int`
+
+#### `net_send(pointer, pointer, int) -> int`
+
+#### `net_recv(pointer, pointer, int) -> int`
+
+#### `net_close(pointer) -> int`
+
+#### `net_getavailablebytes(pointer) -> int`
+
+#### `net_getreceivebuffersize(pointer) -> int`
+
+#### `net_getremoteaddr(pointer) -> string`
+
+#### `net_is_new_connection(pointer) -> int`
+
+#### `net_is_message_incoming(pointer) -> int`
+
+## Modulo sound
+### general
+#### `soundsys_init() -> int`
+
+#### `soundsys_quit() -> int`
+
+#### `music_load(string) -> int`
+
+#### `music_load(string, pointer) -> int`
+
+#### `music_unload(int) -> int`
+
+#### `music_unload(pointer) -> int`
+
+#### `music_play(int, int) -> int`
+
+#### `music_play(int) -> int`
+
+#### `music_stop() -> int`
+
+#### `music_pause() -> int`
+
+#### `music_resume() -> int`
+
+#### `music_rewind() -> int`
+
+#### `music_fade_in(int, int, int) -> int`
+
+#### `music_fade_in(int, int, int, double) -> int`
+
+#### `music_fade_off(int) -> int`
+
+#### `music_is_playing() -> int`
+
+#### `music_is_paused() -> int`
+
+#### `music_is_fading() -> int`
+
+#### `music_set_volume(int) -> int`
+
+#### `music_get_volume(int) -> int`
+
+#### `music_set_playback_position(double) -> int`
+
+#### `music_set_time_position(double) -> int`
+
+#### `music_get_playback_position(int) -> double`
+
+#### `music_get_time_position(int) -> double`
+
+#### `music_get_duration(int) -> double`
+
+#### `music_get_duration() -> double`
+
+#### `music_get_loop_start(int) -> double`
+
+#### `music_get_loop_start() -> double`
+
+#### `music_get_loop_end(int) -> double`
+
+#### `music_get_loop_end() -> double`
+
+#### `music_get_loop_len(int) -> double`
+
+#### `music_get_loop_len() -> double`
+
+#### `sound_load(string) -> int`
+
+#### `sound_load(string, pointer) -> int`
+
+#### `sound_unload(int) -> int`
+
+#### `sound_unload(pointer) -> int`
+
+#### `sound_play(int, int) -> int`
+
+#### `sound_play(int) -> int`
+
+#### `sound_play(int, int, int) -> int`
+
+#### `sound_play(int, int, int, int) -> int`
+
+#### `sound_stop(int) -> int`
+
+#### `sound_pause(int) -> int`
+
+#### `sound_resume(int) -> int`
+
+#### `sound_fade_in(int, int, int, int) -> int`
+
+#### `sound_fade_in(int, int, int, int, int) -> int`
+
+#### `sound_fade_off(int, int) -> int`
+
+#### `sound_is_playing(int) -> int`
+
+#### `sound_is_paused(int) -> int`
+
+#### `sound_is_fading(int) -> int`
+
+#### `sound_set_volume(int, int) -> int`
+
+#### `sound_set_volume(int) -> int`
+
+#### `sound_set_location(int, int, int) -> int`
+
+#### `sound_set_spatial_position(int, int, int) -> int`
+
+#### `set_position(int, int, int) -> int`
+
+#### `channel_set_expire(int, int) -> int`
+
+#### `channel_set_expire(int) -> int`
+
+#### `channel_set_volume(int, int) -> int`
+
+#### `channel_set_volume(int) -> int`
+
+#### `set_master_volume(int) -> int`
+
+#### `channel_set_panning(int, int, int) -> int`
+
+#### `set_panning(int, int, int) -> int`
+
+#### `channel_set_distance(int, int) -> int`
+
+#### `set_distance(int, int) -> int`
+
+#### `reserve_channels(int) -> int`
+
+#### `reverse_stereo(int, int) -> int`
+
+#### `get_num_music_decoders() -> int`
+
+#### `get_music_decoder(int) -> string`
+
+#### `has_music_decoder(string) -> int`
+
+#### `music_get_type(int) -> int`
+
+#### `music_get_title(int) -> string`
+
+#### `music_get_title_tag(int) -> string`
+
+#### `music_get_artist_tag(int) -> string`
+
+#### `music_get_album_tag(int) -> string`
+
+#### `music_get_copyright_tag(int) -> string`
+
+#### `music_get_type() -> int`
+
+#### `music_get_title() -> string`
+
+#### `music_get_title_tag() -> string`
+
+#### `music_get_artist_tag() -> string`
+
+#### `music_get_album_tag() -> string`
+
+#### `music_get_copyright_tag() -> string`
+
+#### `sound_group_channel(int, int) -> int`
+
+#### `sound_group_channels(int, int, int) -> int`
+
+#### `sound_group_available(int) -> int`
+
+#### `sound_group_count(int) -> int`
+
+#### `sound_group_oldest(int) -> int`
+
+#### `sound_group_newer(int) -> int`
+
+#### `sound_group_halt(int) -> int`
+
+#### `sound_group_fade_out(int, int) -> int`
+
+## Modulo video
+### general
+#### `video_open(string) -> int`
+
+#### `video_open_h(string, string) -> int`
+
+#### `video_graph(int) -> int`
+
+#### `video_play(int, int) -> int`
+
+#### `video_pause(int, int) -> int`
+
+#### `video_stop(int) -> int`
+
+#### `video_seek(int, int) -> int`
+
+#### `video_close(int) -> int`
+
+#### `video_width(int) -> int`
+
+#### `video_height(int) -> int`
+
+#### `video_duration(int) -> int`
+
+#### `video_position(int) -> int`
+
+#### `video_is_playing(int) -> int`
+
+#### `video_is_finished(int) -> int`
+
+#### `video_volume(int, int) -> int`
+
+#### `video_use_gpu(int) -> int`
+
+#### `video_gpu(int) -> int`
+
+#### `video_frames(int) -> int`
+
+#### `video_use_hw(int) -> int`
+
+#### `video_use_plane(int) -> int`
+
+#### `video_hw(int) -> int`
+
+#### `video_subtitle_tracks(int) -> int`
+
+#### `video_subtitle_lang(int, int) -> string`
+
+#### `video_subtitle_select(int, int) -> int`
+
+#### `video_subtitle_load(int, string) -> int`
+
+#### `video_subtitle_text(int) -> string`
+
+#### `video_audio_tracks(int) -> int`
+
+#### `video_audio_lang(int, int) -> string`
+
+#### `video_audio_select(int, int) -> int`
+
+#### `video_is_audio_only(int) -> int`
+
+#### `video_spectrum(int, int) -> int`
+
+#### `video_wave(int, int) -> int`
+
+#### `http_fetch(string, string, string, string) -> int`
+
+#### `http_fetch_begin(string, string, string, string) -> int`
+
+#### `http_fetch_poll() -> int`
+
+#### `http_progress() -> int`
+
+#### `http_total() -> int`
+
+#### `video_download_begin(string, string, string) -> int`
+
+#### `video_download_convert_begin(string, string, string, string) -> int`
+
+#### `video_download_audio_begin(string, string, string) -> int`
+
+#### `video_download_path() -> string`
+
+#### `video_download_poll() -> int`
+
+#### `video_download_percent() -> int`
+
+#### `video_download_cancel() -> int`
+
+#### `video_download_error() -> string`
+
+#### `http_length() -> int`
+
+#### `http_read(pointer, int) -> int`
+
+#### `http_save(string) -> int`
+
+#### `http_write(string, string) -> int`
+
+#### `http_trace(string) -> int`
+
+#### `http_error() -> string`
+
+#### `torrent_cache(string) -> int`
+
+#### `torrent_add(string) -> int`
+
+#### `torrent_remove(int, int) -> int`
+
+#### `torrent_state(int) -> int`
+
+#### `torrent_error(int) -> string`
+
+#### `torrent_name(int) -> string`
+
+#### `torrent_files(int) -> int`
+
+#### `torrent_file_name(int, int) -> string`
+
+#### `torrent_file_size(int, int) -> int`
+
+#### `torrent_main(int) -> int`
+
+#### `torrent_select(int, int) -> int`
+
+#### `torrent_url(int, int) -> string`
+
+#### `torrent_peers(int) -> int`
+
+#### `torrent_rate(int) -> int`
+
+#### `torrent_percent(int) -> int`
+
+#### `torrent_buffered(int) -> int`
+
+#### `torrent_ready(int) -> int`
+
+#### `torrent_downloaded(int) -> int`
+
+#### `torrent_options(int, int) -> int`
+
+#### `torrent_ahead(int) -> int`
+
+#### `torrent_upload_limit(int) -> int`
+
+#### `upload_start(string, int, string) -> int`
+
+#### `upload_stop() -> int`
+
+#### `upload_files() -> int`
+
+#### `upload_bytes() -> int`
+
+#### `upload_percent() -> int`
+
+#### `upload_current() -> string`
+
+#### `upload_url() -> string`
+
+#### `dlna_scan() -> int`
+
+#### `dlna_add(string) -> int`
+
+#### `dlna_find(string) -> int`
+
+#### `webdav_parse(string) -> string`
+
+#### `ftp_list_begin(string) -> int`
+
+#### `ftp_list_poll() -> int`
+
+#### `ftp_list_result() -> string`
+
+#### `ftp_list_error() -> string`
+
+#### `dlna_scan_state() -> int`
+
+#### `dlna_count() -> int`
+
+#### `dlna_name(int) -> string`
+
+#### `dlna_browse(int, string, int, int) -> int`
+
+#### `dlna_browse_state() -> int`
+
+#### `dlna_result() -> string`
+
+#### `dlna_total() -> int`
+
+#### `dlna_error() -> string`
+
+#### `video_speed(int, int) -> int`
+
+#### `video_chapters(int) -> int`
+
+#### `video_chapter_start(int, int) -> int`
+
+#### `video_chapter_title(int, int) -> string`
+
+#### `video_get_speed(int) -> int`
+
+#### `video_sub_delay(int, int) -> int`
+
+#### `video_av_offset(int, int) -> int`
+
+#### `upload_ip() -> string`
+
+#### `upload_error() -> string`
+

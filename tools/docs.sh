@@ -18,6 +18,8 @@ python3 gen_docs_3d_resto.py
 python3 gen_docs_3d_ajustes.py
 python3 gen_docs_3d_telas.py
 python3 gen_docs_3d_agua.py
+python3 gen_docs_3d_mundo.py
+python3 gen_docs_3d_final.py
 python3 gen_docs_jolt.py      # corrige/amplia lo anterior: va el ultimo
 python3 gen_api.py
 python3 verificar_ejemplos.py

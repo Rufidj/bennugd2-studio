@@ -1,6 +1,6 @@
 # Referencia de la API
 
-Generada automaticamente desde los modulos del motor (1150 funciones, 837 documentadas).
+Generada automaticamente desde los modulos del motor (1150 funciones, 932 documentadas).
 
 ## Modulo 3d
 ### camera
@@ -388,23 +388,47 @@ g3d_ibl_refresh();
 ```
 
 ### instances
-#### `g3d_instances_create(int, int) -> int`
+#### `g3d_instances_create(int malla, int textura) -> int`
+Crea un grupo de instancias: una malla dibujada muchas veces en UNA sola llamada de dibujo, con una transformacion por copia. Es lo que hay que usar para miles de arboles, rocas o hierba. La textura puede ser 0. Anade copias con g3d_instances_add.
 
-#### `g3d_instances_add(int, float, float, float, float, float) -> int`
+**Devuelve:** id del grupo, o -1
 
-#### `g3d_instances_set(int, int, float, float, float, float, float) -> int`
+```
+g = g3d_instances_create(m_pino, tex_pino);
+for (i = 0; i < 500; i++)
+    g3d_instances_add(g, rand(-90, 90), 0, rand(-90, 90), rand(0, 360), 1.0);
+end
+```
 
-#### `g3d_instances_create_skinned(int, int, int) -> int`
+#### `g3d_instances_add(int grupo, float x, float y, float z, float giro, float escala) -> int`
+Anade una copia al grupo en (x, y, z), con giro en grados alrededor de Y y escala uniforme.
 
-#### `g3d_instances_set_wind(int, float) -> int`
+**Devuelve:** indice de la copia
 
-#### `g3d_instances_set_alpha_cut(int, int) -> int`
+#### `g3d_instances_set(int grupo, int indice, float x, float y, float z, float giro, float escala) -> int`
+Cambia en el sitio la copia indice del grupo (posicion, giro en grados y escala). Sirve para mover una copia concreta cada frame.
 
-#### `g3d_instances_set_distance(int, float) -> int`
+#### `g3d_instances_create_skinned(int malla, int textura, int modelo) -> int`
+Como g3d_instances_create pero con animacion de esqueleto por GPU: malla es una submalla con huesos y modelo aporta las matrices de los huesos. Llama antes a g3d_model_set_gpu_skin(modelo, 1).
 
-#### `g3d_instances_clear(int) -> int`
+**Devuelve:** id del grupo, o -1
 
-#### `g3d_instances_count(int) -> int`
+#### `g3d_instances_set_wind(int grupo, float fuerza) -> int`
+Balanceo por viento del grupo (en el vertex shader, sin animar esqueletos). 0 = inmovil: ponlo a 0 en rocas.
+
+#### `g3d_instances_set_alpha_cut(int grupo, int activo) -> int`
+1 = descarta los pixeles transparentes (follaje, hojas); 0 = solido (criaturas). Por defecto 1.
+
+#### `g3d_instances_set_distance(int grupo, float distancia) -> int`
+Distancia maxima a la que se dibuja el grupo; mas alla se descarta. Un bosque grande necesita esto y g3d_set_lod.
+
+#### `g3d_instances_clear(int grupo) -> int`
+Vacia el grupo (quita todas sus copias) pero conserva el grupo.
+
+#### `g3d_instances_count(int grupo) -> int`
+Numero de copias del grupo.
+
+**Devuelve:** numero de copias
 
 ### lake
 #### `g3d_lake_add(float semilla_x, float semilla_z, float superficie, float profundidad) -> int`
@@ -491,7 +515,10 @@ Carga directamente un nivel original de Tomb Raider (.PHD, .TR2, .TR4, .TRC) sin
 nivel = g3d_load_tr("DATA/LEVEL1.PHD");
 ```
 
-#### `g3d_load_gltf_fractured(string) -> int`
+#### `g3d_load_gltf_fractured(string ruta) -> int`
+Carga un glTF prefracturado (p. ej. de Blender) creando UNA submalla por nodo, en vez de una por material: cada trozo se puede tratar aparte (un cuerpo rigido por pedazo). Ver g3d_model_submesh_cx/hx y g3d_rigidbody_create_convex.
+
+**Devuelve:** manejador del modelo, o -1
 
 #### `g3d_load_obj(string ruta) -> int`
 Carga un modelo Wavefront .obj.
@@ -526,19 +553,43 @@ tex = g3d_load_texture("Assets/ladrillo.png");
 ```
 
 ### lvl
-#### `g3d_lvl_load(string) -> int`
+#### `g3d_lvl_load(string ruta) -> int`
+Carga un nivel binario .lvl (planos con capas de celdas y los enlaces entre objetos). Lo leen a la vez el editor y el juego.
 
-#### `g3d_lvl_free(int) -> int`
+**Devuelve:** manejador del nivel, o 0 si no existe o no es valido
 
-#### `g3d_lvl_planes(int) -> int`
+```
+niv = g3d_lvl_load("Levels/nivel1.lvl");
+if (niv == 0) say("no hay nivel"); end
+```
 
-#### `g3d_lvl_w(int, int) -> int`
+#### `g3d_lvl_free(int nivel) -> int`
+Libera un nivel cargado con g3d_lvl_load.
 
-#### `g3d_lvl_h(int, int) -> int`
+#### `g3d_lvl_planes(int nivel) -> int`
+Numero de planos del nivel (los validos van de 0 a ese numero menos 1).
 
-#### `g3d_lvl_cell(int, int, int, int, int) -> int`
+**Devuelve:** numero de planos
 
-#### `g3d_lvl_links(int) -> string`
+#### `g3d_lvl_w(int nivel, int plano) -> int`
+Ancho en celdas del plano.
+
+**Devuelve:** celdas
+
+#### `g3d_lvl_h(int nivel, int plano) -> int`
+Alto en celdas del plano.
+
+**Devuelve:** celdas
+
+#### `g3d_lvl_cell(int nivel, int plano, int capa, int x, int y) -> int`
+Valor de la celda (x, y) de una capa de un plano; la fila 0 es la de ARRIBA del mapa. Devuelve 0 si la celda esta fuera.
+
+**Devuelve:** valor 0..255
+
+#### `g3d_lvl_links(int nivel) -> string`
+Enlaces entre objetos del nivel: texto con una linea por objeto (plano|x|y|nombre|destinos, con destinos separados por comas). Puertas, botones y portales se enlazan por su nombre.
+
+**Devuelve:** texto de los enlaces (vacio si no hay)
 
 ### material
 #### `g3d_material_create() -> int`
@@ -576,25 +627,45 @@ Asigna un mapa de detalle a un material: 1 = normales, 2 = metalico, 3 = rugosid
 Activa (1) o desactiva (0) el contorno tipo dibujo animado en los objetos con este material.
 
 ### mirror
-#### `g3d_mirror_create(float, float, float, float, float, float, float, float) -> int`
+#### `g3d_mirror_create(float x, float y, float z, float nx, float ny, float nz, float ancho, float alto) -> int`
+Crea un espejo plano centrado en (x, y, z), orientado segun la normal (nx, ny, nz), de ancho x alto en su plano. Tiene su propia textura de reflejo y no necesita ninguna imagen. Pueden convivir varios (y el agua).
 
-#### `g3d_mirror_set_flip(int, int) -> int`
+**Devuelve:** indice del espejo, o -1 si no caben mas
 
-#### `g3d_mirror_set_tint(int, float, float, float) -> int`
+```
+esp = g3d_mirror_create(0, 1.5, 5,  0, 0, -1,  3.0, 2.0);
+```
+
+#### `g3d_mirror_set_flip(int espejo, int invertir) -> int`
+Invierte (1) la coordenada V del reflejo de un espejo si sale boca abajo.
+
+#### `g3d_mirror_set_tint(int espejo, float r, float g, float b) -> int`
+Tinte del espejo (0.9 da un cristal ligeramente oscuro).
 
 #### `g3d_mirror_clear() -> int`
+Quita todos los espejos.
 
-#### `g3d_mirror_set_distance(float) -> int`
+#### `g3d_mirror_set_distance(float distancia) -> int`
+Distancia maxima a la camara a la que se vuelve a dibujar el reflejo de un espejo; mas alla conserva su ultimo fotograma. Permite muchos espejos baratos. Por defecto 80.
 
 ### model
 #### `g3d_model_despawn(int raiz) -> int`
 Destruye una entidad raiz creada con G3D_MODEL_SPAWN, todas sus mallas hijas y sus materiales privados. Usala al crear y quitar modelos constantemente para no agotar los huecos de entidades y materiales. Tambien vale para una sola entidad con material (p. ej. un trozo de fractura).
 
-#### `g3d_model_mesh(int) -> int`
+#### `g3d_model_mesh(int modelo) -> int`
+Primera malla (submalla 0) de un modelo, para usarla en g3d_instances_create o g3d_scatter_mesh.
 
-#### `g3d_model_texture(int) -> int`
+**Devuelve:** manejador de malla, o -1
 
-#### `g3d_model_submesh_count(int) -> int`
+#### `g3d_model_texture(int modelo) -> int`
+Textura de color (albedo) general del modelo.
+
+**Devuelve:** manejador de textura, o -1 si no tiene
+
+#### `g3d_model_submesh_count(int modelo) -> int`
+Numero de submallas del modelo.
+
+**Devuelve:** numero de submallas
 
 #### `g3d_model_height(int modelo) -> float`
 Altura total del modelo: la extension maxima en Y entre todas sus mallas.
@@ -639,11 +710,20 @@ Devuelve el modelo a su pose de reposo.
 #### `g3d_model_lock_root(int modelo, int activar) -> int`
 Con 1, quita el movimiento de raiz de las animaciones: el personaje anima en el sitio en vez de desplazarse por la pantalla. Afecta a G3D_MODEL_ANIMATE y a ANIMATE_BLEND.
 
-#### `g3d_model_submesh(int, int) -> int`
+#### `g3d_model_submesh(int modelo, int indice) -> int`
+Submalla numero i (desde 0) del modelo.
 
-#### `g3d_model_submesh_texture(int, int) -> int`
+**Devuelve:** manejador de malla, o -1 si el indice no existe
 
-#### `g3d_model_submesh_is_water(int, int) -> int`
+#### `g3d_model_submesh_texture(int modelo, int indice) -> int`
+Textura de color de la submalla i.
+
+**Devuelve:** manejador de textura, o -1
+
+#### `g3d_model_submesh_is_water(int modelo, int indice) -> int`
+1 si la submalla i es una sala de agua de un nivel de Tomb Raider (marcada por el cargador g3d_load_tr), 0 si no.
+
+**Devuelve:** 1 o 0
 
 #### `g3d_model_node_find(int modelo, string nombre) -> int`
 Busca un nodo (hueso) del esqueleto por nombre. La busqueda ignora mayusculas y acepta un trozo del nombre. Buscalo una vez y luego lee su posicion cada frame, p. ej. para acoplar un arma a una mano.
@@ -671,17 +751,35 @@ Posicion Z en el mundo de un nodo del esqueleto, tras la ultima animacion.
 
 **Devuelve:** Z
 
-#### `g3d_model_submesh_cx(int, int) -> float`
+#### `g3d_model_submesh_cx(int modelo, int indice) -> float`
+X del centro de la caja de la submalla i, en el espacio del modelo.
 
-#### `g3d_model_submesh_cy(int, int) -> float`
+**Devuelve:** coordenada
 
-#### `g3d_model_submesh_cz(int, int) -> float`
+#### `g3d_model_submesh_cy(int modelo, int indice) -> float`
+Y del centro de la caja de la submalla i, en el espacio del modelo.
 
-#### `g3d_model_submesh_hx(int, int) -> float`
+**Devuelve:** coordenada
 
-#### `g3d_model_submesh_hy(int, int) -> float`
+#### `g3d_model_submesh_cz(int modelo, int indice) -> float`
+Z del centro de la caja de la submalla i, en el espacio del modelo.
 
-#### `g3d_model_submesh_hz(int, int) -> float`
+**Devuelve:** coordenada
+
+#### `g3d_model_submesh_hx(int modelo, int indice) -> float`
+Mitad del ancho (en X) de la caja de la submalla i. Con CX/CY/CZ y HY/HZ describe la caja que envuelve a un trozo.
+
+**Devuelve:** semi-ancho
+
+#### `g3d_model_submesh_hy(int modelo, int indice) -> float`
+Mitad del alto (en Y) de la caja de la submalla i.
+
+**Devuelve:** semi-alto
+
+#### `g3d_model_submesh_hz(int modelo, int indice) -> float`
+Mitad del fondo (en Z) de la caja de la submalla i.
+
+**Devuelve:** semi-fondo
 
 #### `g3d_model_spawn(int escena, int modelo, float x, float y, float z, float alto, float giro_y) -> int`
 Crea en la escena un modelo completo (todas sus mallas) colgando de una entidad raiz vacia. Mover, rotar o escalar esa raiz mueve todo el modelo. El modelo se escala uniformemente para que mida 'alto' de alto (si alto <= 0 se queda 1:1). El giro va en MILESIMAS DE GRADO.
@@ -696,9 +794,15 @@ raiz = g3d_model_spawn(escena, m, 0, 0, 0, 1.8, 0);
 #### `g3d_model_set_gpu_skin(int modelo, int activar) -> int`
 Activa (1) o desactiva (0) el skinning por GPU del modelo.
 
-#### `g3d_model_submesh_lod(int, int, int) -> int`
+#### `g3d_model_submesh_lod(int modelo, int indice, int rejilla) -> int`
+Genera una copia simplificada de la submalla i para usarla como nivel de detalle lejano en un grupo de instancias. rejilla son las celdas a lo largo del eje mas largo (10 agresivo, 24 suave).
 
-#### `g3d_model_submesh_map(int, int, int) -> int`
+**Devuelve:** manejador de malla, o -1
+
+#### `g3d_model_submesh_map(int modelo, int indice, int tipo) -> int`
+Mapa de la submalla i: tipo 1 = normales, 2 = metalico, 3 = rugosidad.
+
+**Devuelve:** manejador de textura, o -1
 
 ### mouse
 #### `g3d_mouse_capture(int activo) -> int`
@@ -727,31 +831,62 @@ Movimiento vertical del raton en pixeles (positivo hacia abajo) en la ultima g3d
 **Devuelve:** incremento en Y
 
 ### paint
-#### `g3d_paint_create(int, int) -> int`
+#### `g3d_paint_create(int ancho, int alto) -> int`
+Crea un lienzo (ancho x alto pixeles, empieza negro opaco) para pintar la textura del terreno.
 
-#### `g3d_paint_fill(int, int, float) -> int`
+**Devuelve:** manejador del lienzo
 
-#### `g3d_paint_get_texture(int) -> int`
+#### `g3d_paint_fill(int lienzo, int textura, float repeticion) -> int`
+Rellena todo el lienzo repitiendo una textura repeticion veces (capa base) y lo sube a la GPU.
 
-#### `g3d_paint_save(int, string) -> int`
+#### `g3d_paint_get_texture(int lienzo) -> int`
+Textura del lienzo, para usarla como color (albedo) de un material con g3d_material_set_texture.
+
+**Devuelve:** manejador de textura
+
+#### `g3d_paint_save(int lienzo, string ruta) -> int`
+Guarda el lienzo en un archivo de imagen.
+
+**Devuelve:** resultado de la escritura
 
 ### particles
-#### `g3d_particles_create(float, float, float, float, float, float, float, float, float, float, float, float, float, int) -> int`
+#### `g3d_particles_create(float x, float y, float z, float ex, float ey, float ez, float vx, float vy, float vz, float dispersion, float gravedad, float tamano, float vida, int cantidad) -> int`
+Crea un emisor de particulas (puntos suaves en GPU): niebla, espuma, chispas, fuentes. Nacen dentro de la caja centrada en (x, y, z) de semi-lados (ex, ey, ez), con velocidad base (vx, vy, vz) mas una dispersion aleatoria, caen con la gravedad, viven vida segundos y se dibujan con un tamano; cantidad particulas se reciclan sin parar.
 
-#### `g3d_particles_set_color(int, float, float, float) -> int`
+**Devuelve:** id del emisor, o -1
 
-#### `g3d_particles_set_floor(int, float) -> int`
+```
+fuente = g3d_particles_create(0, 1, 0,  0.2, 0, 0.2,  0, 6, 0, 1.5,  9.8, 0.15, 1.5, 200);
+g3d_particles_set_color(fuente, 0.7, 0.85, 1.0);
+```
+
+#### `g3d_particles_set_color(int emisor, float r, float g, float b) -> int`
+Color de las particulas de un emisor (r, g, b de 0 a 1).
+
+#### `g3d_particles_set_floor(int emisor, float y) -> int`
+Las particulas que caen por debajo de y reaparecen (para que un chorro desaparezca al llegar al agua).
 
 #### `g3d_particles_clear() -> int`
+Quita todos los emisores.
 
 ### physics
-#### `g3d_physics_body_create(int, int, float, float) -> int`
+#### `g3d_physics_body_create(int a, int b, float c, float d) -> int`
+OBSOLETA: no hace nada y devuelve -1. Usa g3d_rigidbody_create y sus variantes.
 
-#### `g3d_physics_body_set_velocity(int, float, float, float) -> int`
+**Devuelve:** -1
 
-#### `g3d_physics_step(float) -> int`
+#### `g3d_physics_body_set_velocity(int cuerpo, float vx, float vy, float vz) -> int`
+OBSOLETA: no hace nada. Usa g3d_rigidbody_set_velocity.
 
-#### `g3d_physics_set_gravity(float) -> int`
+#### `g3d_physics_step(float dt) -> int`
+OBSOLETA: no hace nada. Usa g3d_rigidbody_step.
+
+#### `g3d_physics_set_gravity(float gravedad) -> int`
+Gravedad global en unidades/s^2, positiva hacia abajo (24 por defecto). Afecta al controlador de personaje y al vehiculo y, en PC, a los cuerpos rigidos de Jolt.
+
+```
+g3d_physics_set_gravity(9.8);
+```
 
 ### pick
 #### `g3d_pick_terrain(int camara, float sx, float sy, float w, float h, int terreno) -> int`
@@ -792,19 +927,44 @@ Z del ultimo punto encontrado por g3d_pick_entity o g3d_pick_terrain.
 **Devuelve:** Z del punto
 
 ### prefab
-#### `g3d_prefab_create(string) -> int`
+#### `g3d_prefab_create(string nombre) -> int`
+Crea un prefab vacio con nombre: un grupo reutilizable de piezas (paredes, salas) con posicion local, tamano, color, textura opcional e indicador de colision.
 
-#### `g3d_prefab_add_box(int, float, float, float, float, float, float, float, float, float, float, float, float, int) -> int`
+**Devuelve:** id del prefab, o -1
 
-#### `g3d_prefab_piece_texture(int, string) -> int`
+```
+p = g3d_prefab_create("sala");
+g3d_prefab_add_box(p, 0, 1, 0,  4, 2, 0.2,  0, 0, 0,  0.8, 0.8, 0.8, 1);
+g3d_prefab_instantiate(p, escena, 10, 0, 5, 90);
+```
 
-#### `g3d_prefab_save(int, string) -> int`
+#### `g3d_prefab_add_box(int prefab, float x, float y, float z, float tx, float ty, float tz, float rx, float ry, float rz, float r, float g, float b, int solido) -> int`
+Anade una caja al prefab: posicion local (x, y, z), tamano (x, y, z), giro (grados en x, y, z), color (r, g, b) y si es solida (1) o no (0).
 
-#### `g3d_prefab_load(string) -> int`
+**Devuelve:** indice de la pieza
 
-#### `g3d_prefab_instantiate(int, int, float, float, float, float) -> int`
+#### `g3d_prefab_piece_texture(int prefab, string ruta) -> int`
+Da textura (una ruta de imagen repetible) a la ULTIMA pieza anadida.
 
-#### `g3d_prefab_count(int) -> int`
+#### `g3d_prefab_save(int prefab, string ruta) -> int`
+Guarda el prefab en un archivo de texto.
+
+**Devuelve:** resultado de la escritura
+
+#### `g3d_prefab_load(string ruta) -> int`
+Carga un prefab de un archivo de texto y lo crea nuevo.
+
+**Devuelve:** id del prefab nuevo, o -1
+
+#### `g3d_prefab_instantiate(int prefab, int escena, float x, float y, float z, float giro) -> int`
+Coloca el prefab en una escena en (x, y, z) girado yaw grados: crea una entidad por pieza (con la colision marcada).
+
+**Devuelve:** numero de piezas creadas
+
+#### `g3d_prefab_count(int prefab) -> int`
+Numero de piezas del prefab.
+
+**Devuelve:** numero de piezas
 
 ### primitive
 #### `g3d_primitive_cube() -> int`
@@ -1280,14 +1440,31 @@ Elimina la cuerda.
 
 ### scatter
 #### `g3d_scatter_clear() -> int`
+Quita toda la vegetacion sembrada y sus grupos de instancias.
 
-#### `g3d_scatter_load(string, float) -> int`
+#### `g3d_scatter_load(string ruta, float viento) -> int`
+Carga de un archivo de siembra (el que guarda el editor) todas las colocaciones y monta los grupos de instancias. Es lo que llama un juego generado. Si el archivo no existe no es un error: la escena simplemente no tiene vegetacion. viento multiplica el balanceo de cada especie (1 = como se diseno).
 
-#### `g3d_scatter_group(string) -> int`
+**Devuelve:** numero de colocaciones cargadas, o 0
 
-#### `g3d_scatter_model(int, int, int, float, float, float, float, int) -> int`
+```
+g3d_scatter_load("Scenes/bosque.scatter", 1.0);
+```
 
-#### `g3d_scatter_mesh(int, int, int, int, float, float, float, float, int) -> int`
+#### `g3d_scatter_group(string recurso) -> int`
+Indice de una especie de la siembra a partir de su recurso (por ejemplo "Assets/pino.glb"); la crea si no existe. Es lo que une un proceso a su bosque (se guarda en entity).
+
+**Devuelve:** indice de la especie
+
+#### `g3d_scatter_model(int modelo, int terreno, int cantidad, float area, float alto, float variacion, float viento, int semilla) -> int`
+Siembra copias de un modelo entero sobre el terreno: cantidad, cuadrado de semi-lado area, altura objetivo a la que se escala cada copia, variacion de escala (escala base por 1 +/- variacion), viento y semilla.
+
+**Devuelve:** id del primer grupo
+
+#### `g3d_scatter_mesh(int malla, int textura, int terreno, int cantidad, float area, float esc_min, float esc_max, float viento, int semilla) -> int`
+Siembra copias de una malla al azar sobre el terreno: cuantas, en un cuadrado de semi-lado area, con giro aleatorio y escala entre esc_min y esc_max, con balanceo por viento y una semilla para repetir el mismo resultado.
+
+**Devuelve:** id del primer grupo
 
 ### scene
 #### `g3d_scene_create(string nombre) -> int`
@@ -1572,38 +1749,112 @@ Con 1 (por defecto) la posicion en pantalla se redondea a pixeles enteros, para 
 Recorte en pixeles dentro del grafico, para hojas de sprites irregulares (el editor saca estas medidas al detectar los fotogramas).
 
 ### stream
-#### `g3d_stream_init(float, int) -> int`
+#### `g3d_stream_init(float tam_tesela, int radio) -> int`
+Prepara el streaming de un mundo grande: el mundo se divide en teselas cuadradas de tam_tesela unidades y se mantienen las que estan a menos de radio teselas de la camara (un cuadrado de (2*radio+1) por lado). El motor solo lleva la logica espacial; tu juego decide que contiene cada tesela y la crea o destruye.
 
-#### `g3d_stream_update(float, float) -> int`
+```
+g3d_stream_init(64.0, 3);
+```
+
+#### `g3d_stream_update(float camx, float camz) -> int`
+Recalcula las teselas cargadas para la camara en (camx, camz). Llamala cada frame (es barata: las listas solo cambian al cruzar el limite de una tesela). Deja en las listas de carga y descarga las teselas que han cambiado en esta llamada.
+
+```
+g3d_stream_update(cam_x, cam_z);
+for (i = 0; i < g3d_stream_load_count(); i++)
+    crear_tesela(g3d_stream_load_x(i), g3d_stream_load_z(i));
+end
+for (i = 0; i < g3d_stream_unload_count(); i++)
+    borrar_tesela(g3d_stream_unload_x(i), g3d_stream_unload_z(i));
+end
+```
 
 #### `g3d_stream_load_count() -> int`
+Numero de teselas que ENTRARON en el anillo en la ultima g3d_stream_update (hay que crearlas).
 
-#### `g3d_stream_load_x(int) -> int`
+**Devuelve:** numero de teselas
 
-#### `g3d_stream_load_z(int) -> int`
+#### `g3d_stream_load_x(int i) -> int`
+Coordenada X (de tesela, no del mundo) de la tesela i de la lista de carga.
+
+**Devuelve:** X de tesela
+
+#### `g3d_stream_load_z(int i) -> int`
+Coordenada Z (de tesela, no del mundo) de la tesela i de la lista de carga.
+
+**Devuelve:** Z de tesela
 
 #### `g3d_stream_unload_count() -> int`
+Numero de teselas que SALIERON del anillo en la ultima g3d_stream_update (hay que liberarlas).
 
-#### `g3d_stream_unload_x(int) -> int`
+**Devuelve:** numero de teselas
 
-#### `g3d_stream_unload_z(int) -> int`
+#### `g3d_stream_unload_x(int i) -> int`
+Coordenada X de tesela de la tesela i de la lista de descarga.
+
+**Devuelve:** X de tesela
+
+#### `g3d_stream_unload_z(int i) -> int`
+Coordenada Z de tesela de la tesela i de la lista de descarga.
+
+**Devuelve:** Z de tesela
 
 #### `g3d_stream_loaded_count() -> int`
+Numero de teselas que estan ahora dentro del anillo.
+
+**Devuelve:** numero de teselas
 
 ### terrain
-#### `g3d_terrain_paint(int, int, int, float, float, float, float, float) -> int`
+#### `g3d_terrain_paint(int terreno, int lienzo, int textura, float repeticion, float x, float z, float radio, float opacidad) -> int`
+Pinta una textura sobre el lienzo del terreno con un pincel: dentro de radio unidades de (x, z), con caida suave y opacidad de 0 a 1. La textura se repite src_tiling veces por todo el terreno.
 
-#### `g3d_terrain_get_height(int, float, float) -> float`
+```
+lienzo = g3d_paint_create(1024, 1024);
+g3d_paint_fill(lienzo, tex_hierba, 40.0);
+g3d_terrain_paint(t, lienzo, tex_roca, 40.0, 20, 5, 6.0, 0.8);
+```
 
-#### `g3d_terrain_raise(int, float, float, float, float) -> int`
+#### `g3d_terrain_get_height(int terreno, float x, float z) -> float`
+Altura del terreno en (x, z) interpolando entre vertices. Util para colocar objetos y la camara sobre el suelo.
 
-#### `g3d_terrain_hole(int, float, float, float, int) -> int`
+**Devuelve:** altura, o 0 si no es un terreno o esta fuera
 
-#### `g3d_terrain_smooth(int, float, float, float, float) -> int`
+```
+py = g3d_terrain_get_height(t, px, pz);
+```
 
-#### `g3d_terrain_flatten(int, float, float, float, float, float) -> int`
+#### `g3d_terrain_raise(int terreno, float x, float z, float radio, float fuerza) -> int`
+Pincel de escultura: sube (fuerza positiva) o baja (negativa) el terreno dentro de radio unidades de (x, z), con caida suave hacia el borde. El terreno debe haberse creado con g3d_primitive_terrain (o ser compatible). Recalcula normales y actualiza la GPU, asi que se ve al instante.
 
-#### `g3d_terrain_load(int, string) -> int`
+```
+g3d_terrain_raise(t, 10, 10, 8.0, 0.5);
+```
+
+#### `g3d_terrain_hole(int terreno, float x, float z, float radio, int activo) -> int`
+Quita (1) o restaura (0) las celdas del terreno dentro de un disco, para ver a traves del suelo (una cueva de voxels debajo, una entrada).
+
+**Devuelve:** 1 si cambio algo
+
+#### `g3d_terrain_smooth(int terreno, float x, float z, float radio, float cantidad) -> int`
+Alisa el terreno acercando cada altura a la media de sus vecinas dentro del radio. cantidad (0 a 1) es la mezcla en el centro. El terreno debe haberse creado con g3d_primitive_terrain (o ser compatible). Recalcula normales y actualiza la GPU, asi que se ve al instante.
+
+#### `g3d_terrain_flatten(int terreno, float x, float z, float radio, float altura, float cantidad) -> int`
+Aplana el terreno hacia una altura objetivo dentro del radio. cantidad (0 a 1) es la mezcla. El terreno debe haberse creado con g3d_primitive_terrain (o ser compatible). Recalcula normales y actualiza la GPU, asi que se ve al instante.
+
+```
+g3d_terrain_flatten(t, 0, 0, 12.0, 2.0, 1.0);   // plataforma a altura 2
+```
+
+#### `g3d_terrain_load(int terreno, string ruta) -> int`
+Aplica al terreno el relieve guardado por el editor (un archivo con el numero de vertices y la altura Y de cada uno). Permite que un juego reproduzca el relieve esculpido.
+
+**Devuelve:** 1 si lo cargo; 0 si falta el archivo o el numero de vertices no coincide
+
+```
+t = g3d_primitive_terrain(128, 200.0, 12.0, 20.0, 7);
+g3d_terrain_load(t, "Scenes/mundo.terrain");
+g3d_set_terrain_collider(t);
+```
 
 ### tr
 #### `g3d_tr_probe(string ruta) -> int`
@@ -1669,21 +1920,50 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 **Devuelve:** velocidad
 
 ### voxterrain
-#### `g3d_voxterrain_floor(float, float, float) -> float`
+#### `g3d_voxterrain_floor(float x, float y, float z) -> float`
+Altura del suelo sobre el que se apoya alguien en (x, y, z): la superficie solida justo debajo (el suelo de la cueva si esta dentro de una). Si el punto esta dentro de roca, devuelve la superficie justo encima (para sacarlo).
 
-#### `g3d_voxterrain_solid(float, float, float) -> int`
+**Devuelve:** altura, o un valor muy negativo si no hay
 
-#### `g3d_voxterrain_blocked(float, float, float, float, float) -> int`
+#### `g3d_voxterrain_solid(float x, float y, float z) -> int`
+1 si el punto (x, y, z) esta dentro de roca del terreno de voxels (cuevas, voladizos). Sirve para colisionar con paredes y techos.
+
+**Devuelve:** 1 o 0
+
+#### `g3d_voxterrain_blocked(float x, float y, float z, float radio, float alto) -> int`
+1 si una capsula (pies en y, de radio y alto dados) chocaria con roca en (x, z): colision robusta con paredes y techos.
+
+**Devuelve:** 1 o 0
 
 #### `g3d_voxterrain_worldsize() -> float`
+Tamano del mapa de voxels en X/Z, para mantener al personaje dentro del mundo.
 
-#### `g3d_voxterrain_walk(float, float, float, float, float, float, float, float) -> int`
+**Devuelve:** tamano
+
+#### `g3d_voxterrain_walk(float x, float y, float z, float radio, float alto, float paso_max, float dx, float dz) -> int`
+Mueve una capsula (radio y alto) desde (x, y, z) sumando (dx, dz): desliza por X y luego por Z, sube cuestas de hasta paso_max, y se detiene ante paredes, precipicios y techos bajos. Lee el resultado con g3d_voxterrain_walkx/y/z().
+
+```
+g3d_voxterrain_walk(px, py, pz, 0.4, 1.8, 0.5, vx, vz);
+px = g3d_voxterrain_walkx();
+py = g3d_voxterrain_walky();
+pz = g3d_voxterrain_walkz();
+```
 
 #### `g3d_voxterrain_walkx() -> float`
+X resuelta por la ultima g3d_voxterrain_walk.
+
+**Devuelve:** X
 
 #### `g3d_voxterrain_walky() -> float`
+Y resuelta por la ultima g3d_voxterrain_walk.
+
+**Devuelve:** Y
 
 #### `g3d_voxterrain_walkz() -> float`
+Z resuelta por la ultima g3d_voxterrain_walk.
+
+**Devuelve:** Z
 
 ### wall
 #### `g3d_wall_ray(float ox, float oy, float oz, float dx, float dy, float dz, float maxd) -> float`
@@ -1814,29 +2094,64 @@ end
 ```
 
 ### worldgen
-#### `g3d_worldgen_set(int, float, float, float) -> int`
+#### `g3d_worldgen_set(int semilla, float amplitud, float frecuencia, float nivel_mar) -> int`
+Configura el mundo procedural infinito: semilla, amplitud vertical, frecuencia horizontal (menor = relieve mas grande) y nivel del mar (lo que queda por debajo esta bajo el agua). El mismo mundo sale siempre con la misma semilla y las teselas vecinas encajan en las uniones.
 
-#### `g3d_worldgen_height(float, float) -> float`
+```
+g3d_worldgen_set(42, 30.0, 0.01, 2.0);
+```
 
-#### `g3d_worldgen_tile(int, int, int, float, int, float, float, int) -> int`
+#### `g3d_worldgen_height(float x, float z) -> float`
+Altura del mundo procedural en (x, z). Es mar donde sea menor que el nivel del mar. Sirve para colocar arboles o rocas sobre el suelo.
 
-#### `g3d_worldgen_tile_free(int) -> int`
+**Devuelve:** altura
 
-#### `g3d_worldgen_set_water_depth(float) -> int`
+#### `g3d_worldgen_tile(int escena, int tx, int tz, float tam, int res, float rox, float roz, int textura) -> int`
+Construye la tesela de terreno (tx, tz) de tam unidades con una rejilla de res x res, colocada en el origen de render (rox, 0, roz) de la escena indicada y con una textura (o 0). Pensada para usarla con g3d_stream_*.
 
-#### `g3d_worldgen_set_biome_textures(int, int, int, int, float) -> int`
+**Devuelve:** id de la entidad, o -1
+
+```
+ent = g3d_worldgen_tile(escena, tx, tz, 64.0, 33, tx * 64.0, tz * 64.0, tex);
+```
+
+#### `g3d_worldgen_tile_free(int entidad) -> int`
+Destruye una tesela creada con g3d_worldgen_tile y libera su malla.
+
+#### `g3d_worldgen_set_water_depth(float profundidad) -> int`
+Profundidad del fondo marino respecto al nivel del mar (1 por defecto; mayor = mares mas profundos). Solo afecta al terreno ya sumergido.
+
+#### `g3d_worldgen_set_biome_textures(int arena, int hierba, int roca, int nieve, float escala) -> int`
+Texturas reales por franja de bioma (arena, hierba, roca, nieve), mezcladas segun altura y pendiente. escala es la repeticion en el mundo (por ejemplo 0.03). Con 0 en todas vuelve a los colores planos.
 
 ### xray
-#### `g3d_xray_update(float, float, float, float, float, float, float, float, float) -> int`
+#### `g3d_xray_update(float cam_x, float cam_y, float cam_z, float obj_x, float obj_y, float obj_z, float radio, float alfa_min, float velocidad) -> int`
+Rayos X para camaras en tercera persona: una vez por frame, las entidades marcadas con g3d_entity_set_xray cuya caja corta el segmento camara-objetivo (engordado por radio) se vuelven translucidas hacia alfa_min (0 a 1) y recuperan su opacidad al dejar de tapar. velocidad (0 a 1) es la fraccion que avanza por frame.
+
+```
+g3d_xray_update(cx, cy, cz, px, py + 1, pz, 0.5, 0.2, 0.15);
+```
 
 ### zone
 #### `g3d_zone_clear() -> int`
+Borra todas las capas de la mascara (conserva su tamano).
 
-#### `g3d_zone_init(int, float) -> int`
+#### `g3d_zone_init(int lado, float tam_mundo) -> int`
+Crea la mascara de zonas: una rejilla de lado x lado celdas sobre un mundo de tam_mundo unidades, centrada en el origen, con capas de la 0 a la 7 por celda. lado = rejilla del terreno + 1.
 
-#### `g3d_zone_load(string) -> int`
+#### `g3d_zone_load(string ruta) -> int`
+Carga la mascara de zonas pintada en el editor desde un archivo.
 
-#### `g3d_zone_blocked(float, float, int) -> int`
+**Devuelve:** 1 si lo cargo
+
+#### `g3d_zone_blocked(float x, float z, int capa) -> int`
+1 si la celda mas cercana a (x, z) tiene marcada la capa (0 a 7); con capa negativa, si tiene cualquiera. Sirve para confinar a quien respete esa capa (un barco no sale del agua aunque el personaje si).
+
+**Devuelve:** 1 o 0
+
+```
+if (g3d_zone_blocked(nx, nz, 0)) nx = x; nz = z; end
+```
 
 ## Modulo ads
 ### general

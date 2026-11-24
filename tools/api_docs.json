@@ -1972,6 +1972,82 @@
   "desc": "Obliga a recapturar el cielo para el IBL. Llamala cuando el cielo o el sol cambian (ciclo dia/noche); no hace falta cada frame, basta cada pocos segundos.",
   "ejemplo": "g3d_ibl_refresh();"
  },
+ "G3D_INSTANCES_ADD": {
+  "desc": "Anade una copia al grupo en (x, y, z), con giro en grados alrededor de Y y escala uniforme.",
+  "params": [
+   "grupo",
+   "x",
+   "y",
+   "z",
+   "giro",
+   "escala"
+  ],
+  "ret": "indice de la copia"
+ },
+ "G3D_INSTANCES_CLEAR": {
+  "desc": "Vacia el grupo (quita todas sus copias) pero conserva el grupo.",
+  "params": [
+   "grupo"
+  ]
+ },
+ "G3D_INSTANCES_COUNT": {
+  "desc": "Numero de copias del grupo.",
+  "params": [
+   "grupo"
+  ],
+  "ret": "numero de copias"
+ },
+ "G3D_INSTANCES_CREATE": {
+  "desc": "Crea un grupo de instancias: una malla dibujada muchas veces en UNA sola llamada de dibujo, con una transformacion por copia. Es lo que hay que usar para miles de arboles, rocas o hierba. La textura puede ser 0. Anade copias con g3d_instances_add.",
+  "ejemplo": "g = g3d_instances_create(m_pino, tex_pino);\nfor (i = 0; i < 500; i++)\n    g3d_instances_add(g, rand(-90, 90), 0, rand(-90, 90), rand(0, 360), 1.0);\nend",
+  "params": [
+   "malla",
+   "textura"
+  ],
+  "ret": "id del grupo, o -1"
+ },
+ "G3D_INSTANCES_CREATE_SKINNED": {
+  "desc": "Como g3d_instances_create pero con animacion de esqueleto por GPU: malla es una submalla con huesos y modelo aporta las matrices de los huesos. Llama antes a g3d_model_set_gpu_skin(modelo, 1).",
+  "params": [
+   "malla",
+   "textura",
+   "modelo"
+  ],
+  "ret": "id del grupo, o -1"
+ },
+ "G3D_INSTANCES_SET": {
+  "desc": "Cambia en el sitio la copia indice del grupo (posicion, giro en grados y escala). Sirve para mover una copia concreta cada frame.",
+  "params": [
+   "grupo",
+   "indice",
+   "x",
+   "y",
+   "z",
+   "giro",
+   "escala"
+  ]
+ },
+ "G3D_INSTANCES_SET_ALPHA_CUT": {
+  "desc": "1 = descarta los pixeles transparentes (follaje, hojas); 0 = solido (criaturas). Por defecto 1.",
+  "params": [
+   "grupo",
+   "activo"
+  ]
+ },
+ "G3D_INSTANCES_SET_DISTANCE": {
+  "desc": "Distancia maxima a la que se dibuja el grupo; mas alla se descarta. Un bosque grande necesita esto y g3d_set_lod.",
+  "params": [
+   "grupo",
+   "distancia"
+  ]
+ },
+ "G3D_INSTANCES_SET_WIND": {
+  "desc": "Balanceo por viento del grupo (en el vertex shader, sin animar esqueletos). 0 = inmovil: ponlo a 0 en rocas.",
+  "params": [
+   "grupo",
+   "fuerza"
+  ]
+ },
  "G3D_LAKE_ADD": {
   "desc": "Llena de agua el hueco del terreno que contiene el punto (semilla_x, semilla_z), hasta la altura superficie, con la forma exacta del hueco. Necesita que el terreno este registrado como colisionador (g3d_set_terrain_collider). Con el agua unificada del motor, el lago se une a rios, mar y cascadas por si solo.",
   "ejemplo": "g3d_lake_add(30, 12, g3d_lake_spill_level(30, 12) - 0.2, 4.0);",
@@ -2091,6 +2167,13 @@
   ],
   "ret": "manejador del modelo, o -1 si falla"
  },
+ "G3D_LOAD_GLTF_FRACTURED": {
+  "desc": "Carga un glTF prefracturado (p. ej. de Blender) creando UNA submalla por nodo, en vez de una por material: cada trozo se puede tratar aparte (un cuerpo rigido por pedazo). Ver g3d_model_submesh_cx/hx y g3d_rigidbody_create_convex.",
+  "params": [
+   "ruta"
+  ],
+  "ret": "manejador del modelo, o -1"
+ },
  "G3D_LOAD_MD3": {
   "desc": "Reservada: el formato MD3 no esta soportado y siempre devuelve -1.",
   "params": [
@@ -2121,6 +2204,61 @@
    "ruta"
   ],
   "ret": "manejador del modelo, o -1 si falla"
+ },
+ "G3D_LVL_CELL": {
+  "desc": "Valor de la celda (x, y) de una capa de un plano; la fila 0 es la de ARRIBA del mapa. Devuelve 0 si la celda esta fuera.",
+  "params": [
+   "nivel",
+   "plano",
+   "capa",
+   "x",
+   "y"
+  ],
+  "ret": "valor 0..255"
+ },
+ "G3D_LVL_FREE": {
+  "desc": "Libera un nivel cargado con g3d_lvl_load.",
+  "params": [
+   "nivel"
+  ]
+ },
+ "G3D_LVL_H": {
+  "desc": "Alto en celdas del plano.",
+  "params": [
+   "nivel",
+   "plano"
+  ],
+  "ret": "celdas"
+ },
+ "G3D_LVL_LINKS": {
+  "desc": "Enlaces entre objetos del nivel: texto con una linea por objeto (plano|x|y|nombre|destinos, con destinos separados por comas). Puertas, botones y portales se enlazan por su nombre.",
+  "params": [
+   "nivel"
+  ],
+  "ret": "texto de los enlaces (vacio si no hay)"
+ },
+ "G3D_LVL_LOAD": {
+  "desc": "Carga un nivel binario .lvl (planos con capas de celdas y los enlaces entre objetos). Lo leen a la vez el editor y el juego.",
+  "ejemplo": "niv = g3d_lvl_load(\"Levels/nivel1.lvl\");\nif (niv == 0) say(\"no hay nivel\"); end",
+  "params": [
+   "ruta"
+  ],
+  "ret": "manejador del nivel, o 0 si no existe o no es valido"
+ },
+ "G3D_LVL_PLANES": {
+  "desc": "Numero de planos del nivel (los validos van de 0 a ese numero menos 1).",
+  "params": [
+   "nivel"
+  ],
+  "ret": "numero de planos"
+ },
+ "G3D_LVL_W": {
+  "desc": "Ancho en celdas del plano.",
+  "params": [
+   "nivel",
+   "plano"
+  ],
+  "ret": "celdas"
  },
  "G3D_MATERIAL_CREATE": {
   "desc": "Crea un material PBR (metalico 0, rugosidad 0.5). Se asigna a una entidad con g3d_entity_set_material.",
@@ -2173,6 +2311,46 @@
    "material",
    "ranura",
    "textura"
+  ]
+ },
+ "G3D_MIRROR_CLEAR": {
+  "desc": "Quita todos los espejos."
+ },
+ "G3D_MIRROR_CREATE": {
+  "desc": "Crea un espejo plano centrado en (x, y, z), orientado segun la normal (nx, ny, nz), de ancho x alto en su plano. Tiene su propia textura de reflejo y no necesita ninguna imagen. Pueden convivir varios (y el agua).",
+  "ejemplo": "esp = g3d_mirror_create(0, 1.5, 5,  0, 0, -1,  3.0, 2.0);",
+  "params": [
+   "x",
+   "y",
+   "z",
+   "nx",
+   "ny",
+   "nz",
+   "ancho",
+   "alto"
+  ],
+  "ret": "indice del espejo, o -1 si no caben mas"
+ },
+ "G3D_MIRROR_SET_DISTANCE": {
+  "desc": "Distancia maxima a la camara a la que se vuelve a dibujar el reflejo de un espejo; mas alla conserva su ultimo fotograma. Permite muchos espejos baratos. Por defecto 80.",
+  "params": [
+   "distancia"
+  ]
+ },
+ "G3D_MIRROR_SET_FLIP": {
+  "desc": "Invierte (1) la coordenada V del reflejo de un espejo si sale boca abajo.",
+  "params": [
+   "espejo",
+   "invertir"
+  ]
+ },
+ "G3D_MIRROR_SET_TINT": {
+  "desc": "Tinte del espejo (0.9 da un cristal ligeramente oscuro).",
+  "params": [
+   "espejo",
+   "r",
+   "g",
+   "b"
   ]
  },
  "G3D_MODEL_ANIMATE": {
@@ -2239,6 +2417,13 @@
    "modelo",
    "activar"
   ]
+ },
+ "G3D_MODEL_MESH": {
+  "desc": "Primera malla (submalla 0) de un modelo, para usarla en g3d_instances_create o g3d_scatter_mesh.",
+  "params": [
+   "modelo"
+  ],
+  "ret": "manejador de malla, o -1"
  },
  "G3D_MODEL_NODE_FIND": {
   "desc": "Busca un nodo (hueso) del esqueleto por nombre. La busqueda ignora mayusculas y acepta un trozo del nombre. Buscalo una vez y luego lee su posicion cada frame, p. ej. para acoplar un arma a una mano.",
@@ -2316,6 +2501,110 @@
   ],
   "ret": "id de la entidad raiz, o -1 si el modelo no es valido"
  },
+ "G3D_MODEL_SUBMESH": {
+  "desc": "Submalla numero i (desde 0) del modelo.",
+  "params": [
+   "modelo",
+   "indice"
+  ],
+  "ret": "manejador de malla, o -1 si el indice no existe"
+ },
+ "G3D_MODEL_SUBMESH_COUNT": {
+  "desc": "Numero de submallas del modelo.",
+  "params": [
+   "modelo"
+  ],
+  "ret": "numero de submallas"
+ },
+ "G3D_MODEL_SUBMESH_CX": {
+  "desc": "X del centro de la caja de la submalla i, en el espacio del modelo.",
+  "params": [
+   "modelo",
+   "indice"
+  ],
+  "ret": "coordenada"
+ },
+ "G3D_MODEL_SUBMESH_CY": {
+  "desc": "Y del centro de la caja de la submalla i, en el espacio del modelo.",
+  "params": [
+   "modelo",
+   "indice"
+  ],
+  "ret": "coordenada"
+ },
+ "G3D_MODEL_SUBMESH_CZ": {
+  "desc": "Z del centro de la caja de la submalla i, en el espacio del modelo.",
+  "params": [
+   "modelo",
+   "indice"
+  ],
+  "ret": "coordenada"
+ },
+ "G3D_MODEL_SUBMESH_HX": {
+  "desc": "Mitad del ancho (en X) de la caja de la submalla i. Con CX/CY/CZ y HY/HZ describe la caja que envuelve a un trozo.",
+  "params": [
+   "modelo",
+   "indice"
+  ],
+  "ret": "semi-ancho"
+ },
+ "G3D_MODEL_SUBMESH_HY": {
+  "desc": "Mitad del alto (en Y) de la caja de la submalla i.",
+  "params": [
+   "modelo",
+   "indice"
+  ],
+  "ret": "semi-alto"
+ },
+ "G3D_MODEL_SUBMESH_HZ": {
+  "desc": "Mitad del fondo (en Z) de la caja de la submalla i.",
+  "params": [
+   "modelo",
+   "indice"
+  ],
+  "ret": "semi-fondo"
+ },
+ "G3D_MODEL_SUBMESH_IS_WATER": {
+  "desc": "1 si la submalla i es una sala de agua de un nivel de Tomb Raider (marcada por el cargador g3d_load_tr), 0 si no.",
+  "params": [
+   "modelo",
+   "indice"
+  ],
+  "ret": "1 o 0"
+ },
+ "G3D_MODEL_SUBMESH_LOD": {
+  "desc": "Genera una copia simplificada de la submalla i para usarla como nivel de detalle lejano en un grupo de instancias. rejilla son las celdas a lo largo del eje mas largo (10 agresivo, 24 suave).",
+  "params": [
+   "modelo",
+   "indice",
+   "rejilla"
+  ],
+  "ret": "manejador de malla, o -1"
+ },
+ "G3D_MODEL_SUBMESH_MAP": {
+  "desc": "Mapa de la submalla i: tipo 1 = normales, 2 = metalico, 3 = rugosidad.",
+  "params": [
+   "modelo",
+   "indice",
+   "tipo"
+  ],
+  "ret": "manejador de textura, o -1"
+ },
+ "G3D_MODEL_SUBMESH_TEXTURE": {
+  "desc": "Textura de color de la submalla i.",
+  "params": [
+   "modelo",
+   "indice"
+  ],
+  "ret": "manejador de textura, o -1"
+ },
+ "G3D_MODEL_TEXTURE": {
+  "desc": "Textura de color (albedo) general del modelo.",
+  "params": [
+   "modelo"
+  ],
+  "ret": "manejador de textura, o -1 si no tiene"
+ },
  "G3D_MOUSE_CAPTURE": {
   "desc": "Activa (1) o desactiva (0) el raton relativo: oculta y bloquea el cursor y da movimientos limpios sin tope en el borde. Es lo que se usa para girar la camara en primera persona. Reinicia los incrementos.",
   "ejemplo": "g3d_mouse_capture(1);",
@@ -2334,6 +2623,109 @@
  "G3D_MOUSE_UPDATE": {
   "desc": "Lee el movimiento del raton desde la ultima llamada. Llamala una vez por frame y luego usa g3d_mouse_dx() y g3d_mouse_dy().",
   "ejemplo": "g3d_mouse_update();\nmirar_x += g3d_mouse_dx() * 100;"
+ },
+ "G3D_PAINT_CREATE": {
+  "desc": "Crea un lienzo (ancho x alto pixeles, empieza negro opaco) para pintar la textura del terreno.",
+  "params": [
+   "ancho",
+   "alto"
+  ],
+  "ret": "manejador del lienzo"
+ },
+ "G3D_PAINT_FILL": {
+  "desc": "Rellena todo el lienzo repitiendo una textura repeticion veces (capa base) y lo sube a la GPU.",
+  "params": [
+   "lienzo",
+   "textura",
+   "repeticion"
+  ]
+ },
+ "G3D_PAINT_GET_TEXTURE": {
+  "desc": "Textura del lienzo, para usarla como color (albedo) de un material con g3d_material_set_texture.",
+  "params": [
+   "lienzo"
+  ],
+  "ret": "manejador de textura"
+ },
+ "G3D_PAINT_SAVE": {
+  "desc": "Guarda el lienzo en un archivo de imagen.",
+  "params": [
+   "lienzo",
+   "ruta"
+  ],
+  "ret": "resultado de la escritura"
+ },
+ "G3D_PARTICLES_CLEAR": {
+  "desc": "Quita todos los emisores."
+ },
+ "G3D_PARTICLES_CREATE": {
+  "desc": "Crea un emisor de particulas (puntos suaves en GPU): niebla, espuma, chispas, fuentes. Nacen dentro de la caja centrada en (x, y, z) de semi-lados (ex, ey, ez), con velocidad base (vx, vy, vz) mas una dispersion aleatoria, caen con la gravedad, viven vida segundos y se dibujan con un tamano; cantidad particulas se reciclan sin parar.",
+  "ejemplo": "fuente = g3d_particles_create(0, 1, 0,  0.2, 0, 0.2,  0, 6, 0, 1.5,  9.8, 0.15, 1.5, 200);\ng3d_particles_set_color(fuente, 0.7, 0.85, 1.0);",
+  "params": [
+   "x",
+   "y",
+   "z",
+   "ex",
+   "ey",
+   "ez",
+   "vx",
+   "vy",
+   "vz",
+   "dispersion",
+   "gravedad",
+   "tamano",
+   "vida",
+   "cantidad"
+  ],
+  "ret": "id del emisor, o -1"
+ },
+ "G3D_PARTICLES_SET_COLOR": {
+  "desc": "Color de las particulas de un emisor (r, g, b de 0 a 1).",
+  "params": [
+   "emisor",
+   "r",
+   "g",
+   "b"
+  ]
+ },
+ "G3D_PARTICLES_SET_FLOOR": {
+  "desc": "Las particulas que caen por debajo de y reaparecen (para que un chorro desaparezca al llegar al agua).",
+  "params": [
+   "emisor",
+   "y"
+  ]
+ },
+ "G3D_PHYSICS_BODY_CREATE": {
+  "desc": "OBSOLETA: no hace nada y devuelve -1. Usa g3d_rigidbody_create y sus variantes.",
+  "params": [
+   "a",
+   "b",
+   "c",
+   "d"
+  ],
+  "ret": "-1"
+ },
+ "G3D_PHYSICS_BODY_SET_VELOCITY": {
+  "desc": "OBSOLETA: no hace nada. Usa g3d_rigidbody_set_velocity.",
+  "params": [
+   "cuerpo",
+   "vx",
+   "vy",
+   "vz"
+  ]
+ },
+ "G3D_PHYSICS_SET_GRAVITY": {
+  "desc": "Gravedad global en unidades/s^2, positiva hacia abajo (24 por defecto). Afecta al controlador de personaje y al vehiculo y, en PC, a los cuerpos rigidos de Jolt.",
+  "ejemplo": "g3d_physics_set_gravity(9.8);",
+  "params": [
+   "gravedad"
+  ]
+ },
+ "G3D_PHYSICS_STEP": {
+  "desc": "OBSOLETA: no hace nada. Usa g3d_rigidbody_step.",
+  "params": [
+   "dt"
+  ]
  },
  "G3D_PICK_ENTITY": {
   "desc": "Entidad solida que hay bajo un punto de la pantalla (sx, sy en pixeles, con w y h el tamano de la pantalla). Lanza un rayo desde la camara de hasta 5000 unidades. El punto de impacto se lee con g3d_pick_x/y/z().",
@@ -2371,6 +2763,75 @@
  "G3D_PICK_Z": {
   "desc": "Z del ultimo punto encontrado por g3d_pick_entity o g3d_pick_terrain.",
   "ret": "Z del punto"
+ },
+ "G3D_PREFAB_ADD_BOX": {
+  "desc": "Anade una caja al prefab: posicion local (x, y, z), tamano (x, y, z), giro (grados en x, y, z), color (r, g, b) y si es solida (1) o no (0).",
+  "params": [
+   "prefab",
+   "x",
+   "y",
+   "z",
+   "tx",
+   "ty",
+   "tz",
+   "rx",
+   "ry",
+   "rz",
+   "r",
+   "g",
+   "b",
+   "solido"
+  ],
+  "ret": "indice de la pieza"
+ },
+ "G3D_PREFAB_COUNT": {
+  "desc": "Numero de piezas del prefab.",
+  "params": [
+   "prefab"
+  ],
+  "ret": "numero de piezas"
+ },
+ "G3D_PREFAB_CREATE": {
+  "desc": "Crea un prefab vacio con nombre: un grupo reutilizable de piezas (paredes, salas) con posicion local, tamano, color, textura opcional e indicador de colision.",
+  "ejemplo": "p = g3d_prefab_create(\"sala\");\ng3d_prefab_add_box(p, 0, 1, 0,  4, 2, 0.2,  0, 0, 0,  0.8, 0.8, 0.8, 1);\ng3d_prefab_instantiate(p, escena, 10, 0, 5, 90);",
+  "params": [
+   "nombre"
+  ],
+  "ret": "id del prefab, o -1"
+ },
+ "G3D_PREFAB_INSTANTIATE": {
+  "desc": "Coloca el prefab en una escena en (x, y, z) girado yaw grados: crea una entidad por pieza (con la colision marcada).",
+  "params": [
+   "prefab",
+   "escena",
+   "x",
+   "y",
+   "z",
+   "giro"
+  ],
+  "ret": "numero de piezas creadas"
+ },
+ "G3D_PREFAB_LOAD": {
+  "desc": "Carga un prefab de un archivo de texto y lo crea nuevo.",
+  "params": [
+   "ruta"
+  ],
+  "ret": "id del prefab nuevo, o -1"
+ },
+ "G3D_PREFAB_PIECE_TEXTURE": {
+  "desc": "Da textura (una ruta de imagen repetible) a la ULTIMA pieza anadida.",
+  "params": [
+   "prefab",
+   "ruta"
+  ]
+ },
+ "G3D_PREFAB_SAVE": {
+  "desc": "Guarda el prefab en un archivo de texto.",
+  "params": [
+   "prefab",
+   "ruta"
+  ],
+  "ret": "resultado de la escritura"
  },
  "G3D_PRIMITIVE_CLIFFS": {
   "desc": "Terreno de acantilados: como g3d_primitive_terrain pero con el ruido aplastado en cuencas y mesetas. pendiente (1 suave, 4 a 6 dramatico) marca lo abrupto de los acantilados; fondo_agua (0 a 1) hunde las cuencas por debajo de 0 para que el agua las llene. Devuelve un modelo listo para g3d_entity_spawn y ya subido a la GPU.",
@@ -3048,6 +3509,54 @@
   ],
   "ret": "Z"
  },
+ "G3D_SCATTER_CLEAR": {
+  "desc": "Quita toda la vegetacion sembrada y sus grupos de instancias."
+ },
+ "G3D_SCATTER_GROUP": {
+  "desc": "Indice de una especie de la siembra a partir de su recurso (por ejemplo \"Assets/pino.glb\"); la crea si no existe. Es lo que une un proceso a su bosque (se guarda en entity).",
+  "params": [
+   "recurso"
+  ],
+  "ret": "indice de la especie"
+ },
+ "G3D_SCATTER_LOAD": {
+  "desc": "Carga de un archivo de siembra (el que guarda el editor) todas las colocaciones y monta los grupos de instancias. Es lo que llama un juego generado. Si el archivo no existe no es un error: la escena simplemente no tiene vegetacion. viento multiplica el balanceo de cada especie (1 = como se diseno).",
+  "ejemplo": "g3d_scatter_load(\"Scenes/bosque.scatter\", 1.0);",
+  "params": [
+   "ruta",
+   "viento"
+  ],
+  "ret": "numero de colocaciones cargadas, o 0"
+ },
+ "G3D_SCATTER_MESH": {
+  "desc": "Siembra copias de una malla al azar sobre el terreno: cuantas, en un cuadrado de semi-lado area, con giro aleatorio y escala entre esc_min y esc_max, con balanceo por viento y una semilla para repetir el mismo resultado.",
+  "params": [
+   "malla",
+   "textura",
+   "terreno",
+   "cantidad",
+   "area",
+   "esc_min",
+   "esc_max",
+   "viento",
+   "semilla"
+  ],
+  "ret": "id del primer grupo"
+ },
+ "G3D_SCATTER_MODEL": {
+  "desc": "Siembra copias de un modelo entero sobre el terreno: cantidad, cuadrado de semi-lado area, altura objetivo a la que se escala cada copia, variacion de escala (escala base por 1 +/- variacion), viento y semilla.",
+  "params": [
+   "modelo",
+   "terreno",
+   "cantidad",
+   "area",
+   "alto",
+   "variacion",
+   "viento",
+   "semilla"
+  ],
+  "ret": "id del primer grupo"
+ },
  "G3D_SCENE_CREATE": {
   "desc": "Crea una escena vacia.",
   "params": [
@@ -3435,6 +3944,139 @@
    "activar"
   ]
  },
+ "G3D_STREAM_INIT": {
+  "desc": "Prepara el streaming de un mundo grande: el mundo se divide en teselas cuadradas de tam_tesela unidades y se mantienen las que estan a menos de radio teselas de la camara (un cuadrado de (2*radio+1) por lado). El motor solo lleva la logica espacial; tu juego decide que contiene cada tesela y la crea o destruye.",
+  "ejemplo": "g3d_stream_init(64.0, 3);",
+  "params": [
+   "tam_tesela",
+   "radio"
+  ]
+ },
+ "G3D_STREAM_LOADED_COUNT": {
+  "desc": "Numero de teselas que estan ahora dentro del anillo.",
+  "ret": "numero de teselas"
+ },
+ "G3D_STREAM_LOAD_COUNT": {
+  "desc": "Numero de teselas que ENTRARON en el anillo en la ultima g3d_stream_update (hay que crearlas).",
+  "ret": "numero de teselas"
+ },
+ "G3D_STREAM_LOAD_X": {
+  "desc": "Coordenada X (de tesela, no del mundo) de la tesela i de la lista de carga.",
+  "params": [
+   "i"
+  ],
+  "ret": "X de tesela"
+ },
+ "G3D_STREAM_LOAD_Z": {
+  "desc": "Coordenada Z (de tesela, no del mundo) de la tesela i de la lista de carga.",
+  "params": [
+   "i"
+  ],
+  "ret": "Z de tesela"
+ },
+ "G3D_STREAM_UNLOAD_COUNT": {
+  "desc": "Numero de teselas que SALIERON del anillo en la ultima g3d_stream_update (hay que liberarlas).",
+  "ret": "numero de teselas"
+ },
+ "G3D_STREAM_UNLOAD_X": {
+  "desc": "Coordenada X de tesela de la tesela i de la lista de descarga.",
+  "params": [
+   "i"
+  ],
+  "ret": "X de tesela"
+ },
+ "G3D_STREAM_UNLOAD_Z": {
+  "desc": "Coordenada Z de tesela de la tesela i de la lista de descarga.",
+  "params": [
+   "i"
+  ],
+  "ret": "Z de tesela"
+ },
+ "G3D_STREAM_UPDATE": {
+  "desc": "Recalcula las teselas cargadas para la camara en (camx, camz). Llamala cada frame (es barata: las listas solo cambian al cruzar el limite de una tesela). Deja en las listas de carga y descarga las teselas que han cambiado en esta llamada.",
+  "ejemplo": "g3d_stream_update(cam_x, cam_z);\nfor (i = 0; i < g3d_stream_load_count(); i++)\n    crear_tesela(g3d_stream_load_x(i), g3d_stream_load_z(i));\nend\nfor (i = 0; i < g3d_stream_unload_count(); i++)\n    borrar_tesela(g3d_stream_unload_x(i), g3d_stream_unload_z(i));\nend",
+  "params": [
+   "camx",
+   "camz"
+  ]
+ },
+ "G3D_TERRAIN_FLATTEN": {
+  "desc": "Aplana el terreno hacia una altura objetivo dentro del radio. cantidad (0 a 1) es la mezcla. El terreno debe haberse creado con g3d_primitive_terrain (o ser compatible). Recalcula normales y actualiza la GPU, asi que se ve al instante.",
+  "ejemplo": "g3d_terrain_flatten(t, 0, 0, 12.0, 2.0, 1.0);   // plataforma a altura 2",
+  "params": [
+   "terreno",
+   "x",
+   "z",
+   "radio",
+   "altura",
+   "cantidad"
+  ]
+ },
+ "G3D_TERRAIN_GET_HEIGHT": {
+  "desc": "Altura del terreno en (x, z) interpolando entre vertices. Util para colocar objetos y la camara sobre el suelo.",
+  "ejemplo": "py = g3d_terrain_get_height(t, px, pz);",
+  "params": [
+   "terreno",
+   "x",
+   "z"
+  ],
+  "ret": "altura, o 0 si no es un terreno o esta fuera"
+ },
+ "G3D_TERRAIN_HOLE": {
+  "desc": "Quita (1) o restaura (0) las celdas del terreno dentro de un disco, para ver a traves del suelo (una cueva de voxels debajo, una entrada).",
+  "params": [
+   "terreno",
+   "x",
+   "z",
+   "radio",
+   "activo"
+  ],
+  "ret": "1 si cambio algo"
+ },
+ "G3D_TERRAIN_LOAD": {
+  "desc": "Aplica al terreno el relieve guardado por el editor (un archivo con el numero de vertices y la altura Y de cada uno). Permite que un juego reproduzca el relieve esculpido.",
+  "ejemplo": "t = g3d_primitive_terrain(128, 200.0, 12.0, 20.0, 7);\ng3d_terrain_load(t, \"Scenes/mundo.terrain\");\ng3d_set_terrain_collider(t);",
+  "params": [
+   "terreno",
+   "ruta"
+  ],
+  "ret": "1 si lo cargo; 0 si falta el archivo o el numero de vertices no coincide"
+ },
+ "G3D_TERRAIN_PAINT": {
+  "desc": "Pinta una textura sobre el lienzo del terreno con un pincel: dentro de radio unidades de (x, z), con caida suave y opacidad de 0 a 1. La textura se repite src_tiling veces por todo el terreno.",
+  "ejemplo": "lienzo = g3d_paint_create(1024, 1024);\ng3d_paint_fill(lienzo, tex_hierba, 40.0);\ng3d_terrain_paint(t, lienzo, tex_roca, 40.0, 20, 5, 6.0, 0.8);",
+  "params": [
+   "terreno",
+   "lienzo",
+   "textura",
+   "repeticion",
+   "x",
+   "z",
+   "radio",
+   "opacidad"
+  ]
+ },
+ "G3D_TERRAIN_RAISE": {
+  "desc": "Pincel de escultura: sube (fuerza positiva) o baja (negativa) el terreno dentro de radio unidades de (x, z), con caida suave hacia el borde. El terreno debe haberse creado con g3d_primitive_terrain (o ser compatible). Recalcula normales y actualiza la GPU, asi que se ve al instante.",
+  "ejemplo": "g3d_terrain_raise(t, 10, 10, 8.0, 0.5);",
+  "params": [
+   "terreno",
+   "x",
+   "z",
+   "radio",
+   "fuerza"
+  ]
+ },
+ "G3D_TERRAIN_SMOOTH": {
+  "desc": "Alisa el terreno acercando cada altura a la media de sus vecinas dentro del radio. cantidad (0 a 1) es la mezcla en el centro. El terreno debe haberse creado con g3d_primitive_terrain (o ser compatible). Recalcula normales y actualiza la GPU, asi que se ve al instante.",
+  "params": [
+   "terreno",
+   "x",
+   "z",
+   "radio",
+   "cantidad"
+  ]
+ },
  "G3D_TRIANGLES": {
   "desc": "Numero de triangulos dibujados en el ultimo frame.",
   "ret": "numero de triangulos"
@@ -3541,6 +4183,65 @@
    "vehiculo"
   ],
   "ret": "Z"
+ },
+ "G3D_VOXTERRAIN_BLOCKED": {
+  "desc": "1 si una capsula (pies en y, de radio y alto dados) chocaria con roca en (x, z): colision robusta con paredes y techos.",
+  "params": [
+   "x",
+   "y",
+   "z",
+   "radio",
+   "alto"
+  ],
+  "ret": "1 o 0"
+ },
+ "G3D_VOXTERRAIN_FLOOR": {
+  "desc": "Altura del suelo sobre el que se apoya alguien en (x, y, z): la superficie solida justo debajo (el suelo de la cueva si esta dentro de una). Si el punto esta dentro de roca, devuelve la superficie justo encima (para sacarlo).",
+  "params": [
+   "x",
+   "y",
+   "z"
+  ],
+  "ret": "altura, o un valor muy negativo si no hay"
+ },
+ "G3D_VOXTERRAIN_SOLID": {
+  "desc": "1 si el punto (x, y, z) esta dentro de roca del terreno de voxels (cuevas, voladizos). Sirve para colisionar con paredes y techos.",
+  "params": [
+   "x",
+   "y",
+   "z"
+  ],
+  "ret": "1 o 0"
+ },
+ "G3D_VOXTERRAIN_WALK": {
+  "desc": "Mueve una capsula (radio y alto) desde (x, y, z) sumando (dx, dz): desliza por X y luego por Z, sube cuestas de hasta paso_max, y se detiene ante paredes, precipicios y techos bajos. Lee el resultado con g3d_voxterrain_walkx/y/z().",
+  "ejemplo": "g3d_voxterrain_walk(px, py, pz, 0.4, 1.8, 0.5, vx, vz);\npx = g3d_voxterrain_walkx();\npy = g3d_voxterrain_walky();\npz = g3d_voxterrain_walkz();",
+  "params": [
+   "x",
+   "y",
+   "z",
+   "radio",
+   "alto",
+   "paso_max",
+   "dx",
+   "dz"
+  ]
+ },
+ "G3D_VOXTERRAIN_WALKX": {
+  "desc": "X resuelta por la ultima g3d_voxterrain_walk.",
+  "ret": "X"
+ },
+ "G3D_VOXTERRAIN_WALKY": {
+  "desc": "Y resuelta por la ultima g3d_voxterrain_walk.",
+  "ret": "Y"
+ },
+ "G3D_VOXTERRAIN_WALKZ": {
+  "desc": "Z resuelta por la ultima g3d_voxterrain_walk.",
+  "ret": "Z"
+ },
+ "G3D_VOXTERRAIN_WORLDSIZE": {
+  "desc": "Tamano del mapa de voxels en X/Z, para mantener al personaje dentro del mundo.",
+  "ret": "tamano"
  },
  "G3D_WALL_RAY": {
   "desc": "Rayo contra TODA la geometria colisionable (la de g3d_collider_add_model y similares), no solo contra cajas. Util para camaras que no deben atravesar paredes. Solo funciona con Jolt (PC); en las plataformas sin Jolt devuelve siempre el ultimo parametro (maxd), es decir, 'no choca'.",
@@ -3755,6 +4456,61 @@
    "fuerza"
   ]
  },
+ "G3D_WORLDGEN_HEIGHT": {
+  "desc": "Altura del mundo procedural en (x, z). Es mar donde sea menor que el nivel del mar. Sirve para colocar arboles o rocas sobre el suelo.",
+  "params": [
+   "x",
+   "z"
+  ],
+  "ret": "altura"
+ },
+ "G3D_WORLDGEN_SET": {
+  "desc": "Configura el mundo procedural infinito: semilla, amplitud vertical, frecuencia horizontal (menor = relieve mas grande) y nivel del mar (lo que queda por debajo esta bajo el agua). El mismo mundo sale siempre con la misma semilla y las teselas vecinas encajan en las uniones.",
+  "ejemplo": "g3d_worldgen_set(42, 30.0, 0.01, 2.0);",
+  "params": [
+   "semilla",
+   "amplitud",
+   "frecuencia",
+   "nivel_mar"
+  ]
+ },
+ "G3D_WORLDGEN_SET_BIOME_TEXTURES": {
+  "desc": "Texturas reales por franja de bioma (arena, hierba, roca, nieve), mezcladas segun altura y pendiente. escala es la repeticion en el mundo (por ejemplo 0.03). Con 0 en todas vuelve a los colores planos.",
+  "params": [
+   "arena",
+   "hierba",
+   "roca",
+   "nieve",
+   "escala"
+  ]
+ },
+ "G3D_WORLDGEN_SET_WATER_DEPTH": {
+  "desc": "Profundidad del fondo marino respecto al nivel del mar (1 por defecto; mayor = mares mas profundos). Solo afecta al terreno ya sumergido.",
+  "params": [
+   "profundidad"
+  ]
+ },
+ "G3D_WORLDGEN_TILE": {
+  "desc": "Construye la tesela de terreno (tx, tz) de tam unidades con una rejilla de res x res, colocada en el origen de render (rox, 0, roz) de la escena indicada y con una textura (o 0). Pensada para usarla con g3d_stream_*.",
+  "ejemplo": "ent = g3d_worldgen_tile(escena, tx, tz, 64.0, 33, tx * 64.0, tz * 64.0, tex);",
+  "params": [
+   "escena",
+   "tx",
+   "tz",
+   "tam",
+   "res",
+   "rox",
+   "roz",
+   "textura"
+  ],
+  "ret": "id de la entidad, o -1"
+ },
+ "G3D_WORLDGEN_TILE_FREE": {
+  "desc": "Destruye una tesela creada con g3d_worldgen_tile y libera su malla.",
+  "params": [
+   "entidad"
+  ]
+ },
  "G3D_WORLD_REBASE": {
   "desc": "Origen flotante: desplaza TODO el mundo (-dx, -dy, -dz) para mantener las coordenadas pequenas lejos del origen, donde los decimales pierden precision. Llamala cuando la camara se aleje mucho y ajusta tu propia camara y tus variables con el mismo desplazamiento.",
   "ejemplo": "if (abs(cam_x) > 5000)\n    g3d_world_rebase(cam_x, 0, 0);\n    cam_x = 0;\nend",
@@ -3763,6 +4519,48 @@
    "dy",
    "dz"
   ]
+ },
+ "G3D_XRAY_UPDATE": {
+  "desc": "Rayos X para camaras en tercera persona: una vez por frame, las entidades marcadas con g3d_entity_set_xray cuya caja corta el segmento camara-objetivo (engordado por radio) se vuelven translucidas hacia alfa_min (0 a 1) y recuperan su opacidad al dejar de tapar. velocidad (0 a 1) es la fraccion que avanza por frame.",
+  "ejemplo": "g3d_xray_update(cx, cy, cz, px, py + 1, pz, 0.5, 0.2, 0.15);",
+  "params": [
+   "cam_x",
+   "cam_y",
+   "cam_z",
+   "obj_x",
+   "obj_y",
+   "obj_z",
+   "radio",
+   "alfa_min",
+   "velocidad"
+  ]
+ },
+ "G3D_ZONE_BLOCKED": {
+  "desc": "1 si la celda mas cercana a (x, z) tiene marcada la capa (0 a 7); con capa negativa, si tiene cualquiera. Sirve para confinar a quien respete esa capa (un barco no sale del agua aunque el personaje si).",
+  "ejemplo": "if (g3d_zone_blocked(nx, nz, 0)) nx = x; nz = z; end",
+  "params": [
+   "x",
+   "z",
+   "capa"
+  ],
+  "ret": "1 o 0"
+ },
+ "G3D_ZONE_CLEAR": {
+  "desc": "Borra todas las capas de la mascara (conserva su tamano)."
+ },
+ "G3D_ZONE_INIT": {
+  "desc": "Crea la mascara de zonas: una rejilla de lado x lado celdas sobre un mundo de tam_mundo unidades, centrada en el origen, con capas de la 0 a la 7 por celda. lado = rejilla del terreno + 1.",
+  "params": [
+   "lado",
+   "tam_mundo"
+  ]
+ },
+ "G3D_ZONE_LOAD": {
+  "desc": "Carga la mascara de zonas pintada en el editor desde un archivo.",
+  "params": [
+   "ruta"
+  ],
+  "ret": "1 si lo cargo"
  },
  "GETENV": {
   "desc": "Valor de una variable de entorno del sistema (cadena vacia si no existe).",

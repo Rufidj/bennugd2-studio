@@ -9151,6 +9151,18 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
            (lineas ROAD / ROADNODE del .scene) y se emite en el juego como codigo. Ver carretera.h. */
         via.c.terreno_h = [&](float x, float z) { return terrain ? g3d_editor_terrain_height(terrain, x, z) : 0.0f; };
 
+        // Pone la camara del editor mirando la carretera entera, desde arriba (con una carretera de 1 km, la camara de siempre, a 14 m del
+        // origen, no la enseña).
+        auto encuadrar_carretera = [&]() {
+            if (via.c.m.empty()) return;
+            float x0 = 1e30f, x1 = -1e30f, z0 = 1e30f, z1 = -1e30f;
+            for (auto& m : via.c.m) { x0 = std::min(x0, m.c.x); x1 = std::max(x1, m.c.x); z0 = std::min(z0, m.c.z); z1 = std::max(z1, m.c.z); }
+            vcam_target[0] = 0.5f * (x0 + x1); vcam_target[2] = 0.5f * (z0 + z1);
+            vcam_target[1] = terrain ? g3d_editor_terrain_height(terrain, vcam_target[0], vcam_target[2]) : 0.0f;
+            cam_dist = std::clamp(std::max(x1 - x0, z1 - z0) * 1.0f, 40.0f, 1500.0f);
+            cam_pitch = 0.95f;
+        };
+
         /* ---- panel de la herramienta Carretera (modo Terreno) ---- */
         if (modo == M_TERRENO && tool == T_ROAD) {
             const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -9160,11 +9172,18 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 car::Camino* cm = nullptr;
                 if (!via.c.caminos.empty()) { road_cam = std::clamp(road_cam, 0, (int)via.c.caminos.size() - 1); cm = &via.c.caminos[road_cam]; }
                 auto cambio = [&]() { via.tocar(); via.c.calcular(); };
+                {   // al elegir la herramienta en una escena con carretera, se encuadra (una vez por escena)
+                    static std::string encuadrada;
+                    if (cm && encuadrada != scene_path) { encuadrada = scene_path; encuadrar_carretera(); }
+                }
                 if (!cm) {
                     ImGui::TextWrapped("Haz clic en el terreno, o sobre un modelo de la escena, para poner el primer punto de la carretera.");
                     ImGui::TextDisabled("Solo dice por donde se puede circular: no se dibuja.");
                 } else {
                     ImGui::Text("%d puntos  -  %.0f m", (int)cm->nodos.size(), via.c.largo);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Encuadrar")) encuadrar_carretera();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pone la camara mirando la carretera entera");
                     if (ImGui::CollapsingHeader("Ancho y tramos")) {
                         static float ancho_todo = 14.0f;
                         ImGui::SliderFloat("Ancho", &ancho_todo, 6.0f, 40.0f, "%.1f m");
@@ -10013,6 +10032,38 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
         }
 
         // ---- interaccion del viewport segun la herramienta ----
+        // La guia de la carretera (linea central y bordes del ancho; NO existe en el juego) se ve siempre que la herramienta esta
+        // activa, no solo con el raton sobre el visor: si no, desaparece al tocar un deslizador del panel.
+        if (!playing && modo == M_TERRENO && tool == T_ROAD && terrain && !via.c.m.empty()) {
+            ImDrawList* dlg = ImGui::GetWindowDrawList();
+            auto proyg = [&](float wx, float wy, float wz, ImVec2& o) -> bool {
+                float p2[2]; if (!g3d_editor_world_to_screen(wx, wy, wz, (float)vp.w, (float)vp.h, p2)) return false;
+                o = ImVec2(img_min.x + p2[0], img_min.y + p2[1]); return true;
+            };
+            for (size_t si = 0; si < via.c.strips.size(); si++) {
+                const auto& st = via.c.strips[si];
+                float gr = (int)si == road_cam ? 4.0f : 2.0f;
+                for (int i = st.ini; i < st.ini + st.n; i++) {
+                    int j = via.c.sig(i); if (j < 0) continue;
+                    ImVec2 a, b;
+                    if (proyg(via.c.m[i].c.x, via.c.m[i].c.y + 0.4f, via.c.m[i].c.z, a) && proyg(via.c.m[j].c.x, via.c.m[j].c.y + 0.4f, via.c.m[j].c.z, b))
+                        dlg->AddLine(a, b, IM_COL32(255, 210, 60, 255), gr);
+                    for (int lado = 0; lado < 2; lado++) {
+                        const car::V3 &e0 = lado ? via.c.m[i].der_borde : via.c.m[i].izq_borde, &e1 = lado ? via.c.m[j].der_borde : via.c.m[j].izq_borde;
+                        ImVec2 ea, eb;
+                        if (proyg(e0.x, e0.y + 0.4f, e0.z, ea) && proyg(e1.x, e1.y + 0.4f, e1.z, eb)) dlg->AddLine(ea, eb, IM_COL32(255, 255, 255, 150), 1.5f);
+                    }
+                }
+            }
+            for (auto& cam : via.c.caminos)                      // los puntos (el primero, en verde)
+                for (size_t i = 0; i < cam.nodos.size(); i++) {
+                    const car::Nodo& n = cam.nodos[i];
+                    float gy = n.sigue ? g3d_editor_terrain_height(terrain, n.x, n.z) + n.dy : n.y;
+                    ImVec2 p; if (!proyg(n.x, gy + 0.6f, n.z, p)) continue;
+                    dlg->AddCircleFilled(p, 4.0f, i == 0 ? IM_COL32(80, 220, 120, 255) : IM_COL32(255, 140, 40, 255));
+                    dlg->AddCircle(p, 4.0f, IM_COL32(20, 20, 20, 255), 10, 1.5f);
+                }
+        }
         if (!playing && vp_hovered && !ImGuizmo::IsOver()) {
             ImVec2 mp = ImGui::GetIO().MousePos;
             float sx = mp.x - img_min.x, sy = mp.y - img_min.y;
@@ -10101,22 +10152,6 @@ if (o.mueve_telas) fputs(" MUEVETELAS 1", f);
                 car::Camino* cm = nullptr;
                 if (!via.c.caminos.empty()) { road_cam = std::clamp(road_cam, 0, (int)via.c.caminos.size() - 1); cm = &via.c.caminos[road_cam]; }
                 if (cm) {
-                    // la guia: linea central y los dos bordes del ancho (NO existe en el juego)
-                    for (size_t si = 0; si < via.c.strips.size(); si++) {
-                        const auto& st = via.c.strips[si];
-                        float gr = (int)si == road_cam ? 4.0f : 2.0f;
-                        for (int i = st.ini; i < st.ini + st.n; i++) {
-                            int j = via.c.sig(i); if (j < 0) continue;
-                            ImVec2 a, b;
-                            if (proy(via.c.m[i].c.x, via.c.m[i].c.y + 0.4f, via.c.m[i].c.z, a) && proy(via.c.m[j].c.x, via.c.m[j].c.y + 0.4f, via.c.m[j].c.z, b))
-                                dl->AddLine(a, b, IM_COL32(255, 210, 60, 255), gr);
-                            for (int lado = 0; lado < 2; lado++) {
-                                const car::V3 &e0 = lado ? via.c.m[i].der_borde : via.c.m[i].izq_borde, &e1 = lado ? via.c.m[j].der_borde : via.c.m[j].izq_borde;
-                                ImVec2 ea, eb;
-                                if (proy(e0.x, e0.y + 0.4f, e0.z, ea) && proy(e1.x, e1.y + 0.4f, e1.z, eb)) dl->AddLine(ea, eb, IM_COL32(255, 255, 255, 150), 1.5f);
-                            }
-                        }
-                    }
                     int hov = -1; float mejor = 14.0f;
                     for (int i = 0; i < (int)cm->nodos.size(); i++) {
                         const car::Nodo& n = cm->nodos[i];

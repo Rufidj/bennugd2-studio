@@ -10,6 +10,10 @@ python3 gen_docs_entrada.py
 python3 gen_docs_sonido.py
 python3 gen_docs_graficos.py
 python3 gen_docs_misc.py
+python3 gen_docs_graficos2.py
+python3 gen_docs_misc2.py
+python3 gen_docs_otros.py
+python3 gen_docs_video.py
 python3 gen_docs_jolt.py      # corrige/amplia lo anterior: va el ultimo
 python3 gen_api.py
 python3 verificar_ejemplos.py

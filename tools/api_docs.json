@@ -13,12 +13,75 @@
   ],
   "ret": "angulo"
  },
+ "ADS_CHECK_CONSENT": {
+  "desc": "Comprueba si hace falta pedir al usuario el consentimiento de privacidad (obligatorio en la Union Europea). Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes."
+ },
+ "ADS_HIDE_BANNER": {
+  "desc": "Oculta el banner. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes."
+ },
+ "ADS_INITIALIZE": {
+  "desc": "Inicia los anuncios. Hay que llamarla antes que las demas ADS_*. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.",
+  "ret": "1 si va bien"
+ },
+ "ADS_IS_INTERSTITIAL_LOADED": {
+  "desc": "Indica si el intersticial ya esta cargado y listo para mostrarse. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.",
+  "ret": "1 si esta listo"
+ },
+ "ADS_IS_REWARDED_LOADED": {
+  "desc": "Indica si el anuncio con recompensa esta cargado. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.",
+  "ret": "1 si esta listo"
+ },
+ "ADS_LOAD_INTERSTITIAL": {
+  "desc": "Pide un anuncio a pantalla completa (intersticial) con el identificador de unidad de AdMob. Conviene hacerlo con tiempo (al empezar el nivel) porque tarda en cargar. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.",
+  "params": [
+   "id_unidad"
+  ]
+ },
+ "ADS_LOAD_REWARDED": {
+  "desc": "Pide un anuncio con recompensa (el usuario lo ve a cambio de algo) con el identificador de unidad de AdMob. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.",
+  "params": [
+   "id_unidad"
+  ]
+ },
+ "ADS_POLL_EVENT": {
+  "desc": "Devuelve el codigo de un evento de anuncios ocurrido (por ejemplo ADS_EVENT_CONSENT_FORM_DISMISSED, que vale 8, al cerrarse el formulario de consentimiento), o 0 si no hay ninguno. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.",
+  "ret": "codigo del evento, 0 si no hay"
+ },
+ "ADS_SET_CHILD_DIRECTED": {
+  "desc": "Marca la aplicacion como dirigida a ninos (1) o no (0), para que los anuncios cumplan la normativa de proteccion de menores. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.",
+  "params": [
+   "dirigida_a_ninos"
+  ]
+ },
+ "ADS_SHOW_BANNER": {
+  "desc": "Muestra un banner fijo con el identificador de unidad de AdMob, arriba (ADS_BANNER_POS_TOP) o abajo (ADS_BANNER_POS_BOTTOM) de la pantalla. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.",
+  "params": [
+   "id_unidad",
+   "posicion"
+  ]
+ },
+ "ADS_SHOW_CONSENT_FORM": {
+  "desc": "Muestra el formulario de consentimiento de privacidad. Al cerrarse lo avisa el evento ADS_EVENT_CONSENT_FORM_DISMISSED. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes."
+ },
+ "ADS_SHOW_INTERSTITIAL": {
+  "desc": "Muestra el anuncio intersticial cargado. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes."
+ },
+ "ADS_SHOW_REWARDED": {
+  "desc": "Muestra el anuncio con recompensa. El resultado se consulta con ADS_POLL_EVENT. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes."
+ },
  "ADVANCE": {
   "desc": "Mueve el proceso 'distancia' en la direccion de su variable angle. Los angulos de BennuGD van en MILESIMAS DE GRADO (90000 = 90 grados) y la Y de pantalla crece hacia abajo, asi que con angle = 90000 el proceso sube.",
   "ejemplo": "angle = 45000;\nadvance(4);   // avanza 4 pixeles en diagonal hacia arriba a la derecha",
   "params": [
    "distancia"
   ]
+ },
+ "ALLOC": {
+  "desc": "Reserva un bloque de memoria de 'bytes' bytes y devuelve su puntero (0 si no hay memoria). Hay que liberarlo con FREE.",
+  "params": [
+   "bytes"
+  ],
+  "ret": "puntero al bloque"
  },
  "ASC": {
   "desc": "Codigo del primer caracter de una cadena.",
@@ -81,12 +144,108 @@
   ],
   "ret": "1 si esta dentro"
  },
+ "BOX_GET(IIIPPPPP)": {
+  "desc": "Lee una caja de colision de un grafico: su forma, posicion y tamano, en variables que se pasan por puntero.",
+  "params": [
+   "archivo",
+   "grafico",
+   "caja",
+   "&forma",
+   "&x",
+   "&y",
+   "&ancho",
+   "&alto"
+  ],
+  "ret": "1 si existe"
+ },
+ "BOX_GET(IPPPPP)": {
+  "desc": "Igual, para el grafico del proceso que la llama.",
+  "params": [
+   "caja",
+   "&forma",
+   "&x",
+   "&y",
+   "&ancho",
+   "&alto"
+  ],
+  "ret": "1 si existe"
+ },
+ "BOX_REMOVE(I)": {
+  "desc": "Quita una caja de colision del grafico del proceso que la llama.",
+  "params": [
+   "caja"
+  ]
+ },
+ "BOX_REMOVE(III)": {
+  "desc": "Quita una caja de colision de un grafico.",
+  "params": [
+   "archivo",
+   "grafico",
+   "caja"
+  ]
+ },
+ "BOX_SET(IIIIII)": {
+  "desc": "Igual, para el grafico del proceso que la llama.",
+  "params": [
+   "caja",
+   "forma",
+   "x",
+   "y",
+   "ancho",
+   "alto"
+  ],
+  "ret": "1 si va bien, 0 si no tiene grafico"
+ },
+ "BOX_SET(IIIIIIII)": {
+  "desc": "Define una caja de colision de un grafico (la forma que usa COLLISION): un numero de caja, el tipo de forma, y su posicion (x, y) y tamano (ancho, alto) relativos al grafico. Si la caja ya existe, la sustituye.",
+  "params": [
+   "archivo",
+   "grafico",
+   "caja",
+   "forma",
+   "x",
+   "y",
+   "ancho",
+   "alto"
+  ],
+  "ret": "1 si va bien, 0 si el grafico no existe"
+ },
+ "CALLOC": {
+  "desc": "Reserva memoria para 'cantidad' elementos de 'tamano' bytes cada uno, puesta a cero.",
+  "params": [
+   "cantidad",
+   "tamano"
+  ],
+  "ret": "puntero al bloque"
+ },
+ "CD()": {
+  "desc": "Carpeta de trabajo actual.",
+  "ret": "la ruta"
+ },
+ "CD(S)": {
+  "desc": "Cambia la carpeta de trabajo.",
+  "params": [
+   "carpeta"
+  ],
+  "ret": "0 si va bien"
+ },
  "CEIL": {
   "desc": "Redondea hacia arriba.",
   "params": [
    "valor"
   ],
   "ret": "el redondeo"
+ },
+ "CENTER_SET": {
+  "desc": "Fija el centro de un grafico: el punto del grafico que queda en la posicion del proceso al dibujarlo (el punto de control 0). Por defecto es el centro; con los pies del personaje pegados al suelo, ponlo abajo.",
+  "ejemplo": "center_set(0, graph, ancho / 2, alto);   // ancla en los pies",
+  "params": [
+   "archivo",
+   "grafico",
+   "x",
+   "y"
+  ],
+  "ret": "1 si va bien, -1 si el grafico no existe"
  },
  "CHANNEL_SET_DISTANCE": {
   "desc": "Distancia de un canal, de 0 (cerca, a todo volumen) a 255 (lejos, casi inaudible). Solo funciona mientras el canal esta sonando: si no suena nada en ese canal devuelve -1 y no hace nada.",
@@ -130,6 +289,13 @@
    "canal",
    "volumen"
   ]
+ },
+ "CHDIR": {
+  "desc": "Cambia la carpeta de trabajo.",
+  "params": [
+   "carpeta"
+  ],
+  "ret": "0 si va bien"
  },
  "CHR": {
   "desc": "Cadena de un solo caracter a partir de su codigo.",
@@ -180,6 +346,13 @@
   ],
   "ret": "el coseno"
  },
+ "DECIMAL": {
+  "desc": "Parte decimal de un numero conservando el signo: decimal(-2.75) = -0.75.",
+  "params": [
+   "valor"
+  ],
+  "ret": "la parte decimal"
+ },
  "DEG": {
   "desc": "Convierte radianes a milesimas de grado.",
   "params": [
@@ -193,6 +366,26 @@
    "&ancho",
    "&alto"
   ]
+ },
+ "DIRCLOSE": {
+  "desc": "Cierra una carpeta abierta con DIROPEN.",
+  "params": [
+   "manejador"
+  ]
+ },
+ "DIROPEN": {
+  "desc": "Abre una carpeta para leer su contenido y devuelve un manejador.",
+  "params": [
+   "carpeta"
+  ],
+  "ret": "manejador"
+ },
+ "DIRREAD": {
+  "desc": "Lee la entrada siguiente de una carpeta abierta (vacia al terminar).",
+  "params": [
+   "manejador"
+  ],
+  "ret": "nombre"
  },
  "DIST": {
   "desc": "Alias de FGET_DIST: distancia entre dos puntos.",
@@ -240,6 +433,52 @@
    "z"
   ]
  },
+ "DRAW_ARC(IIIII)": {
+  "desc": "Dibuja el borde de un arco de circulo: centro, radio y angulos de inicio y fin en MILESIMAS DE GRADO. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).",
+  "params": [
+   "x",
+   "y",
+   "radio",
+   "angulo_inicio",
+   "angulo_fin"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_ARC(IIIIII)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "x",
+   "y",
+   "radio",
+   "angulo_inicio",
+   "angulo_fin",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_ARC_FILLED(IIIII)": {
+  "desc": "Dibuja un arco relleno (un sector de circulo): centro, radio y angulos de inicio y fin en milesimas de grado. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).",
+  "params": [
+   "x",
+   "y",
+   "radio",
+   "angulo_inicio",
+   "angulo_fin"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_ARC_FILLED(IIIIII)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "x",
+   "y",
+   "radio",
+   "angulo_inicio",
+   "angulo_fin",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
  "DRAW_CIRCLE(III)": {
   "desc": "Dibuja el borde de un circulo (centro y radio) con el color de DRAWING_COLOR.",
   "params": [
@@ -284,6 +523,63 @@
    "dibujo"
   ]
  },
+ "DRAW_ELLIPSE(IIIII)": {
+  "desc": "Dibuja el borde de una elipse: centro, radios horizontal y vertical, y giro en GRADOS. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).",
+  "params": [
+   "x",
+   "y",
+   "radio_x",
+   "radio_y",
+   "grados"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_ELLIPSE(IIIIII)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "x",
+   "y",
+   "radio_x",
+   "radio_y",
+   "grados",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_ELLIPSE_FILLED(IIIII)": {
+  "desc": "Dibuja una elipse rellena: centro, radios horizontal y vertical, y giro en grados. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).",
+  "params": [
+   "x",
+   "y",
+   "radio_x",
+   "radio_y",
+   "grados"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_ELLIPSE_FILLED(IIIIII)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "x",
+   "y",
+   "radio_x",
+   "radio_y",
+   "grados",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_GET_THICKNESS()": {
+  "desc": "Grosor de linea que se usa para los siguientes dibujos.",
+  "ret": "grosor"
+ },
+ "DRAW_GET_THICKNESS(I)": {
+  "desc": "Grosor de linea de un dibujo ya creado.",
+  "params": [
+   "dibujo"
+  ],
+  "ret": "grosor"
+ },
  "DRAW_LINE(IIII)": {
   "desc": "Dibuja una linea con el color de DRAWING_COLOR.",
   "ejemplo": "drawing_color(rgb(255, 255, 0));\nlin = draw_line(10, 10, 200, 100);",
@@ -302,6 +598,23 @@
    "y0",
    "x1",
    "y1",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_LINES(IP)": {
+  "desc": "Dibuja varias lineas a la vez, cada una de un par de puntos. Los puntos van en un array de numeros decimales (float) con pares x, y seguidos; 'cantidad' es cuantos puntos.",
+  "params": [
+   "cantidad",
+   "&puntos"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_LINES(IPI)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "cantidad",
+   "&puntos",
    "color"
   ],
   "ret": "identificador del dibujo"
@@ -331,6 +644,76 @@
   ],
   "ret": "identificador del dibujo"
  },
+ "DRAW_POINTS(IP)": {
+  "desc": "Dibuja varios puntos a la vez. Los puntos van en un array de numeros decimales (float) con pares x, y seguidos; 'cantidad' es cuantos puntos.",
+  "params": [
+   "cantidad",
+   "&puntos"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_POINTS(IPI)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "cantidad",
+   "&puntos",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_POLYGON(IP)": {
+  "desc": "Dibuja el borde de un poligono cerrado. Los puntos van en un array de numeros decimales (float) con pares x, y seguidos; 'cantidad' es cuantos puntos.",
+  "params": [
+   "cantidad",
+   "&puntos"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_POLYGON(IPI)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "cantidad",
+   "&puntos",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_POLYGON_FILLED(IP)": {
+  "desc": "Dibuja un poligono relleno. Los puntos van en un array de numeros decimales (float) con pares x, y seguidos; 'cantidad' es cuantos puntos.",
+  "params": [
+   "cantidad",
+   "&puntos"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_POLYGON_FILLED(IPI)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "cantidad",
+   "&puntos",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_POLYLINE(IPI)": {
+  "desc": "Dibuja una linea quebrada que une los puntos. Con 'cerrar' en 1 une tambien el ultimo con el primero. Los puntos van en un array de numeros decimales (float) con pares x, y seguidos; 'cantidad' es cuantos puntos.",
+  "params": [
+   "cantidad",
+   "&puntos",
+   "cerrar"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_POLYLINE(IPII)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "cantidad",
+   "&puntos",
+   "cerrar",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
  "DRAW_RECTANGLE(IIII)": {
   "desc": "Dibuja el borde de un rectangulo (x, y, ancho, alto) con el color de DRAWING_COLOR.",
   "params": [
@@ -352,6 +735,40 @@
   ],
   "ret": "identificador del dibujo"
  },
+ "DRAW_RECTANGLES(IP)": {
+  "desc": "Dibuja varios rectangulos (borde) a la vez. Los puntos van en un array de numeros decimales (float) con pares x, y seguidos; 'cantidad' es cuantos puntos.",
+  "params": [
+   "cantidad",
+   "&rectangulos"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_RECTANGLES(IPI)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "cantidad",
+   "&rectangulos",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_RECTANGLES_FILLED(IP)": {
+  "desc": "Dibuja varios rectangulos rellenos a la vez. Los puntos van en un array de numeros decimales (float) con pares x, y seguidos; 'cantidad' es cuantos puntos.",
+  "params": [
+   "cantidad",
+   "&rectangulos"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_RECTANGLES_FILLED(IPI)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "cantidad",
+   "&rectangulos",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
  "DRAW_RECTANGLE_FILLED(IIII)": {
   "desc": "Dibuja un rectangulo relleno (x, y, ancho, alto) con el color de DRAWING_COLOR.",
   "params": [
@@ -369,6 +786,165 @@
    "y",
    "ancho",
    "alto",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_RECTANGLE_ROUND(IIIII)": {
+  "desc": "Dibuja el borde de un rectangulo con las esquinas redondeadas: posicion, ancho, alto y radio de las esquinas. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).",
+  "params": [
+   "x",
+   "y",
+   "ancho",
+   "alto",
+   "radio"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_RECTANGLE_ROUND(IIIIII)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "x",
+   "y",
+   "ancho",
+   "alto",
+   "radio",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_RECTANGLE_ROUND_FILLED(IIIII)": {
+  "desc": "Dibuja un rectangulo relleno con las esquinas redondeadas. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).",
+  "params": [
+   "x",
+   "y",
+   "ancho",
+   "alto",
+   "radio"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_RECTANGLE_ROUND_FILLED(IIIIII)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "x",
+   "y",
+   "ancho",
+   "alto",
+   "radio",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_SECTOR(IIIIII)": {
+  "desc": "Dibuja el borde de un sector de corona circular: centro, radio interior y exterior, y angulos de inicio y fin en milesimas de grado. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).",
+  "params": [
+   "x",
+   "y",
+   "radio_interior",
+   "radio_exterior",
+   "angulo_inicio",
+   "angulo_fin"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_SECTOR(IIIIIII)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "x",
+   "y",
+   "radio_interior",
+   "radio_exterior",
+   "angulo_inicio",
+   "angulo_fin",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_SECTOR_FILLED(IIIIII)": {
+  "desc": "Dibuja un sector de corona circular relleno. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).",
+  "params": [
+   "x",
+   "y",
+   "radio_interior",
+   "radio_exterior",
+   "angulo_inicio",
+   "angulo_fin"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_SECTOR_FILLED(IIIIIII)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "x",
+   "y",
+   "radio_interior",
+   "radio_exterior",
+   "angulo_inicio",
+   "angulo_fin",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_SET_THICKNESS(F)": {
+  "desc": "Grosor de linea de los siguientes dibujos, en pixeles (decimal).",
+  "params": [
+   "grosor"
+  ]
+ },
+ "DRAW_SET_THICKNESS(IF)": {
+  "desc": "Cambia el grosor de linea de un dibujo ya creado.",
+  "params": [
+   "dibujo",
+   "grosor"
+  ]
+ },
+ "DRAW_TRIANGLE(IIIIII)": {
+  "desc": "Dibuja el borde de un triangulo dado por sus tres vertices (coordenadas absolutas). Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).",
+  "params": [
+   "x1",
+   "y1",
+   "x2",
+   "y2",
+   "x3",
+   "y3"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_TRIANGLE(IIIIIII)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "x1",
+   "y1",
+   "x2",
+   "y2",
+   "x3",
+   "y3",
+   "color"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_TRIANGLE_FILLED(IIIIII)": {
+  "desc": "Dibuja un triangulo relleno dado por sus tres vertices (coordenadas absolutas). Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).",
+  "params": [
+   "x1",
+   "y1",
+   "x2",
+   "y2",
+   "x3",
+   "y3"
+  ],
+  "ret": "identificador del dibujo"
+ },
+ "DRAW_TRIANGLE_FILLED(IIIIIII)": {
+  "desc": "Igual, con un color concreto en vez del de DRAWING_COLOR.",
+  "params": [
+   "x1",
+   "y1",
+   "x2",
+   "y2",
+   "x3",
+   "y3",
    "color"
   ],
   "ret": "identificador del dibujo"
@@ -459,6 +1035,12 @@
   ],
   "ret": "1 si existe"
  },
+ "FFLUSH": {
+  "desc": "Fuerza a escribir en disco lo que quede pendiente de un fichero abierto.",
+  "params": [
+   "fichero"
+  ]
+ },
  "FGETS": {
   "desc": "Lee una linea de texto de un fichero (sin el salto de linea final). Devuelve una cadena vacia al llegar al final.",
   "params": [
@@ -486,6 +1068,14 @@
   ],
   "ret": "distancia"
  },
+ "FILE": {
+  "desc": "Lee un fichero de texto entero y devuelve su contenido en una cadena (vacia si no existe).",
+  "ejemplo": "datos = file(\"nivel.txt\");",
+  "params": [
+   "fichero"
+  ],
+  "ret": "el contenido"
+ },
  "FIND(SS)": {
   "desc": "Posicion de la primera aparicion de un trozo en una cadena (empezando en 0), o -1 si no esta.",
   "params": [
@@ -502,6 +1092,13 @@
    "desde"
   ],
   "ret": "posicion o -1"
+ },
+ "FINITE": {
+  "desc": "Indica si un decimal es un numero normal (ni infinito ni NaN).",
+  "params": [
+   "valor"
+  ],
+  "ret": "1 si es finito"
  },
  "FLENGTH": {
   "desc": "Tamano de un fichero abierto, en bytes.",
@@ -592,6 +1189,12 @@
    "grafico_origen"
   ]
  },
+ "FPG_DEL": {
+  "desc": "Libera una coleccion de graficos (igual que FPG_UNLOAD).",
+  "params": [
+   "archivo"
+  ]
+ },
  "FPG_EXISTS": {
   "desc": "Indica si existe una coleccion de graficos.",
   "params": [
@@ -638,6 +1241,29 @@
   ],
   "ret": "la parte decimal"
  },
+ "FREAD(IV++)": {
+  "desc": "Lee del fichero una variable (o estructura) escrita con FWRITE.",
+  "params": [
+   "fichero",
+   "variable"
+  ],
+  "ret": "bytes leidos"
+ },
+ "FREAD(PII)": {
+  "desc": "Lee 'bytes' bytes de un fichero en un bloque de memoria.",
+  "params": [
+   "puntero",
+   "bytes",
+   "fichero"
+  ],
+  "ret": "bytes leidos"
+ },
+ "FREE": {
+  "desc": "Libera un bloque reservado con ALLOC, CALLOC o REALLOC.",
+  "params": [
+   "puntero"
+  ]
+ },
  "FREMOVE": {
   "desc": "Borra un fichero.",
   "params": [
@@ -649,6 +1275,15 @@
   "params": [
    "fichero"
   ]
+ },
+ "FSEEK": {
+  "desc": "Mueve la posicion de lectura o escritura de un fichero. 'origen' es el punto de referencia (principio, posicion actual o final).",
+  "params": [
+   "fichero",
+   "desplazamiento",
+   "origen"
+  ],
+  "ret": "la posicion nueva"
  },
  "FTELL": {
   "desc": "Posicion actual de lectura o escritura de un fichero abierto.",
@@ -672,6 +1307,23 @@
    "numero"
   ],
   "ret": "la cadena"
+ },
+ "FWRITE(IV++)": {
+  "desc": "Escribe en el fichero una variable (o estructura).",
+  "params": [
+   "fichero",
+   "variable"
+  ],
+  "ret": "bytes escritos"
+ },
+ "FWRITE(PII)": {
+  "desc": "Escribe 'bytes' bytes de un bloque de memoria en un fichero.",
+  "params": [
+   "puntero",
+   "bytes",
+   "fichero"
+  ],
+  "ret": "bytes escritos"
  },
  "G3D_CAMERA_CREATE": {
   "desc": "Crea una camara.",
@@ -1944,6 +2596,13 @@
   ],
   "ret": "Z"
  },
+ "GETENV": {
+  "desc": "Valor de una variable de entorno del sistema (cadena vacia si no existe).",
+  "params": [
+   "nombre"
+  ],
+  "ret": "el valor"
+ },
  "GET_ANGLE(I)": {
   "desc": "Angulo (en milesimas de grado) desde este proceso hasta otro, indicado por su identificador.",
   "params": [
@@ -1977,6 +2636,23 @@
    "proceso_b"
   ],
   "ret": "distancia"
+ },
+ "GET_DISTX": {
+  "desc": "Desplazamiento horizontal de avanzar una distancia en un angulo: distancia * cos(angulo). Angulo en milesimas de grado.",
+  "params": [
+   "angulo",
+   "distancia"
+  ],
+  "ret": "desplazamiento en X"
+ },
+ "GET_DISTY": {
+  "desc": "Desplazamiento vertical de avanzar una distancia en un angulo: -distancia * sin(angulo) (la Y de pantalla crece hacia abajo). Angulo en milesimas de grado.",
+  "ejemplo": "x += get_distx(angle, 5);\ny += get_disty(angle, 5);   // lo mismo que advance(5)",
+  "params": [
+   "angulo",
+   "distancia"
+  ],
+  "ret": "desplazamiento en Y"
  },
  "GET_ID": {
   "desc": "Recorre los procesos de un tipo (TYPE nombre): cada llamada devuelve el identificador del siguiente y 0 cuando no quedan. Con 0 recorre todos los procesos.",
@@ -2027,6 +2703,10 @@
   "desc": "Numero de decodificadores de musica disponibles (formatos que se pueden leer).",
   "ret": "cantidad"
  },
+ "GET_PREF_LANGUAGE": {
+  "desc": "Idioma preferido del usuario segun el sistema.",
+  "ret": "el codigo del idioma"
+ },
  "GET_PREF_PATH": {
   "desc": "Carpeta en la que guardar datos del jugador (partidas, opciones), propia del programa y del sistema. Hay que darle el nombre de la organizacion y de la aplicacion.",
   "params": [
@@ -2054,12 +2734,73 @@
   ],
   "ret": "el tipo"
  },
+ "GLOB": {
+  "desc": "Busca ficheros con comodines ('*' y '?'): la primera llamada con la ruta devuelve el primero que coincide y cada llamada siguiente devuelve el siguiente, hasta que no quedan y devuelve una cadena vacia.",
+  "ejemplo": "f = glob(\"Assets/*.png\");\nWHILE (f != \"\")\n    say(f);\n    f = glob(\"Assets/*.png\");\nEND",
+  "params": [
+   "ruta_con_comodines"
+  ],
+  "ret": "nombre del fichero, vacio al terminar"
+ },
+ "GRAPHIC_INFO": {
+  "desc": "Alias de MAP_INFO de tres parametros: propiedad de un grafico (G_WIDTH, G_HEIGHT, G_CENTER_X, G_CENTER_Y...).",
+  "params": [
+   "archivo",
+   "grafico",
+   "propiedad"
+  ],
+  "ret": "el valor"
+ },
+ "GRAPHIC_SET": {
+  "desc": "Alias de MAP_INFO_SET: cambia G_CENTER_X o G_CENTER_Y de un grafico.",
+  "params": [
+   "archivo",
+   "grafico",
+   "propiedad",
+   "valor"
+  ]
+ },
  "HAS_MUSIC_DECODER": {
   "desc": "Indica si hay un decodificador con ese nombre.",
   "params": [
    "nombre"
   ],
   "ret": "1 si existe"
+ },
+ "IAP_CONSUME": {
+  "desc": "Consume un producto ya comprado (para poder comprarlo otra vez, como las monedas). Solo funciona en Android (Google Play Billing); en el resto de sistemas no hace nada.",
+  "params": [
+   "sku"
+  ]
+ },
+ "IAP_GET_LAST_PURCHASE_SKU": {
+  "desc": "Identificador (SKU) de la ultima compra realizada. Solo funciona en Android (Google Play Billing); en el resto de sistemas no hace nada.",
+  "ret": "el SKU"
+ },
+ "IAP_GET_LAST_PURCHASE_TOKEN": {
+  "desc": "Token de la ultima compra realizada, para validarla en un servidor. Solo funciona en Android (Google Play Billing); en el resto de sistemas no hace nada.",
+  "ret": "el token"
+ },
+ "IAP_GET_PRICE": {
+  "desc": "Precio de un producto, con la moneda y el formato de la tienda. Solo funciona en Android (Google Play Billing); en el resto de sistemas no hace nada.",
+  "params": [
+   "sku"
+  ],
+  "ret": "el precio como texto"
+ },
+ "IAP_INITIALIZE": {
+  "desc": "Inicia el sistema de compras dentro de la aplicacion. Hay que llamarla antes que las demas IAP_*. Solo funciona en Android (Google Play Billing); en el resto de sistemas no hace nada.",
+  "ret": "1 si va bien"
+ },
+ "IAP_POLL_EVENT": {
+  "desc": "Devuelve el codigo de un evento de compras ocurrido, o 0 si no hay ninguno. Solo funciona en Android (Google Play Billing); en el resto de sistemas no hace nada.",
+  "ret": "codigo del evento, 0 si no hay"
+ },
+ "IAP_PURCHASE": {
+  "desc": "Inicia la compra de un producto por su identificador (SKU). El resultado llega despues como un evento de IAP_POLL_EVENT. Solo funciona en Android (Google Play Billing); en el resto de sistemas no hace nada.",
+  "params": [
+   "sku"
+  ]
  },
  "INVLERP": {
   "desc": "Inversa de LERP: en que punto (0 a 1) entre a y b esta un valor.",
@@ -2069,6 +2810,69 @@
    "valor"
   ],
   "ret": "la fraccion"
+ },
+ "ISALNUM": {
+  "desc": "Indica si un caracter (su codigo) es una letra o una cifra.",
+  "params": [
+   "caracter"
+  ],
+  "ret": "1 si lo es"
+ },
+ "ISALPHA": {
+  "desc": "Indica si un caracter (su codigo) es una letra.",
+  "params": [
+   "caracter"
+  ],
+  "ret": "1 si lo es"
+ },
+ "ISINF": {
+  "desc": "Indica si un decimal es infinito.",
+  "params": [
+   "valor"
+  ],
+  "ret": "1 si es infinito"
+ },
+ "ISNAN": {
+  "desc": "Indica si un decimal no es un numero (NaN).",
+  "params": [
+   "valor"
+  ],
+  "ret": "1 si no es un numero"
+ },
+ "ISNUM": {
+  "desc": "Indica si un caracter (su codigo) es una cifra (0-9).",
+  "params": [
+   "caracter"
+  ],
+  "ret": "1 si lo es"
+ },
+ "ISSPACE": {
+  "desc": "Indica si un caracter (su codigo) es un espacio, tabulador o salto de linea.",
+  "params": [
+   "caracter"
+  ],
+  "ret": "1 si lo es"
+ },
+ "ISWORDCHAR": {
+  "desc": "Indica si un caracter (su codigo) puede formar parte de un identificador (letra, cifra o _).",
+  "params": [
+   "caracter"
+  ],
+  "ret": "1 si lo es"
+ },
+ "ISWORDFIRST": {
+  "desc": "Indica si un caracter (su codigo) puede empezar un identificador (letra o _).",
+  "params": [
+   "caracter"
+  ],
+  "ret": "1 si lo es"
+ },
+ "ISXNUM": {
+  "desc": "Indica si un caracter (su codigo) es una cifra hexadecimal (0-9, A-F).",
+  "params": [
+   "caracter"
+  ],
+  "ret": "1 si lo es"
  },
  "ITOA": {
   "desc": "Convierte un entero en cadena.",
@@ -2367,6 +3171,21 @@
   ],
   "ret": "1 solo en el fotograma de soltarla"
  },
+ "KSORT(V++V++)": {
+  "desc": "Ordena un array de estructuras usando como clave la variable que se indica.",
+  "params": [
+   "array",
+   "clave"
+  ]
+ },
+ "KSORT(V++V++I)": {
+  "desc": "Igual, indicando cuantos elementos ordenar.",
+  "params": [
+   "array",
+   "clave",
+   "cantidad"
+  ]
+ },
  "LCASE": {
   "desc": "Pasa una cadena a minusculas.",
   "params": [
@@ -2465,6 +3284,13 @@
   ],
   "ret": "codigo de la copia"
  },
+ "MAP_DEL": {
+  "desc": "Libera un grafico de memoria (igual que MAP_UNLOAD).",
+  "params": [
+   "archivo",
+   "grafico"
+  ]
+ },
  "MAP_EXISTS": {
   "desc": "Indica si existe un grafico.",
   "params": [
@@ -2483,6 +3309,34 @@
   ],
   "ret": "el color"
  },
+ "MAP_INFO(III)": {
+  "desc": "Pide una propiedad de un grafico con una constante: G_WIDTH (ancho), G_HEIGHT (alto), G_DEPTH (profundidad de color), G_CENTER_X y G_CENTER_Y. Con archivo 0 y grafico 0 pregunta por la pantalla.",
+  "ejemplo": "ancho = map_info(0, graph, G_WIDTH);",
+  "params": [
+   "archivo",
+   "grafico",
+   "propiedad"
+  ],
+  "ret": "el valor"
+ },
+ "MAP_INFO(IIII)": {
+  "desc": "Cambia una propiedad de un grafico (G_CENTER_X o G_CENTER_Y).",
+  "params": [
+   "archivo",
+   "grafico",
+   "propiedad",
+   "valor"
+  ]
+ },
+ "MAP_INFO_SET(IIII)": {
+  "desc": "Cambia una propiedad de un grafico: G_CENTER_X o G_CENTER_Y (el punto del grafico que se coloca en la posicion del proceso).",
+  "params": [
+   "archivo",
+   "grafico",
+   "propiedad",
+   "valor"
+  ]
+ },
  "MAP_LOAD(S)": {
   "desc": "Carga una imagen (PNG, JPG...) como grafico en la biblioteca del sistema y devuelve su codigo (0 si falla).",
   "ejemplo": "graph = map_load(\"Assets/Sprites/heroe.png\");",
@@ -2497,6 +3351,14 @@
    "fichero",
    "&codigo"
   ]
+ },
+ "MAP_NAME": {
+  "desc": "Nombre de un grafico (el que traia el fichero o el que se le puso con MAP_SET_NAME).",
+  "params": [
+   "archivo",
+   "grafico"
+  ],
+  "ret": "el nombre"
  },
  "MAP_NEW(II)": {
   "desc": "Crea un grafico vacio del tamano indicado en la biblioteca del sistema (archivo 0) y devuelve su codigo (0 si falla).",
@@ -2585,6 +3447,14 @@
   ],
   "ret": "0 si va bien, -1 si no"
  },
+ "MAP_SET_NAME": {
+  "desc": "Pone nombre a un grafico.",
+  "params": [
+   "archivo",
+   "grafico",
+   "nombre"
+  ]
+ },
  "MAP_UNLOAD": {
   "desc": "Libera un grafico de memoria.",
   "params": [
@@ -2600,6 +3470,74 @@
   ],
   "ret": "el mayor"
  },
+ "MEMCMP": {
+  "desc": "Compara dos bloques de memoria byte a byte: 0 si son iguales.",
+  "params": [
+   "a",
+   "b",
+   "bytes"
+  ],
+  "ret": "0 si son iguales"
+ },
+ "MEMCOPY": {
+  "desc": "Copia 'bytes' bytes de memoria de un sitio a otro (no deben solaparse; para eso, MEMMOVE).",
+  "params": [
+   "destino",
+   "origen",
+   "bytes"
+  ]
+ },
+ "MEMMOVE": {
+  "desc": "Copia 'bytes' bytes de memoria de un sitio a otro, aunque se solapen.",
+  "params": [
+   "destino",
+   "origen",
+   "bytes"
+  ]
+ },
+ "MEMORY_FREE": {
+  "desc": "Memoria fisica libre, en bytes (solo informativo; puede ser aproximado).",
+  "ret": "bytes libres"
+ },
+ "MEMSET": {
+  "desc": "Rellena 'bytes' bytes de memoria con el valor de un byte.",
+  "params": [
+   "puntero",
+   "valor",
+   "bytes"
+  ]
+ },
+ "MEM_ALLOC": {
+  "desc": "Alias de ALLOC."
+ },
+ "MEM_AVAILABLE": {
+  "desc": "Alias de MEMORY_FREE.",
+  "ret": "bytes libres"
+ },
+ "MEM_CALLOC": {
+  "desc": "Alias de CALLOC."
+ },
+ "MEM_CMP": {
+  "desc": "Alias de MEMCMP."
+ },
+ "MEM_COPY": {
+  "desc": "Alias de MEMCOPY."
+ },
+ "MEM_FREE": {
+  "desc": "Alias de FREE."
+ },
+ "MEM_MOVE": {
+  "desc": "Alias de MEMMOVE."
+ },
+ "MEM_REALLOC": {
+  "desc": "Alias de REALLOC."
+ },
+ "MEM_SET": {
+  "desc": "Alias de MEMSET."
+ },
+ "MEM_TOTAL": {
+  "desc": "Alias de MEMORY_TOTAL."
+ },
  "MIN": {
   "desc": "El menor de dos numeros.",
   "params": [
@@ -2607,6 +3545,29 @@
    "b"
   ],
   "ret": "el menor"
+ },
+ "MKDIR": {
+  "desc": "Crea una carpeta.",
+  "params": [
+   "carpeta"
+  ],
+  "ret": "0 si va bien"
+ },
+ "MMOD": {
+  "desc": "Alias de MODULUS.",
+  "params": [
+   "a",
+   "b"
+  ],
+  "ret": "el resto"
+ },
+ "MODULUS": {
+  "desc": "Resto de dividir a entre b, siempre positivo para un b positivo: modulus(-1, 5) = 4 (el operador % da -1).",
+  "params": [
+   "a",
+   "b"
+  ],
+  "ret": "el resto"
  },
  "MUSIC_FADE_IN(III)": {
   "desc": "Empieza una musica subiendo el volumen poco a poco durante 'ms' milisegundos.",
@@ -2859,8 +3820,96 @@
   ],
   "ret": "el angulo nuevo"
  },
+ "NET_CLOSE": {
+  "desc": "Cierra una conexion.",
+  "params": [
+   "conexion"
+  ]
+ },
+ "NET_GETAVAILABLEBYTES": {
+  "desc": "Bytes que hay disponibles para leer en una conexion.",
+  "params": [
+   "conexion"
+  ],
+  "ret": "bytes"
+ },
+ "NET_GETRECEIVEBUFFERSIZE": {
+  "desc": "Tamano del buffer de recepcion de una conexion.",
+  "params": [
+   "conexion"
+  ],
+  "ret": "bytes"
+ },
+ "NET_GETREMOTEADDR": {
+  "desc": "Direccion IP del otro extremo de una conexion.",
+  "params": [
+   "conexion"
+  ],
+  "ret": "la direccion"
+ },
+ "NET_IS_MESSAGE_INCOMING": {
+  "desc": "Indica, para una conexion que ha salido de NET_WAIT, si trae un mensaje para leer.",
+  "params": [
+   "conexion"
+  ],
+  "ret": "1 si hay un mensaje"
+ },
+ "NET_IS_NEW_CONNECTION": {
+  "desc": "Indica, para una conexion que ha salido de NET_WAIT, si es un cliente nuevo que se ha conectado a un servidor.",
+  "params": [
+   "conexion"
+  ],
+  "ret": "1 si es una conexion nueva"
+ },
+ "NET_OPEN": {
+  "desc": "Abre una conexion de red y devuelve un manejador (0 si falla). El modo es 0 para SERVIDOR (espera conexiones y escucha en un puerto) o 1 para CLIENTE (se conecta a una direccion). El protocolo es 0 para UDP o 1 para TCP. Admite direcciones IPv4 e IPv6.",
+  "ejemplo": "srv = net_open(0, 1, \"\", 5000);                // servidor TCP en el puerto 5000\ncli = net_open(1, 1, \"192.168.1.20\", 5000);   // cliente TCP",
+  "params": [
+   "modo",
+   "protocolo",
+   "direccion",
+   "puerto"
+  ],
+  "ret": "manejador de la conexion, 0 si falla"
+ },
+ "NET_RECV": {
+  "desc": "Recibe datos de una conexion en un bloque de memoria de como mucho 'bytes' bytes.",
+  "params": [
+   "conexion",
+   "datos",
+   "bytes"
+  ],
+  "ret": "bytes recibidos, o -1 si hay error"
+ },
+ "NET_SEND": {
+  "desc": "Envia datos por una conexion: un bloque de memoria y su longitud en bytes.",
+  "params": [
+   "conexion",
+   "datos",
+   "bytes"
+  ],
+  "ret": "bytes enviados, o -1 si hay error"
+ },
+ "NET_WAIT": {
+  "desc": "Espera a que haya actividad en un grupo de conexiones (una lista creada con LIST_CREATE) hasta 'espera' milisegundos (-1 = sin limite) y deja en otra lista las que tienen novedades.",
+  "params": [
+   "conexiones",
+   "espera",
+   "eventos"
+  ],
+  "ret": "cuantas conexiones tienen novedades, o -1 si hay error"
+ },
  "NORMALIZE(DDD)": {
   "desc": "Convierte un valor del rango [bajo, alto] a un numero entre 0 y 1.",
+  "params": [
+   "valor",
+   "bajo",
+   "alto"
+  ],
+  "ret": "la fraccion"
+ },
+ "NORMALIZE(III)": {
+  "desc": "Convierte un valor entero del rango [bajo, alto] a un numero entre 0 y 1.",
   "params": [
    "valor",
    "bajo",
@@ -2871,6 +3920,36 @@
  "NUMBER_JOY": {
   "desc": "Alias antiguo de JOY_NUMJOYSTICKS.",
   "ret": "cantidad de mandos"
+ },
+ "POINT_GET": {
+  "desc": "Lee un punto de control de un grafico en dos variables que se pasan por puntero. El punto 0 sin definir da el centro del grafico. Devuelve 0 si el punto no existe.",
+  "params": [
+   "archivo",
+   "grafico",
+   "punto",
+   "&x",
+   "&y"
+  ],
+  "ret": "1 si existe, 0 si no"
+ },
+ "POINT_GET_TOTAL": {
+  "desc": "Cuantos puntos de control tiene un grafico.",
+  "params": [
+   "archivo",
+   "grafico"
+  ],
+  "ret": "cantidad"
+ },
+ "POINT_SET": {
+  "desc": "Fija un punto de control de un grafico (de 0 a 999), por ejemplo donde sale un disparo o donde se agarra un arma.",
+  "params": [
+   "archivo",
+   "grafico",
+   "punto",
+   "x",
+   "y"
+  ],
+  "ret": "1 si va bien, -1 si no"
  },
  "POW": {
   "desc": "Potencia: base elevada al exponente.",
@@ -2901,6 +3980,52 @@
   "params": [
    "semilla"
   ]
+ },
+ "RANGECHK(DDD)": {
+  "desc": "Lo mismo con decimales.",
+  "params": [
+   "valor",
+   "limite_a",
+   "limite_b"
+  ],
+  "ret": "-1, 0 o 1"
+ },
+ "RANGECHK(III)": {
+  "desc": "Compara un valor con un rango: -1 si esta por debajo, 1 si esta por encima y 0 si esta dentro (limites incluidos; el orden de los limites da igual).",
+  "params": [
+   "valor",
+   "limite_a",
+   "limite_b"
+  ],
+  "ret": "-1, 0 o 1"
+ },
+ "REALLOC": {
+  "desc": "Cambia el tamano de un bloque reservado, conservando su contenido.",
+  "params": [
+   "puntero",
+   "bytes"
+  ],
+  "ret": "el puntero (puede cambiar)"
+ },
+ "REGION_DEFINE": {
+  "desc": "Define una region rectangular de la pantalla (una zona a la que se puede limitar el dibujo de los procesos con su variable region). La region 0 es la pantalla entera.",
+  "ejemplo": "region_define(1, 0, 0, 320, 200);   // los procesos con region = 1 solo se ven en ese rectangulo",
+  "params": [
+   "region",
+   "x",
+   "y",
+   "ancho",
+   "alto"
+  ],
+  "ret": "el numero de region"
+ },
+ "REGION_OUT": {
+  "desc": "Indica si un proceso (su grafico entero) esta fuera de una region.",
+  "params": [
+   "proceso",
+   "region"
+  ],
+  "ret": "1 si esta fuera"
  },
  "REMAP(DDDDD)": {
   "desc": "Convierte un valor de un rango a otro: remap(5, 0, 10, 0, 100) = 50.",
@@ -3018,6 +4143,20 @@
    "&b"
   ]
  },
+ "RM": {
+  "desc": "Borra un fichero.",
+  "params": [
+   "fichero"
+  ],
+  "ret": "0 si va bien"
+ },
+ "RMDIR": {
+  "desc": "Borra una carpeta vacia.",
+  "params": [
+   "carpeta"
+  ],
+  "ret": "0 si va bien"
+ },
  "ROUND": {
   "desc": "Redondea al entero mas cercano (devuelve un decimal con valor entero).",
   "params": [
@@ -3053,6 +4192,11 @@
   "params": [
    "texto"
   ]
+ },
+ "SCREEN_GET": {
+  "desc": "Captura la pantalla en un grafico nuevo y devuelve su codigo (0 si falla). Sirve para guardar una captura con MAP_SAVE.",
+  "ejemplo": "g = screen_get();\nmap_save(0, g, \"captura.png\");",
+  "ret": "codigo del grafico"
  },
  "SELECT_JOY": {
   "desc": "Alias antiguo de JOY_SELECT.",
@@ -3140,6 +4284,19 @@
    "angulo"
   ],
   "ret": "el seno"
+ },
+ "SORT(V++)": {
+  "desc": "Ordena un array de numeros o de estructuras (en estas, usando su primera variable como clave).",
+  "params": [
+   "array"
+  ]
+ },
+ "SORT(V++I)": {
+  "desc": "Igual, indicando cuantos elementos ordenar.",
+  "params": [
+   "array",
+   "cantidad"
+  ]
  },
  "SOUNDSYS_INIT": {
   "desc": "Inicia el sistema de sonido. No hace falta llamarla: se inicia sola al cargar el primer sonido o musica. Antes de iniciarlo se pueden fijar sound.freq, sound.mode y sound.channels.",
@@ -3403,6 +4560,14 @@
   ],
   "ret": "la cadena al reves"
  },
+ "STRTOK": {
+  "desc": "Parte una cadena en trozos separados por caracteres delimitadores: la primera llamada con la cadena y los delimitadores devuelve el primer trozo.",
+  "params": [
+   "texto",
+   "delimitadores"
+  ],
+  "ret": "el trozo"
+ },
  "SUBSTR(SI)": {
   "desc": "Trozo de una cadena desde un caracter (empezando en 0) hasta el final.",
   "params": [
@@ -3447,6 +4612,20 @@
   "desc": "Segundos desde el 1 de enero de 1970 (la hora del sistema).",
   "ret": "segundos"
  },
+ "TOLOWER": {
+  "desc": "Pasa un caracter (su codigo) a minuscula.",
+  "params": [
+   "caracter"
+  ],
+  "ret": "el codigo en minuscula"
+ },
+ "TOUPPER": {
+  "desc": "Pasa un caracter (su codigo) a mayuscula.",
+  "params": [
+   "caracter"
+  ],
+  "ret": "el codigo en mayuscula"
+ },
  "TOWARDS(DDD)": {
   "desc": "Lo mismo con decimales.",
   "params": [
@@ -3465,6 +4644,12 @@
    "paso"
   ],
   "ret": "el valor nuevo"
+ },
+ "TRACE": {
+  "desc": "Activa (1) o desactiva (0) el modo de seguimiento del depurador integrado.",
+  "params": [
+   "activar"
+  ]
  },
  "TRIM": {
   "desc": "Quita los espacios del principio y del final de una cadena.",
@@ -3505,11 +4690,303 @@
   "desc": "Alias de GET_TIMER: milisegundos desde que arranco el programa.",
   "ret": "milisegundos"
  },
+ "VIDEO_AUDIO_LANG": {
+  "desc": "Nombre y idioma de una pista de audio (empezando en 0).",
+  "params": [
+   "video",
+   "pista"
+  ],
+  "ret": "el nombre"
+ },
+ "VIDEO_AUDIO_SELECT": {
+  "desc": "Cambia a otra pista de audio (empezando en 0). Puede oirse un pequeno corte.",
+  "params": [
+   "video",
+   "pista"
+  ]
+ },
+ "VIDEO_AUDIO_TRACKS": {
+  "desc": "Cuantas pistas de audio tiene el video.",
+  "params": [
+   "video"
+  ],
+  "ret": "cantidad"
+ },
+ "VIDEO_AV_OFFSET": {
+  "desc": "Muestra la imagen tantos milisegundos mas tarde (negativo: mas pronto), para corregir un sonido desincronizado.",
+  "params": [
+   "video",
+   "ms"
+  ]
+ },
+ "VIDEO_CHAPTERS": {
+  "desc": "Cuantos capitulos tiene el video.",
+  "params": [
+   "video"
+  ],
+  "ret": "cantidad"
+ },
+ "VIDEO_CHAPTER_START": {
+  "desc": "Donde empieza un capitulo (empezando en 0).",
+  "params": [
+   "video",
+   "capitulo"
+  ],
+  "ret": "posicion"
+ },
+ "VIDEO_CHAPTER_TITLE": {
+  "desc": "Titulo de un capitulo (empezando en 0).",
+  "params": [
+   "video",
+   "capitulo"
+  ],
+  "ret": "el titulo"
+ },
+ "VIDEO_CLOSE": {
+  "desc": "Cierra un video y libera sus recursos.",
+  "params": [
+   "video"
+  ]
+ },
+ "VIDEO_DURATION": {
+  "desc": "Duracion del video en milisegundos.",
+  "params": [
+   "video"
+  ],
+  "ret": "milisegundos"
+ },
+ "VIDEO_FRAMES": {
+  "desc": "Fotogramas realmente mostrados hasta ahora (los que llegan tarde se descartan para no perder el reloj). Es el numero con el que comparar rendimientos.",
+  "params": [
+   "video"
+  ],
+  "ret": "fotogramas"
+ },
+ "VIDEO_GET_SPEED": {
+  "desc": "Velocidad de reproduccion actual en porcentaje.",
+  "params": [
+   "video"
+  ],
+  "ret": "porcentaje"
+ },
+ "VIDEO_GPU": {
+  "desc": "Indica si un video se esta convirtiendo en la GPU.",
+  "params": [
+   "video"
+  ],
+  "ret": "1 si usa la GPU"
+ },
+ "VIDEO_GRAPH": {
+  "desc": "Grafico que muestra siempre el fotograma actual del video. Se usa como cualquier grafico (la variable graph de un proceso). Al cerrar el video, el grafico se libera unos 30 fotogramas despues.",
+  "params": [
+   "video"
+  ],
+  "ret": "codigo del grafico"
+ },
+ "VIDEO_HEIGHT": {
+  "desc": "Alto del video en pixeles.",
+  "params": [
+   "video"
+  ],
+  "ret": "alto"
+ },
+ "VIDEO_HW": {
+  "desc": "Indica que decodificador usa un video: 1 el de la consola, 2 el simulado (en PC con LIBMOD_VIDEO_FAKE_HW=1), 0 software.",
+  "params": [
+   "video"
+  ],
+  "ret": "0, 1 o 2"
+ },
+ "VIDEO_IS_AUDIO_ONLY": {
+  "desc": "Indica si el fichero no tiene imagen (es solo musica).",
+  "params": [
+   "video"
+  ],
+  "ret": "1 si es solo audio"
+ },
+ "VIDEO_IS_FINISHED": {
+  "desc": "Indica si el video ha llegado al final.",
+  "params": [
+   "video"
+  ],
+  "ret": "1 si ha terminado"
+ },
+ "VIDEO_IS_PLAYING": {
+  "desc": "Indica si el video se esta reproduciendo.",
+  "params": [
+   "video"
+  ],
+  "ret": "1 si se reproduce"
+ },
+ "VIDEO_OPEN": {
+  "desc": "Abre un video o un audio (MP4/H.264, WebM/VP9, MKV, AVI, OGV, MP3... lo que FFmpeg sepa decodificar; tambien direcciones de internet) y devuelve su manejador (0 si falla). Para verlo hace falta VIDEO_GRAPH.",
+  "ejemplo": "v = video_open(\"intro.mp4\");\ng = video_graph(v);\nvideo_play(v, 0);\ngraph = g; x = 640; y = 360;   // un proceso que muestra el video\nWHILE (!video_is_finished(v)) FRAME; END\nvideo_close(v);",
+  "params": [
+   "fichero"
+  ],
+  "ret": "manejador del video"
+ },
+ "VIDEO_OPEN_H": {
+  "desc": "Abre un video enviando cabeceras HTTP extra (\"Cabecera: valor\\r\\n\"): hace falta con servidores que piden cuenta (Authorization, Cookie...).",
+  "params": [
+   "direccion",
+   "cabeceras"
+  ],
+  "ret": "manejador del video"
+ },
+ "VIDEO_PAUSE": {
+  "desc": "Pausa (1) o reanuda (0) el video.",
+  "params": [
+   "video",
+   "pausa"
+  ]
+ },
+ "VIDEO_PLAY": {
+  "desc": "Empieza a reproducir el video; con repetir = 1 lo hace en bucle, con 0 una sola vez.",
+  "ejemplo": "video_play(v, 1);   // en bucle",
+  "params": [
+   "video",
+   "repetir"
+  ]
+ },
+ "VIDEO_POSITION": {
+  "desc": "Posicion actual del video en milisegundos. Es el reloj de la reproduccion: sigue avanzando aunque la decodificacion vaya con retraso.",
+  "params": [
+   "video"
+  ],
+  "ret": "milisegundos"
+ },
+ "VIDEO_SEEK": {
+  "desc": "Salta a un punto del video, en milisegundos.",
+  "params": [
+   "video",
+   "ms"
+  ]
+ },
+ "VIDEO_SPECTRUM": {
+  "desc": "Nivel, de 0 a 255, de una de las 32 bandas de frecuencia (de 40 Hz a 16 kHz, repartidas en escala logaritmica) de lo que suena ahora; 0 si esta en pausa. Sirve para hacer un ecualizador.",
+  "params": [
+   "video",
+   "banda"
+  ],
+  "ret": "nivel de 0 a 255"
+ },
+ "VIDEO_SPEED": {
+  "desc": "Velocidad de reproduccion en porcentaje, de 25 a 300 (100 = normal). Mantiene la posicion; el sonido se reinicia desde ella.",
+  "params": [
+   "video",
+   "porcentaje"
+  ]
+ },
+ "VIDEO_STOP": {
+  "desc": "Para el video.",
+  "params": [
+   "video"
+  ]
+ },
+ "VIDEO_SUBTITLE_LANG": {
+  "desc": "Nombre y idioma de una pista de subtitulos (empezando en 0).",
+  "params": [
+   "video",
+   "pista"
+  ],
+  "ret": "el nombre, por ejemplo \"spa - Castellano\""
+ },
+ "VIDEO_SUBTITLE_LOAD": {
+  "desc": "Carga un fichero de subtitulos externo (.srt, .ass, .ssa, .vtt...) como una pista mas, que queda elegida.",
+  "params": [
+   "video",
+   "fichero"
+  ]
+ },
+ "VIDEO_SUBTITLE_SELECT": {
+  "desc": "Elige la pista de subtitulos a mostrar; -1 los quita (es lo que hay por defecto).",
+  "params": [
+   "video",
+   "pista"
+  ]
+ },
+ "VIDEO_SUBTITLE_TEXT": {
+  "desc": "Texto del subtitulo que toca ahora (vacio si no hay ninguno). El modulo NO lo dibuja: se escribe con WRITE y la fuente que quieras.",
+  "ejemplo": "write_var(0, 640, 680, ALIGN_BOTTOM, texto);   // texto = video_subtitle_text(v) cada frame",
+  "params": [
+   "video"
+  ],
+  "ret": "el texto"
+ },
+ "VIDEO_SUBTITLE_TRACKS": {
+  "desc": "Cuantas pistas de subtitulos de texto hay (las del fichero y las cargadas aparte). Se ignoran las que son imagenes (PGS, DVB).",
+  "params": [
+   "video"
+  ],
+  "ret": "cantidad"
+ },
+ "VIDEO_SUB_DELAY": {
+  "desc": "Retrasa los subtitulos tantos milisegundos (negativo: los adelanta).",
+  "params": [
+   "video",
+   "ms"
+  ]
+ },
+ "VIDEO_USE_GPU": {
+  "desc": "Conversion del color en la GPU para los videos que se abran despues (1 por defecto). Con 0 se hace por software. Solo vale para video yuv420p de 8 bits; con otros formatos, o si el motor grafico no puede, se usa el software solo.",
+  "params": [
+   "activar"
+  ],
+  "ret": "el valor fijado"
+ },
+ "VIDEO_USE_HW": {
+  "desc": "Decodificador de video de la consola (PS5) para los videos que se abran despues (1 por defecto). Si no puede con un video, o falla, se pasa solo a libavcodec desde la posicion actual.",
+  "params": [
+   "activar"
+  ],
+  "ret": "el valor fijado"
+ },
+ "VIDEO_USE_PLANE": {
+  "desc": "Ajuste interno de decodificacion para los videos que se abran despues.",
+  "params": [
+   "activar"
+  ],
+  "ret": "el valor fijado"
+ },
+ "VIDEO_VOLUME": {
+  "desc": "Volumen del video, de 0 a 128. El audio sale por el mismo dispositivo que la musica de BennuGD, y mientras un video tiene el audio sustituye a MUSIC_PLAY (solo un video a la vez lo tiene).",
+  "params": [
+   "video",
+   "volumen"
+  ]
+ },
+ "VIDEO_WAVE": {
+  "desc": "Muestra de la onda que suena ahora, con signo (-128 a 127), para un osciloscopio. El indice va de 0 a 255.",
+  "params": [
+   "video",
+   "indice"
+  ],
+  "ret": "valor de -128 a 127"
+ },
+ "VIDEO_WIDTH": {
+  "desc": "Ancho del video en pixeles.",
+  "params": [
+   "video"
+  ],
+  "ret": "ancho"
+ },
  "WINDOW_GET_POS": {
   "desc": "Lee la posicion de la ventana en dos variables que se pasan por puntero.",
   "params": [
    "&x",
    "&y"
+  ]
+ },
+ "WINDOW_GET_SIZE": {
+  "desc": "Lee el tamano actual de la ventana, su tamano maximo y su tamano minimo en seis variables que se pasan por puntero (cada pareja ancho, alto).",
+  "params": [
+   "&ancho",
+   "&alto",
+   "&ancho_max",
+   "&alto_max",
+   "&ancho_min",
+   "&alto_min"
   ]
  },
  "WINDOW_HIDE": {

@@ -1,6 +1,6 @@
 # Referencia de la API
 
-Generada automaticamente desde los modulos del motor (1150 funciones, 491 documentadas).
+Generada automaticamente desde los modulos del motor (1150 funciones, 685 documentadas).
 
 ## Modulo 3d
 ### camera
@@ -1317,34 +1317,56 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 ## Modulo ads
 ### general
 #### `ads_initialize() -> int`
+Inicia los anuncios. Hay que llamarla antes que las demas ADS_*. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.
 
-#### `ads_load_interstitial(string) -> int`
+**Devuelve:** 1 si va bien
+
+#### `ads_load_interstitial(string id_unidad) -> int`
+Pide un anuncio a pantalla completa (intersticial) con el identificador de unidad de AdMob. Conviene hacerlo con tiempo (al empezar el nivel) porque tarda en cargar. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.
 
 #### `ads_show_interstitial() -> int`
+Muestra el anuncio intersticial cargado. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.
 
 #### `ads_is_interstitial_loaded() -> int`
+Indica si el intersticial ya esta cargado y listo para mostrarse. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.
 
-#### `ads_load_rewarded(string) -> int`
+**Devuelve:** 1 si esta listo
+
+#### `ads_load_rewarded(string id_unidad) -> int`
+Pide un anuncio con recompensa (el usuario lo ve a cambio de algo) con el identificador de unidad de AdMob. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.
 
 #### `ads_show_rewarded() -> int`
+Muestra el anuncio con recompensa. El resultado se consulta con ADS_POLL_EVENT. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.
 
 #### `ads_is_rewarded_loaded() -> int`
+Indica si el anuncio con recompensa esta cargado. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.
 
-#### `ads_show_banner(string, int) -> int`
+**Devuelve:** 1 si esta listo
+
+#### `ads_show_banner(string id_unidad, int posicion) -> int`
+Muestra un banner fijo con el identificador de unidad de AdMob, arriba (ADS_BANNER_POS_TOP) o abajo (ADS_BANNER_POS_BOTTOM) de la pantalla. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.
 
 #### `ads_hide_banner() -> int`
+Oculta el banner. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.
 
 #### `ads_poll_event() -> int`
+Devuelve el codigo de un evento de anuncios ocurrido (por ejemplo ADS_EVENT_CONSENT_FORM_DISMISSED, que vale 8, al cerrarse el formulario de consentimiento), o 0 si no hay ninguno. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.
+
+**Devuelve:** codigo del evento, 0 si no hay
 
 #### `ads_check_consent() -> int`
+Comprueba si hace falta pedir al usuario el consentimiento de privacidad (obligatorio en la Union Europea). Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.
 
 #### `ads_show_consent_form() -> int`
+Muestra el formulario de consentimiento de privacidad. Al cerrarse lo avisa el evento ADS_EVENT_CONSENT_FORM_DISMISSED. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.
 
-#### `ads_set_child_directed(int) -> int`
+#### `ads_set_child_directed(int dirigida_a_ninos) -> int`
+Marca la aplicacion como dirigida a ninos (1) o no (0), para que los anuncios cumplan la normativa de proteccion de menores. Solo funciona en Android (AdMob); en el resto de sistemas no hace nada y devuelve 0, asi el mismo programa compila en todas partes.
 
 ## Modulo debug
 ### general
-#### `trace(int) -> int`
+#### `trace(int activar) -> int`
+Activa (1) o desactiva (0) el modo de seguimiento del depurador integrado.
 
 ## Modulo gfx
 ### general
@@ -1409,11 +1431,29 @@ IF (collision(TYPE bala)) vida--; END
 
 #### `scroll_move(int) -> int`
 
-#### `region_define(int, int, int, int, int) -> int`
+#### `region_define(int region, int x, int y, int ancho, int alto) -> int`
+Define una region rectangular de la pantalla (una zona a la que se puede limitar el dibujo de los procesos con su variable region). La region 0 es la pantalla entera.
 
-#### `region_out(int, int) -> int`
+**Devuelve:** el numero de region
+
+```
+region_define(1, 0, 0, 320, 200);   // los procesos con region = 1 solo se ven en ese rectangulo
+```
+
+#### `region_out(int proceso, int region) -> int`
+Indica si un proceso (su grafico entero) esta fuera de una region.
+
+**Devuelve:** 1 si esta fuera
 
 #### `screen_get() -> int`
+Captura la pantalla en un grafico nuevo y devuelve su codigo (0 si falla). Sirve para guardar una captura con MAP_SAVE.
+
+**Devuelve:** codigo del grafico
+
+```
+g = screen_get();
+map_save(0, g, "captura.png");
+```
 
 #### `rgb(byte r, byte g, byte b) -> int`
 Crea un color con rojo, verde y azul (0 a 255 cada uno), opaco. El numero que devuelve se usa en DRAWING_COLOR, MAP_CLEAR, MAP_PUT_PIXEL...
@@ -1500,7 +1540,8 @@ Alias de WINDOW_MOVE.
 #### `window_get_pos(pointer &x, pointer &y) -> int`
 Lee la posicion de la ventana en dos variables que se pasan por puntero.
 
-#### `window_get_size(pointer, pointer, pointer, pointer, pointer, pointer) -> int`
+#### `window_get_size(pointer &ancho, pointer &alto, pointer &ancho_max, pointer &alto_max, pointer &ancho_min, pointer &alto_min) -> int`
+Lee el tamano actual de la ventana, su tamano maximo y su tamano minimo en seis variables que se pasan por puntero (cada pareja ancho, alto).
 
 #### `desktop_get_size(pointer &ancho, pointer &alto) -> int`
 Lee el tamano del escritorio en dos variables que se pasan por puntero.
@@ -1643,16 +1684,21 @@ Crea una copia de un grafico y devuelve el codigo de la copia.
 
 **Devuelve:** codigo de la copia
 
-#### `map_name(int, int) -> string`
+#### `map_name(int archivo, int grafico) -> string`
+Nombre de un grafico (el que traia el fichero o el que se le puso con MAP_SET_NAME).
 
-#### `map_set_name(int, int, string) -> int`
+**Devuelve:** el nombre
+
+#### `map_set_name(int archivo, int grafico, string nombre) -> int`
+Pone nombre a un grafico.
 
 #### `map_exists(int archivo, int grafico) -> int`
 Indica si existe un grafico.
 
 **Devuelve:** 1 si existe
 
-#### `map_del(int, int) -> int`
+#### `map_del(int archivo, int grafico) -> int`
+Libera un grafico de memoria (igual que MAP_UNLOAD).
 
 #### `map_unload(int archivo, int grafico) -> int`
 Libera un grafico de memoria.
@@ -1708,44 +1754,88 @@ graph = 1;
 #### `fpg_load(string fichero, pointer &archivo) -> int`
 Carga un .fpg EN SEGUNDO PLANO: el identificador se guarda en la variable que se pasa por puntero cuando termina.
 
-#### `fpg_del(int) -> int`
+#### `fpg_del(int archivo) -> int`
+Libera una coleccion de graficos (igual que FPG_UNLOAD).
 
 #### `fpg_unload(int archivo) -> int`
 Libera una coleccion de graficos.
 
-#### `map_info_set(int, int, int, int) -> int`
+#### `map_info_set(int archivo, int grafico, int propiedad, int valor) -> int`
+Cambia una propiedad de un grafico: G_CENTER_X o G_CENTER_Y (el punto del grafico que se coloca en la posicion del proceso).
 
-#### `map_info(int, int, int, int) -> int`
+#### `map_info(int archivo, int grafico, int propiedad, int valor) -> int`
+Cambia una propiedad de un grafico (G_CENTER_X o G_CENTER_Y).
 
-#### `map_info(int, int, int) -> int`
+#### `map_info(int archivo, int grafico, int propiedad) -> int`
+Pide una propiedad de un grafico con una constante: G_WIDTH (ancho), G_HEIGHT (alto), G_DEPTH (profundidad de color), G_CENTER_X y G_CENTER_Y. Con archivo 0 y grafico 0 pregunta por la pantalla.
 
-#### `graphic_set(int, int, int, int) -> int`
+**Devuelve:** el valor
 
-#### `graphic_info(int, int, int) -> int`
+```
+ancho = map_info(0, graph, G_WIDTH);
+```
 
-#### `point_get(int, int, int, pointer, pointer) -> int`
+#### `graphic_set(int archivo, int grafico, int propiedad, int valor) -> int`
+Alias de MAP_INFO_SET: cambia G_CENTER_X o G_CENTER_Y de un grafico.
 
-#### `point_set(int, int, int, int, int) -> int`
+#### `graphic_info(int archivo, int grafico, int propiedad) -> int`
+Alias de MAP_INFO de tres parametros: propiedad de un grafico (G_WIDTH, G_HEIGHT, G_CENTER_X, G_CENTER_Y...).
 
-#### `center_set(int, int, int, int) -> int`
+**Devuelve:** el valor
 
-#### `point_get_total(int, int) -> int`
+#### `point_get(int archivo, int grafico, int punto, pointer &x, pointer &y) -> int`
+Lee un punto de control de un grafico en dos variables que se pasan por puntero. El punto 0 sin definir da el centro del grafico. Devuelve 0 si el punto no existe.
 
-#### `box_set(int, int, int, int, int, int, int, int) -> int`
+**Devuelve:** 1 si existe, 0 si no
 
-#### `box_set(int, int, int, int, int, int) -> int`
+#### `point_set(int archivo, int grafico, int punto, int x, int y) -> int`
+Fija un punto de control de un grafico (de 0 a 999), por ejemplo donde sale un disparo o donde se agarra un arma.
 
-#### `box_get(int, int, int, pointer, pointer, pointer, pointer, pointer) -> int`
+**Devuelve:** 1 si va bien, -1 si no
 
-#### `box_get(int, pointer, pointer, pointer, pointer, pointer) -> int`
+#### `center_set(int archivo, int grafico, int x, int y) -> int`
+Fija el centro de un grafico: el punto del grafico que queda en la posicion del proceso al dibujarlo (el punto de control 0). Por defecto es el centro; con los pies del personaje pegados al suelo, ponlo abajo.
+
+**Devuelve:** 1 si va bien, -1 si el grafico no existe
+
+```
+center_set(0, graph, ancho / 2, alto);   // ancla en los pies
+```
+
+#### `point_get_total(int archivo, int grafico) -> int`
+Cuantos puntos de control tiene un grafico.
+
+**Devuelve:** cantidad
+
+#### `box_set(int archivo, int grafico, int caja, int forma, int x, int y, int ancho, int alto) -> int`
+Define una caja de colision de un grafico (la forma que usa COLLISION): un numero de caja, el tipo de forma, y su posicion (x, y) y tamano (ancho, alto) relativos al grafico. Si la caja ya existe, la sustituye.
+
+**Devuelve:** 1 si va bien, 0 si el grafico no existe
+
+#### `box_set(int caja, int forma, int x, int y, int ancho, int alto) -> int`
+Igual, para el grafico del proceso que la llama.
+
+**Devuelve:** 1 si va bien, 0 si no tiene grafico
+
+#### `box_get(int archivo, int grafico, int caja, pointer &forma, pointer &x, pointer &y, pointer &ancho, pointer &alto) -> int`
+Lee una caja de colision de un grafico: su forma, posicion y tamano, en variables que se pasan por puntero.
+
+**Devuelve:** 1 si existe
+
+#### `box_get(int caja, pointer &forma, pointer &x, pointer &y, pointer &ancho, pointer &alto) -> int`
+Igual, para el grafico del proceso que la llama.
+
+**Devuelve:** 1 si existe
 
 #### `box_get_by_pos(int, int, int, pointer, pointer, pointer, pointer, pointer, pointer) -> int`
 
 #### `box_get_by_pos(int, pointer, pointer, pointer, pointer, pointer, pointer) -> int`
 
-#### `box_remove(int, int, int) -> int`
+#### `box_remove(int archivo, int grafico, int caja) -> int`
+Quita una caja de colision de un grafico.
 
-#### `box_remove(int) -> int`
+#### `box_remove(int caja) -> int`
+Quita una caja de colision del grafico del proceso que la llama.
 
 #### `box_get_real_vertex(int, int, int, int, pointer, pointer) -> int`
 
@@ -1881,21 +1971,45 @@ Dibuja un rectangulo relleno de un color concreto.
 
 **Devuelve:** identificador del dibujo
 
-#### `draw_points(int, pointer) -> int`
+#### `draw_points(int cantidad, pointer &puntos) -> int`
+Dibuja varios puntos a la vez. Los puntos van en un array de numeros decimales (float) con pares x, y seguidos; 'cantidad' es cuantos puntos.
 
-#### `draw_points(int, pointer, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_lines(int, pointer) -> int`
+#### `draw_points(int cantidad, pointer &puntos, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
 
-#### `draw_lines(int, pointer, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_rectangles(int, pointer) -> int`
+#### `draw_lines(int cantidad, pointer &puntos) -> int`
+Dibuja varias lineas a la vez, cada una de un par de puntos. Los puntos van en un array de numeros decimales (float) con pares x, y seguidos; 'cantidad' es cuantos puntos.
 
-#### `draw_rectangles(int, pointer, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_rectangles_filled(int, pointer) -> int`
+#### `draw_lines(int cantidad, pointer &puntos, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
 
-#### `draw_rectangles_filled(int, pointer, int) -> int`
+**Devuelve:** identificador del dibujo
+
+#### `draw_rectangles(int cantidad, pointer &rectangulos) -> int`
+Dibuja varios rectangulos (borde) a la vez. Los puntos van en un array de numeros decimales (float) con pares x, y seguidos; 'cantidad' es cuantos puntos.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_rectangles(int cantidad, pointer &rectangulos, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_rectangles_filled(int cantidad, pointer &rectangulos) -> int`
+Dibuja varios rectangulos rellenos a la vez. Los puntos van en un array de numeros decimales (float) con pares x, y seguidos; 'cantidad' es cuantos puntos.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_rectangles_filled(int cantidad, pointer &rectangulos, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
+
+**Devuelve:** identificador del dibujo
 
 #### `draw_circle(int x, int y, int radio) -> int`
 Dibuja el borde de un circulo (centro y radio) con el color de DRAWING_COLOR.
@@ -1921,65 +2035,151 @@ Dibuja un circulo relleno de un color concreto.
 
 #### `draw_curve(int, int, int, int, int, int, int, int, int, int) -> int`
 
-#### `draw_arc(int, int, int, int, int) -> int`
+#### `draw_arc(int x, int y, int radio, int angulo_inicio, int angulo_fin) -> int`
+Dibuja el borde de un arco de circulo: centro, radio y angulos de inicio y fin en MILESIMAS DE GRADO. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).
 
-#### `draw_arc(int, int, int, int, int, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_arc_filled(int, int, int, int, int) -> int`
+#### `draw_arc(int x, int y, int radio, int angulo_inicio, int angulo_fin, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
 
-#### `draw_arc_filled(int, int, int, int, int, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_ellipse(int, int, int, int, int) -> int`
+#### `draw_arc_filled(int x, int y, int radio, int angulo_inicio, int angulo_fin) -> int`
+Dibuja un arco relleno (un sector de circulo): centro, radio y angulos de inicio y fin en milesimas de grado. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).
 
-#### `draw_ellipse(int, int, int, int, int, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_ellipse_filled(int, int, int, int, int) -> int`
+#### `draw_arc_filled(int x, int y, int radio, int angulo_inicio, int angulo_fin, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
 
-#### `draw_ellipse_filled(int, int, int, int, int, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_sector(int, int, int, int, int, int) -> int`
+#### `draw_ellipse(int x, int y, int radio_x, int radio_y, int grados) -> int`
+Dibuja el borde de una elipse: centro, radios horizontal y vertical, y giro en GRADOS. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).
 
-#### `draw_sector(int, int, int, int, int, int, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_sector_filled(int, int, int, int, int, int) -> int`
+#### `draw_ellipse(int x, int y, int radio_x, int radio_y, int grados, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
 
-#### `draw_sector_filled(int, int, int, int, int, int, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_triangle(int, int, int, int, int, int) -> int`
+#### `draw_ellipse_filled(int x, int y, int radio_x, int radio_y, int grados) -> int`
+Dibuja una elipse rellena: centro, radios horizontal y vertical, y giro en grados. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).
 
-#### `draw_triangle(int, int, int, int, int, int, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_triangle_filled(int, int, int, int, int, int) -> int`
+#### `draw_ellipse_filled(int x, int y, int radio_x, int radio_y, int grados, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
 
-#### `draw_triangle_filled(int, int, int, int, int, int, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_rectangle_round(int, int, int, int, int) -> int`
+#### `draw_sector(int x, int y, int radio_interior, int radio_exterior, int angulo_inicio, int angulo_fin) -> int`
+Dibuja el borde de un sector de corona circular: centro, radio interior y exterior, y angulos de inicio y fin en milesimas de grado. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).
 
-#### `draw_rectangle_round(int, int, int, int, int, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_rectangle_round_filled(int, int, int, int, int) -> int`
+#### `draw_sector(int x, int y, int radio_interior, int radio_exterior, int angulo_inicio, int angulo_fin, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
 
-#### `draw_rectangle_round_filled(int, int, int, int, int, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_polygon(int, pointer) -> int`
+#### `draw_sector_filled(int x, int y, int radio_interior, int radio_exterior, int angulo_inicio, int angulo_fin) -> int`
+Dibuja un sector de corona circular relleno. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).
 
-#### `draw_polygon(int, pointer, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_polygon_filled(int, pointer) -> int`
+#### `draw_sector_filled(int x, int y, int radio_interior, int radio_exterior, int angulo_inicio, int angulo_fin, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
 
-#### `draw_polygon_filled(int, pointer, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_polyline(int, pointer, int) -> int`
+#### `draw_triangle(int x1, int y1, int x2, int y2, int x3, int y3) -> int`
+Dibuja el borde de un triangulo dado por sus tres vertices (coordenadas absolutas). Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).
 
-#### `draw_polyline(int, pointer, int, int) -> int`
+**Devuelve:** identificador del dibujo
 
-#### `draw_set_thickness(float) -> float`
+#### `draw_triangle(int x1, int y1, int x2, int y2, int x3, int y3, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
 
-#### `draw_set_thickness(int, float) -> float`
+**Devuelve:** identificador del dibujo
+
+#### `draw_triangle_filled(int x1, int y1, int x2, int y2, int x3, int y3) -> int`
+Dibuja un triangulo relleno dado por sus tres vertices (coordenadas absolutas). Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_triangle_filled(int x1, int y1, int x2, int y2, int x3, int y3, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_rectangle_round(int x, int y, int ancho, int alto, int radio) -> int`
+Dibuja el borde de un rectangulo con las esquinas redondeadas: posicion, ancho, alto y radio de las esquinas. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_rectangle_round(int x, int y, int ancho, int alto, int radio, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_rectangle_round_filled(int x, int y, int ancho, int alto, int radio) -> int`
+Dibuja un rectangulo relleno con las esquinas redondeadas. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_rectangle_round_filled(int x, int y, int ancho, int alto, int radio, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_polygon(int cantidad, pointer &puntos) -> int`
+Dibuja el borde de un poligono cerrado. Los puntos van en un array de numeros decimales (float) con pares x, y seguidos; 'cantidad' es cuantos puntos.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_polygon(int cantidad, pointer &puntos, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_polygon_filled(int cantidad, pointer &puntos) -> int`
+Dibuja un poligono relleno. Los puntos van en un array de numeros decimales (float) con pares x, y seguidos; 'cantidad' es cuantos puntos.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_polygon_filled(int cantidad, pointer &puntos, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_polyline(int cantidad, pointer &puntos, int cerrar) -> int`
+Dibuja una linea quebrada que une los puntos. Con 'cerrar' en 1 une tambien el ultimo con el primero. Los puntos van en un array de numeros decimales (float) con pares x, y seguidos; 'cantidad' es cuantos puntos.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_polyline(int cantidad, pointer &puntos, int cerrar, int color) -> int`
+Igual, con un color concreto en vez del de DRAWING_COLOR.
+
+**Devuelve:** identificador del dibujo
+
+#### `draw_set_thickness(float grosor) -> float`
+Grosor de linea de los siguientes dibujos, en pixeles (decimal).
+
+#### `draw_set_thickness(int dibujo, float grosor) -> float`
+Cambia el grosor de linea de un dibujo ya creado.
 
 #### `draw_get_thickness() -> float`
+Grosor de linea que se usa para los siguientes dibujos.
 
-#### `draw_get_thickness(int) -> float`
+**Devuelve:** grosor
+
+#### `draw_get_thickness(int dibujo) -> float`
+Grosor de linea de un dibujo ya creado.
+
+**Devuelve:** grosor
 
 #### `path_new(int, int) -> pointer`
 
@@ -2064,18 +2264,35 @@ Dibuja un circulo relleno de un color concreto.
 ## Modulo iap
 ### general
 #### `iap_initialize() -> int`
+Inicia el sistema de compras dentro de la aplicacion. Hay que llamarla antes que las demas IAP_*. Solo funciona en Android (Google Play Billing); en el resto de sistemas no hace nada.
 
-#### `iap_purchase(string) -> int`
+**Devuelve:** 1 si va bien
 
-#### `iap_consume(string) -> int`
+#### `iap_purchase(string sku) -> int`
+Inicia la compra de un producto por su identificador (SKU). El resultado llega despues como un evento de IAP_POLL_EVENT. Solo funciona en Android (Google Play Billing); en el resto de sistemas no hace nada.
 
-#### `iap_get_price(string) -> string`
+#### `iap_consume(string sku) -> int`
+Consume un producto ya comprado (para poder comprarlo otra vez, como las monedas). Solo funciona en Android (Google Play Billing); en el resto de sistemas no hace nada.
+
+#### `iap_get_price(string sku) -> string`
+Precio de un producto, con la moneda y el formato de la tienda. Solo funciona en Android (Google Play Billing); en el resto de sistemas no hace nada.
+
+**Devuelve:** el precio como texto
 
 #### `iap_poll_event() -> int`
+Devuelve el codigo de un evento de compras ocurrido, o 0 si no hay ninguno. Solo funciona en Android (Google Play Billing); en el resto de sistemas no hace nada.
+
+**Devuelve:** codigo del evento, 0 si no hay
 
 #### `iap_get_last_purchase_sku() -> string`
+Identificador (SKU) de la ultima compra realizada. Solo funciona en Android (Google Play Billing); en el resto de sistemas no hace nada.
+
+**Devuelve:** el SKU
 
 #### `iap_get_last_purchase_token() -> string`
+Token de la ultima compra realizada, para validarla en un servidor. Solo funciona en Android (Google Play Billing); en el resto de sistemas no hace nada.
+
+**Devuelve:** el token
 
 ## Modulo input
 ### general
@@ -2337,24 +2554,60 @@ Alias antiguo de JOY_GETAXIS.
 #### `crypt_decrypt(int, pointer, pointer, pointer, int) -> int`
 
 #### `cd() -> string`
+Carpeta de trabajo actual.
 
-#### `cd(string) -> int`
+**Devuelve:** la ruta
 
-#### `chdir(string) -> int`
+#### `cd(string carpeta) -> int`
+Cambia la carpeta de trabajo.
 
-#### `mkdir(string) -> int`
+**Devuelve:** 0 si va bien
 
-#### `rmdir(string) -> int`
+#### `chdir(string carpeta) -> int`
+Cambia la carpeta de trabajo.
 
-#### `glob(string) -> string`
+**Devuelve:** 0 si va bien
 
-#### `rm(string) -> int`
+#### `mkdir(string carpeta) -> int`
+Crea una carpeta.
 
-#### `diropen(string) -> int`
+**Devuelve:** 0 si va bien
 
-#### `dirclose(int) -> int`
+#### `rmdir(string carpeta) -> int`
+Borra una carpeta vacia.
 
-#### `dirread(int) -> string`
+**Devuelve:** 0 si va bien
+
+#### `glob(string ruta_con_comodines) -> string`
+Busca ficheros con comodines ('*' y '?'): la primera llamada con la ruta devuelve el primero que coincide y cada llamada siguiente devuelve el siguiente, hasta que no quedan y devuelve una cadena vacia.
+
+**Devuelve:** nombre del fichero, vacio al terminar
+
+```
+f = glob("Assets/*.png");
+WHILE (f != "")
+    say(f);
+    f = glob("Assets/*.png");
+END
+```
+
+#### `rm(string fichero) -> int`
+Borra un fichero.
+
+**Devuelve:** 0 si va bien
+
+#### `diropen(string carpeta) -> int`
+Abre una carpeta para leer su contenido y devuelve un manejador.
+
+**Devuelve:** manejador
+
+#### `dirclose(int manejador) -> int`
+Cierra una carpeta abierta con DIROPEN.
+
+#### `dirread(int manejador) -> string`
+Lee la entrada siguiente de una carpeta abierta (vacia al terminar).
+
+**Devuelve:** nombre
 
 #### `get_base_path() -> string`
 Carpeta desde la que se ejecuta el programa.
@@ -2376,7 +2629,14 @@ Lee un fichero escrito con SAVE y lo deja en una variable (o estructura).
 
 **Devuelve:** bytes leidos
 
-#### `file(string) -> string`
+#### `file(string fichero) -> string`
+Lee un fichero de texto entero y devuelve su contenido en una cadena (vacia si no existe).
+
+**Devuelve:** el contenido
+
+```
+datos = file("nivel.txt");
+```
 
 #### `fopen(string fichero, int modo) -> int`
 Abre un fichero y devuelve su manejador (0 si falla). El modo es O_READ (0, leer), O_READWRITE (1), O_WRITE (2, escribir), O_ZREAD (3, leer comprimido) u O_ZWRITE (4, escribir comprimido).
@@ -2391,15 +2651,30 @@ IF (f) linea = fgets(f); fclose(f); END
 #### `fclose(int fichero) -> int`
 Cierra un fichero abierto con FOPEN.
 
-#### `fread(int, ..., ?, ?) -> int`
+#### `fread(int fichero, ... variable, ?, ?) -> int`
+Lee del fichero una variable (o estructura) escrita con FWRITE.
 
-#### `fread(pointer, int, int) -> int`
+**Devuelve:** bytes leidos
 
-#### `fwrite(int, ..., ?, ?) -> int`
+#### `fread(pointer puntero, int bytes, int fichero) -> int`
+Lee 'bytes' bytes de un fichero en un bloque de memoria.
 
-#### `fwrite(pointer, int, int) -> int`
+**Devuelve:** bytes leidos
 
-#### `fseek(int, int, int) -> int`
+#### `fwrite(int fichero, ... variable, ?, ?) -> int`
+Escribe en el fichero una variable (o estructura).
+
+**Devuelve:** bytes escritos
+
+#### `fwrite(pointer puntero, int bytes, int fichero) -> int`
+Escribe 'bytes' bytes de un bloque de memoria en un fichero.
+
+**Devuelve:** bytes escritos
+
+#### `fseek(int fichero, int desplazamiento, int origen) -> int`
+Mueve la posicion de lectura o escritura de un fichero. 'origen' es el punto de referencia (principio, posicion actual o final).
+
+**Devuelve:** la posicion nueva
 
 #### `frewind(int fichero)`
 Vuelve al principio de un fichero abierto.
@@ -2409,7 +2684,8 @@ Posicion actual de lectura o escritura de un fichero abierto.
 
 **Devuelve:** posicion
 
-#### `fflush(int) -> int`
+#### `fflush(int fichero) -> int`
+Fuerza a escribir en disco lo que quede pendiente de un fichero abierto.
 
 #### `fputs(int fichero, string texto) -> int`
 Escribe una cadena en un fichero.
@@ -2485,7 +2761,10 @@ Parte decimal de un numero.
 
 **Devuelve:** la parte decimal
 
-#### `decimal(double) -> double`
+#### `decimal(double valor) -> double`
+Parte decimal de un numero conservando el signo: decimal(-2.75) = -0.75.
+
+**Devuelve:** la parte decimal
 
 #### `rad(int angulo) -> double`
 Convierte milesimas de grado a radianes.
@@ -2532,9 +2811,15 @@ Resto de dividir a entre b (con decimales).
 
 **Devuelve:** el resto
 
-#### `mmod(double, double) -> double`
+#### `mmod(double a, double b) -> double`
+Alias de MODULUS.
 
-#### `modulus(double, double) -> double`
+**Devuelve:** el resto
+
+#### `modulus(double a, double b) -> double`
+Resto de dividir a entre b, siempre positivo para un b positivo: modulus(-1, 5) = 4 (el operador % da -1).
+
+**Devuelve:** el resto
 
 #### `cos(int angulo) -> double`
 Coseno de un angulo. Los angulos de BennuGD van en MILESIMAS DE GRADO (90000 = 90 grados, 360000 = una vuelta). Devuelve un decimal entre -1 y 1.
@@ -2575,11 +2860,20 @@ Arcotangente de y entre x, resolviendo el cuadrante: devuelve el angulo en miles
 
 **Devuelve:** angulo
 
-#### `isinf(double) -> int`
+#### `isinf(double valor) -> int`
+Indica si un decimal es infinito.
 
-#### `isnan(double) -> int`
+**Devuelve:** 1 si es infinito
 
-#### `finite(double) -> int`
+#### `isnan(double valor) -> int`
+Indica si un decimal no es un numero (NaN).
+
+**Devuelve:** 1 si no es un numero
+
+#### `finite(double valor) -> int`
+Indica si un decimal es un numero normal (ni infinito ni NaN).
+
+**Devuelve:** 1 si es finito
 
 #### `intersect(double, double, double, double, double, double, double, double, pointer, pointer) -> int`
 
@@ -2616,9 +2910,20 @@ Acerca un angulo a otro como mucho 'paso' por el camino mas corto (para girar su
 
 **Devuelve:** el angulo nuevo
 
-#### `get_distx(int, double) -> double`
+#### `get_distx(int angulo, double distancia) -> double`
+Desplazamiento horizontal de avanzar una distancia en un angulo: distancia * cos(angulo). Angulo en milesimas de grado.
 
-#### `get_disty(int, double) -> double`
+**Devuelve:** desplazamiento en X
+
+#### `get_disty(int angulo, double distancia) -> double`
+Desplazamiento vertical de avanzar una distancia en un angulo: -distancia * sin(angulo) (la Y de pantalla crece hacia abajo). Angulo en milesimas de grado.
+
+**Devuelve:** desplazamiento en Y
+
+```
+x += get_distx(angle, 5);
+y += get_disty(angle, 5);   // lo mismo que advance(5)
+```
 
 #### `mag(double dx, double dy) -> double`
 Modulo de un vector: raiz de dx^2 + dy^2.
@@ -2678,9 +2983,15 @@ Inversa de LERP: en que punto (0 a 1) entre a y b esta un valor.
 
 **Devuelve:** la fraccion
 
-#### `rangechk(double, double, double) -> int`
+#### `rangechk(double valor, double limite_a, double limite_b) -> int`
+Lo mismo con decimales.
 
-#### `rangechk(int, int, int) -> int`
+**Devuelve:** -1, 0 o 1
+
+#### `rangechk(int valor, int limite_a, int limite_b) -> int`
+Compara un valor con un rango: -1 si esta por debajo, 1 si esta por encima y 0 si esta dentro (limites incluidos; el orden de los limites da igual).
+
+**Devuelve:** -1, 0 o 1
 
 #### `remap(double valor, double desde_min, double desde_max, double hasta_min, double hasta_max) -> double`
 Convierte un valor de un rango a otro: remap(5, 0, 10, 0, 100) = 50.
@@ -2697,19 +3008,28 @@ Convierte un valor del rango [bajo, alto] a un numero entre 0 y 1.
 
 **Devuelve:** la fraccion
 
-#### `normalize(int, int, int) -> double`
+#### `normalize(int valor, int bajo, int alto) -> double`
+Convierte un valor entero del rango [bajo, alto] a un numero entre 0 y 1.
+
+**Devuelve:** la fraccion
 
 #### `mem_calloc(int, int) -> pointer`
+Alias de CALLOC.
 
 #### `mem_alloc(int) -> pointer`
+Alias de ALLOC.
 
 #### `mem_free(pointer) -> int`
+Alias de FREE.
 
 #### `mem_realloc(pointer, int) -> pointer`
+Alias de REALLOC.
 
 #### `mem_cmp(pointer, pointer, int) -> int`
+Alias de MEMCMP.
 
 #### `mem_set(pointer, int, int) -> int`
+Alias de MEMSET.
 
 #### `mem_setw(pointer, int, int) -> int`
 
@@ -2718,24 +3038,44 @@ Convierte un valor del rango [bajo, alto] a un numero entre 0 y 1.
 #### `mem_seti(pointer, int, int) -> int`
 
 #### `mem_copy(pointer, pointer, int) -> int`
+Alias de MEMCOPY.
 
 #### `mem_move(pointer, pointer, int) -> int`
+Alias de MEMMOVE.
 
 #### `mem_available() -> int`
+Alias de MEMORY_FREE.
+
+**Devuelve:** bytes libres
 
 #### `mem_total() -> int`
+Alias de MEMORY_TOTAL.
 
-#### `calloc(int, int) -> pointer`
+#### `calloc(int cantidad, int tamano) -> pointer`
+Reserva memoria para 'cantidad' elementos de 'tamano' bytes cada uno, puesta a cero.
 
-#### `alloc(int) -> pointer`
+**Devuelve:** puntero al bloque
 
-#### `free(pointer) -> int`
+#### `alloc(int bytes) -> pointer`
+Reserva un bloque de memoria de 'bytes' bytes y devuelve su puntero (0 si no hay memoria). Hay que liberarlo con FREE.
 
-#### `realloc(pointer, int) -> pointer`
+**Devuelve:** puntero al bloque
 
-#### `memcmp(pointer, pointer, int) -> int`
+#### `free(pointer puntero) -> int`
+Libera un bloque reservado con ALLOC, CALLOC o REALLOC.
 
-#### `memset(pointer, int, int) -> int`
+#### `realloc(pointer puntero, int bytes) -> pointer`
+Cambia el tamano de un bloque reservado, conservando su contenido.
+
+**Devuelve:** el puntero (puede cambiar)
+
+#### `memcmp(pointer a, pointer b, int bytes) -> int`
+Compara dos bloques de memoria byte a byte: 0 si son iguales.
+
+**Devuelve:** 0 si son iguales
+
+#### `memset(pointer puntero, int valor, int bytes) -> int`
+Rellena 'bytes' bytes de memoria con el valor de un byte.
 
 #### `memsetw(pointer, int, int) -> int`
 
@@ -2743,11 +3083,16 @@ Convierte un valor del rango [bajo, alto] a un numero entre 0 y 1.
 
 #### `memseti(pointer, int, int) -> int`
 
-#### `memcopy(pointer, pointer, int) -> int`
+#### `memcopy(pointer destino, pointer origen, int bytes) -> int`
+Copia 'bytes' bytes de memoria de un sitio a otro (no deben solaparse; para eso, MEMMOVE).
 
-#### `memmove(pointer, pointer, int) -> int`
+#### `memmove(pointer destino, pointer origen, int bytes) -> int`
+Copia 'bytes' bytes de memoria de un sitio a otro, aunque se solapen.
 
 #### `memory_free() -> int`
+Memoria fisica libre, en bytes (solo informativo; puede ser aproximado).
+
+**Devuelve:** bytes libres
 
 #### `memory_total() -> int`
 
@@ -2846,13 +3191,17 @@ Como SAY pero sin esperar a volcar la salida: mas rapida, para mensajes muy frec
 
 #### `isort(pointer, int, int, int, byte, byte) -> int`
 
-#### `ksort(..., ?, ?, ..., ?, ?) -> int`
+#### `ksort(... array, ? clave, ?, ..., ?, ?) -> int`
+Ordena un array de estructuras usando como clave la variable que se indica.
 
-#### `ksort(..., ?, ?, ..., ?, ?, int) -> int`
+#### `ksort(... array, ? clave, ? cantidad, ..., ?, ?, int) -> int`
+Igual, indicando cuantos elementos ordenar.
 
-#### `sort(..., ?, ?, int) -> int`
+#### `sort(... array, ? cantidad, ?, int) -> int`
+Igual, indicando cuantos elementos ordenar.
 
-#### `sort(..., ?, ?) -> int`
+#### `sort(... array, ?, ?) -> int`
+Ordena un array de numeros o de estructuras (en estas, usando su primera variable como clave).
 
 #### `strlen(string texto) -> int`
 Longitud de una cadena en caracteres.
@@ -2909,7 +3258,10 @@ Igual, buscando hacia atras desde una posicion.
 
 **Devuelve:** posicion o -1
 
-#### `strtok(string, string) -> string`
+#### `strtok(string texto, string delimitadores) -> string`
+Parte una cadena en trozos separados por caracteres delimitadores: la primera llamada con la cadena y los delimitadores devuelve el primer trozo.
+
+**Devuelve:** el trozo
 
 #### `lpad(string texto, int longitud) -> string`
 Alarga una cadena hasta una longitud anadiendo espacios por la IZQUIERDA (para alinear numeros).
@@ -2980,7 +3332,10 @@ Da formato a un decimal con un numero de decimales y separador de miles.
 
 **Devuelve:** la cadena
 
-#### `getenv(string) -> string`
+#### `getenv(string nombre) -> string`
+Valor de una variable de entorno del sistema (cadena vacia si no existe).
+
+**Devuelve:** el valor
 
 #### `exec(int, string, int, pointer) -> int`
 
@@ -3005,6 +3360,9 @@ Da formato a un decimal con un numero de decimales y separador de miles.
 #### `system_progress_close() -> int`
 
 #### `get_pref_language() -> string`
+Idioma preferido del usuario segun el sistema.
+
+**Devuelve:** el codigo del idioma
 
 #### `uptime() -> int64`
 Alias de GET_TIMER: milisegundos desde que arranco el programa.
@@ -3058,23 +3416,50 @@ say(ftime("%H:%M:%S", time()));
 
 #### `string_dump() -> int`
 
-#### `isalpha(byte) -> int`
+#### `isalpha(byte caracter) -> int`
+Indica si un caracter (su codigo) es una letra.
 
-#### `isspace(byte) -> int`
+**Devuelve:** 1 si lo es
 
-#### `isnum(byte) -> int`
+#### `isspace(byte caracter) -> int`
+Indica si un caracter (su codigo) es un espacio, tabulador o salto de linea.
 
-#### `isxnum(byte) -> int`
+**Devuelve:** 1 si lo es
 
-#### `isalnum(byte) -> int`
+#### `isnum(byte caracter) -> int`
+Indica si un caracter (su codigo) es una cifra (0-9).
 
-#### `iswordchar(byte) -> int`
+**Devuelve:** 1 si lo es
 
-#### `iswordfirst(byte) -> int`
+#### `isxnum(byte caracter) -> int`
+Indica si un caracter (su codigo) es una cifra hexadecimal (0-9, A-F).
 
-#### `toupper(byte) -> int`
+**Devuelve:** 1 si lo es
 
-#### `tolower(byte) -> int`
+#### `isalnum(byte caracter) -> int`
+Indica si un caracter (su codigo) es una letra o una cifra.
+
+**Devuelve:** 1 si lo es
+
+#### `iswordchar(byte caracter) -> int`
+Indica si un caracter (su codigo) puede formar parte de un identificador (letra, cifra o _).
+
+**Devuelve:** 1 si lo es
+
+#### `iswordfirst(byte caracter) -> int`
+Indica si un caracter (su codigo) puede empezar un identificador (letra o _).
+
+**Devuelve:** 1 si lo es
+
+#### `toupper(byte caracter) -> int`
+Pasa un caracter (su codigo) a mayuscula.
+
+**Devuelve:** el codigo en mayuscula
+
+#### `tolower(byte caracter) -> int`
+Pasa un caracter (su codigo) a minuscula.
+
+**Devuelve:** el codigo en minuscula
 
 #### `list_create() -> pointer`
 
@@ -3094,25 +3479,58 @@ say(ftime("%H:%M:%S", time()));
 
 ## Modulo net
 ### general
-#### `net_open(int, int, string, int) -> pointer`
+#### `net_open(int modo, int protocolo, string direccion, int puerto) -> pointer`
+Abre una conexion de red y devuelve un manejador (0 si falla). El modo es 0 para SERVIDOR (espera conexiones y escucha en un puerto) o 1 para CLIENTE (se conecta a una direccion). El protocolo es 0 para UDP o 1 para TCP. Admite direcciones IPv4 e IPv6.
 
-#### `net_wait(pointer, int, pointer) -> int`
+**Devuelve:** manejador de la conexion, 0 si falla
 
-#### `net_send(pointer, pointer, int) -> int`
+```
+srv = net_open(0, 1, "", 5000);                // servidor TCP en el puerto 5000
+cli = net_open(1, 1, "192.168.1.20", 5000);   // cliente TCP
+```
 
-#### `net_recv(pointer, pointer, int) -> int`
+#### `net_wait(pointer conexiones, int espera, pointer eventos) -> int`
+Espera a que haya actividad en un grupo de conexiones (una lista creada con LIST_CREATE) hasta 'espera' milisegundos (-1 = sin limite) y deja en otra lista las que tienen novedades.
 
-#### `net_close(pointer) -> int`
+**Devuelve:** cuantas conexiones tienen novedades, o -1 si hay error
 
-#### `net_getavailablebytes(pointer) -> int`
+#### `net_send(pointer conexion, pointer datos, int bytes) -> int`
+Envia datos por una conexion: un bloque de memoria y su longitud en bytes.
 
-#### `net_getreceivebuffersize(pointer) -> int`
+**Devuelve:** bytes enviados, o -1 si hay error
 
-#### `net_getremoteaddr(pointer) -> string`
+#### `net_recv(pointer conexion, pointer datos, int bytes) -> int`
+Recibe datos de una conexion en un bloque de memoria de como mucho 'bytes' bytes.
 
-#### `net_is_new_connection(pointer) -> int`
+**Devuelve:** bytes recibidos, o -1 si hay error
 
-#### `net_is_message_incoming(pointer) -> int`
+#### `net_close(pointer conexion) -> int`
+Cierra una conexion.
+
+#### `net_getavailablebytes(pointer conexion) -> int`
+Bytes que hay disponibles para leer en una conexion.
+
+**Devuelve:** bytes
+
+#### `net_getreceivebuffersize(pointer conexion) -> int`
+Tamano del buffer de recepcion de una conexion.
+
+**Devuelve:** bytes
+
+#### `net_getremoteaddr(pointer conexion) -> string`
+Direccion IP del otro extremo de una conexion.
+
+**Devuelve:** la direccion
+
+#### `net_is_new_connection(pointer conexion) -> int`
+Indica, para una conexion que ha salido de NET_WAIT, si es un cliente nuevo que se ha conectado a un servidor.
+
+**Devuelve:** 1 si es una conexion nueva
+
+#### `net_is_message_incoming(pointer conexion) -> int`
+Indica, para una conexion que ha salido de NET_WAIT, si trae un mensaje para leer.
+
+**Devuelve:** 1 si hay un mensaje
 
 ## Modulo sound
 ### general
@@ -3518,69 +3936,164 @@ Baja el volumen de todos los sonidos de un grupo durante 'ms' milisegundos y los
 
 ## Modulo video
 ### general
-#### `video_open(string) -> int`
+#### `video_open(string fichero) -> int`
+Abre un video o un audio (MP4/H.264, WebM/VP9, MKV, AVI, OGV, MP3... lo que FFmpeg sepa decodificar; tambien direcciones de internet) y devuelve su manejador (0 si falla). Para verlo hace falta VIDEO_GRAPH.
 
-#### `video_open_h(string, string) -> int`
+**Devuelve:** manejador del video
 
-#### `video_graph(int) -> int`
+```
+v = video_open("intro.mp4");
+g = video_graph(v);
+video_play(v, 0);
+graph = g; x = 640; y = 360;   // un proceso que muestra el video
+WHILE (!video_is_finished(v)) FRAME; END
+video_close(v);
+```
 
-#### `video_play(int, int) -> int`
+#### `video_open_h(string direccion, string cabeceras) -> int`
+Abre un video enviando cabeceras HTTP extra ("Cabecera: valor\r\n"): hace falta con servidores que piden cuenta (Authorization, Cookie...).
 
-#### `video_pause(int, int) -> int`
+**Devuelve:** manejador del video
 
-#### `video_stop(int) -> int`
+#### `video_graph(int video) -> int`
+Grafico que muestra siempre el fotograma actual del video. Se usa como cualquier grafico (la variable graph de un proceso). Al cerrar el video, el grafico se libera unos 30 fotogramas despues.
 
-#### `video_seek(int, int) -> int`
+**Devuelve:** codigo del grafico
 
-#### `video_close(int) -> int`
+#### `video_play(int video, int repetir) -> int`
+Empieza a reproducir el video; con repetir = 1 lo hace en bucle, con 0 una sola vez.
 
-#### `video_width(int) -> int`
+```
+video_play(v, 1);   // en bucle
+```
 
-#### `video_height(int) -> int`
+#### `video_pause(int video, int pausa) -> int`
+Pausa (1) o reanuda (0) el video.
 
-#### `video_duration(int) -> int`
+#### `video_stop(int video) -> int`
+Para el video.
 
-#### `video_position(int) -> int`
+#### `video_seek(int video, int ms) -> int`
+Salta a un punto del video, en milisegundos.
 
-#### `video_is_playing(int) -> int`
+#### `video_close(int video) -> int`
+Cierra un video y libera sus recursos.
 
-#### `video_is_finished(int) -> int`
+#### `video_width(int video) -> int`
+Ancho del video en pixeles.
 
-#### `video_volume(int, int) -> int`
+**Devuelve:** ancho
 
-#### `video_use_gpu(int) -> int`
+#### `video_height(int video) -> int`
+Alto del video en pixeles.
 
-#### `video_gpu(int) -> int`
+**Devuelve:** alto
 
-#### `video_frames(int) -> int`
+#### `video_duration(int video) -> int`
+Duracion del video en milisegundos.
 
-#### `video_use_hw(int) -> int`
+**Devuelve:** milisegundos
 
-#### `video_use_plane(int) -> int`
+#### `video_position(int video) -> int`
+Posicion actual del video en milisegundos. Es el reloj de la reproduccion: sigue avanzando aunque la decodificacion vaya con retraso.
 
-#### `video_hw(int) -> int`
+**Devuelve:** milisegundos
 
-#### `video_subtitle_tracks(int) -> int`
+#### `video_is_playing(int video) -> int`
+Indica si el video se esta reproduciendo.
 
-#### `video_subtitle_lang(int, int) -> string`
+**Devuelve:** 1 si se reproduce
 
-#### `video_subtitle_select(int, int) -> int`
+#### `video_is_finished(int video) -> int`
+Indica si el video ha llegado al final.
 
-#### `video_subtitle_load(int, string) -> int`
+**Devuelve:** 1 si ha terminado
 
-#### `video_subtitle_text(int) -> string`
+#### `video_volume(int video, int volumen) -> int`
+Volumen del video, de 0 a 128. El audio sale por el mismo dispositivo que la musica de BennuGD, y mientras un video tiene el audio sustituye a MUSIC_PLAY (solo un video a la vez lo tiene).
 
-#### `video_audio_tracks(int) -> int`
+#### `video_use_gpu(int activar) -> int`
+Conversion del color en la GPU para los videos que se abran despues (1 por defecto). Con 0 se hace por software. Solo vale para video yuv420p de 8 bits; con otros formatos, o si el motor grafico no puede, se usa el software solo.
 
-#### `video_audio_lang(int, int) -> string`
+**Devuelve:** el valor fijado
 
-#### `video_audio_select(int, int) -> int`
+#### `video_gpu(int video) -> int`
+Indica si un video se esta convirtiendo en la GPU.
 
-#### `video_is_audio_only(int) -> int`
+**Devuelve:** 1 si usa la GPU
 
-#### `video_spectrum(int, int) -> int`
+#### `video_frames(int video) -> int`
+Fotogramas realmente mostrados hasta ahora (los que llegan tarde se descartan para no perder el reloj). Es el numero con el que comparar rendimientos.
 
-#### `video_wave(int, int) -> int`
+**Devuelve:** fotogramas
+
+#### `video_use_hw(int activar) -> int`
+Decodificador de video de la consola (PS5) para los videos que se abran despues (1 por defecto). Si no puede con un video, o falla, se pasa solo a libavcodec desde la posicion actual.
+
+**Devuelve:** el valor fijado
+
+#### `video_use_plane(int activar) -> int`
+Ajuste interno de decodificacion para los videos que se abran despues.
+
+**Devuelve:** el valor fijado
+
+#### `video_hw(int video) -> int`
+Indica que decodificador usa un video: 1 el de la consola, 2 el simulado (en PC con LIBMOD_VIDEO_FAKE_HW=1), 0 software.
+
+**Devuelve:** 0, 1 o 2
+
+#### `video_subtitle_tracks(int video) -> int`
+Cuantas pistas de subtitulos de texto hay (las del fichero y las cargadas aparte). Se ignoran las que son imagenes (PGS, DVB).
+
+**Devuelve:** cantidad
+
+#### `video_subtitle_lang(int video, int pista) -> string`
+Nombre y idioma de una pista de subtitulos (empezando en 0).
+
+**Devuelve:** el nombre, por ejemplo "spa - Castellano"
+
+#### `video_subtitle_select(int video, int pista) -> int`
+Elige la pista de subtitulos a mostrar; -1 los quita (es lo que hay por defecto).
+
+#### `video_subtitle_load(int video, string fichero) -> int`
+Carga un fichero de subtitulos externo (.srt, .ass, .ssa, .vtt...) como una pista mas, que queda elegida.
+
+#### `video_subtitle_text(int video) -> string`
+Texto del subtitulo que toca ahora (vacio si no hay ninguno). El modulo NO lo dibuja: se escribe con WRITE y la fuente que quieras.
+
+**Devuelve:** el texto
+
+```
+write_var(0, 640, 680, ALIGN_BOTTOM, texto);   // texto = video_subtitle_text(v) cada frame
+```
+
+#### `video_audio_tracks(int video) -> int`
+Cuantas pistas de audio tiene el video.
+
+**Devuelve:** cantidad
+
+#### `video_audio_lang(int video, int pista) -> string`
+Nombre y idioma de una pista de audio (empezando en 0).
+
+**Devuelve:** el nombre
+
+#### `video_audio_select(int video, int pista) -> int`
+Cambia a otra pista de audio (empezando en 0). Puede oirse un pequeno corte.
+
+#### `video_is_audio_only(int video) -> int`
+Indica si el fichero no tiene imagen (es solo musica).
+
+**Devuelve:** 1 si es solo audio
+
+#### `video_spectrum(int video, int banda) -> int`
+Nivel, de 0 a 255, de una de las 32 bandas de frecuencia (de 40 Hz a 16 kHz, repartidas en escala logaritmica) de lo que suena ahora; 0 si esta en pausa. Sirve para hacer un ecualizador.
+
+**Devuelve:** nivel de 0 a 255
+
+#### `video_wave(int video, int indice) -> int`
+Muestra de la onda que suena ahora, con signo (-128 a 127), para un osciloscopio. El indice va de 0 a 255.
+
+**Devuelve:** valor de -128 a 127
 
 #### `http_fetch(string, string, string, string) -> int`
 
@@ -3708,19 +4221,34 @@ Baja el volumen de todos los sonidos de un grupo durante 'ms' milisegundos y los
 
 #### `dlna_error() -> string`
 
-#### `video_speed(int, int) -> int`
+#### `video_speed(int video, int porcentaje) -> int`
+Velocidad de reproduccion en porcentaje, de 25 a 300 (100 = normal). Mantiene la posicion; el sonido se reinicia desde ella.
 
-#### `video_chapters(int) -> int`
+#### `video_chapters(int video) -> int`
+Cuantos capitulos tiene el video.
 
-#### `video_chapter_start(int, int) -> int`
+**Devuelve:** cantidad
 
-#### `video_chapter_title(int, int) -> string`
+#### `video_chapter_start(int video, int capitulo) -> int`
+Donde empieza un capitulo (empezando en 0).
 
-#### `video_get_speed(int) -> int`
+**Devuelve:** posicion
 
-#### `video_sub_delay(int, int) -> int`
+#### `video_chapter_title(int video, int capitulo) -> string`
+Titulo de un capitulo (empezando en 0).
 
-#### `video_av_offset(int, int) -> int`
+**Devuelve:** el titulo
+
+#### `video_get_speed(int video) -> int`
+Velocidad de reproduccion actual en porcentaje.
+
+**Devuelve:** porcentaje
+
+#### `video_sub_delay(int video, int ms) -> int`
+Retrasa los subtitulos tantos milisegundos (negativo: los adelanta).
+
+#### `video_av_offset(int video, int ms) -> int`
+Muestra la imagen tantos milisegundos mas tarde (negativo: mas pronto), para corregir un sonido desincronizado.
 
 #### `upload_ip() -> string`
 

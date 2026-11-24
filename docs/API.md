@@ -1,6 +1,6 @@
 # Referencia de la API
 
-Generada automaticamente desde los modulos del motor (1150 funciones, 932 documentadas).
+Generada automaticamente desde los modulos del motor (1150 funciones, 1027 documentadas).
 
 ## Modulo 3d
 ### camera
@@ -2240,11 +2240,20 @@ Distancia en pixeles entre dos procesos.
 
 **Devuelve:** distancia
 
-#### `get_real_point(int, double, double, pointer, pointer) -> int`
+#### `get_real_point(int proceso, double x, double y, pointer &x_real, pointer &y_real) -> int`
+Convierte un punto (x, y) en coordenadas del grafico del proceso dado a su posicion real en pantalla, con su giro, tamano y espejo.
 
-#### `get_real_point(int, int, pointer, pointer) -> int`
+**Devuelve:** 1 si va bien, 0 si no
 
-#### `get_real_point(int, pointer, pointer) -> int`
+#### `get_real_point(int proceso, int punto, pointer &x, pointer &y) -> int`
+Igual, para el proceso con ese identificador.
+
+**Devuelve:** 1 si va bien, 0 si no
+
+#### `get_real_point(int punto, pointer &x, pointer &y) -> int`
+Posicion en pantalla del punto de control numero n del grafico de este proceso, teniendo en cuenta su giro, tamano y espejo. Se escribe en dos variables de tipo double (por referencia). Si el punto no esta definido devuelve la posicion del proceso.
+
+**Devuelve:** 1 si va bien, 0 si el punto no existe
 
 #### `collision(int proceso, int objetivo) -> int`
 Igual, pero para el proceso indicado en vez de para este.
@@ -2260,15 +2269,24 @@ Comprueba si este proceso choca con otros. Se le pasa el tipo de proceso (TYPE n
 IF (collision(TYPE bala)) vida--; END
 ```
 
-#### `scroll_start(int, int, int, int, int, int, int, int, int) -> int`
+#### `scroll_start(int n, int archivo, int grafico, int archivo_lejano, int grafico_lejano, int region, int banderas, int archivo_destino, int grafico_destino) -> int`
+Igual que la primera forma, y ademas indica el archivo y el grafico de destino donde se dibuja el scroll (en vez de la pantalla).
 
-#### `scroll_start(int, int, int, int, int, int, int) -> int`
+#### `scroll_start(int n, int archivo, int grafico, int archivo_lejano, int grafico_lejano, int region, int banderas) -> int`
+Crea el scroll numero n: un fondo de mapa grande que se desplaza con una camara (n debe ser menor que el maximo de scrolls del motor; fuera de rango no hace nada). Indica el archivo y grafico del fondo, el archivo y grafico del fondo lejano (para el efecto parallax), la region donde se dibuja y las banderas (repeticion horizontal y vertical, etc.). Despues se mueve con las variables de scroll[n] (x0, y0...) y SCROLL_MOVE.
 
-#### `scroll_start(int, int, int, int, int, int) -> int`
+```
+scroll_start(0, fpg, 1, fpg, 2, 0, 3);
+```
 
-#### `scroll_stop(int) -> int`
+#### `scroll_start(int n, int archivo, int grafico, int grafico_lejano, int region, int banderas) -> int`
+Igual, usando el mismo archivo para el fondo y el fondo lejano.
 
-#### `scroll_move(int) -> int`
+#### `scroll_stop(int n) -> int`
+Detiene el scroll numero n y lo quita de la pantalla.
+
+#### `scroll_move(int n) -> int`
+Actualiza el scroll n siguiendo a su proceso camara (ctype = c_scroll).
 
 #### `region_define(int region, int x, int y, int ancho, int alto) -> int`
 Define una region rectangular de la pantalla (una zona a la que se puede limitar el dibujo de los procesos con su variable region). La region 0 es la pantalla entera.
@@ -2321,17 +2339,24 @@ Alias que acepta un mapa (se ignora) y devuelve el mismo color.
 #### `rgb_get(int color, pointer &r, pointer &g, pointer &b) -> int`
 Separa un color en rojo, verde y azul, en tres variables que se pasan por puntero.
 
-#### `rgb_get(int, int, int, pointer, pointer, pointer) -> int`
+#### `rgb_get(int archivo, int grafico, int color, pointer &r, pointer &g, pointer &b) -> int`
+Descompone un color de un grafico en rojo, verde y azul (0 a 255), escritos en las variables por referencia.
 
 #### `rgba_get(int color, pointer &r, pointer &g, pointer &b, pointer &alfa) -> int`
 Separa un color en rojo, verde, azul y alfa, en cuatro variables que se pasan por puntero.
 
-#### `rgba_get(int, int, int, pointer, pointer, pointer, pointer) -> int`
+#### `rgba_get(int archivo, int grafico, int color, pointer &r, pointer &g, pointer &b, pointer &a) -> int`
+Descompone un color de un grafico en rojo, verde, azul y alfa (0 a 255), escritos en las variables por referencia.
 
-#### `fade(int r, int g, int b, int alfa, int velocidad) -> int`
-Funde la pantalla hacia un color. Los cuatro primeros valores son el color de destino (rojo, verde, azul y su alfa/intensidad) y 'velocidad' es lo rapido que se hace.
+#### `fade(int r, int g, int b, int alfa, int milisegundos) -> int`
+Funde la pantalla hacia un color: r, g, b y alfa de 0 a 255 (alfa 0 = transparente, 255 = totalmente cubierto) durante los milisegundos indicados. FADE_OFF y FADE_ON son atajos para fundir a negro y volver.
 
-#### `fade(int, int, int, int, int, int) -> int`
+```
+fade(0, 0, 0, 255, 1000);   // a negro en 1 s
+```
+
+#### `fade(int r, int g, int b, int alfa, int milisegundos, int region) -> int`
+Igual, limitado a una region de la pantalla.
 
 #### `fade_on(int velocidad) -> int`
 Quita el fundido: la pantalla vuelve a verse (alfa 0) con la velocidad dada.
@@ -2404,8 +2429,12 @@ Trae al frente la ventana.
 Restaura la ventana.
 
 #### `display_get_orientation() -> int`
+Orientacion de la pantalla donde esta la ventana: 0 = desconocida, 1 = horizontal, 2 = horizontal invertida, 3 = vertical, 4 = vertical invertida (valores de SDL).
+
+**Devuelve:** codigo de orientacion
 
 #### `window_set_dpi_aware() -> int`
+En Windows, avisa de que el programa gestiona pantallas de alta densidad para que el sistema no escale la ventana. En otros sistemas no hace nada.
 
 #### `write(int fuente, int x, int y, int alineacion, string texto) -> int`
 Escribe un texto en pantalla y devuelve su identificador. El texto se queda hasta que lo borras con WRITE_DELETE (o hasta que acaba el programa), no hay que volver a escribirlo cada frame. La alineacion es una de ALIGN_TOP_LEFT, ALIGN_TOP, ALIGN_TOP_RIGHT, ALIGN_CENTER_LEFT, ALIGN_CENTER, ALIGN_CENTER_RIGHT, ALIGN_BOTTOM_LEFT, ALIGN_BOTTOM, ALIGN_BOTTOM_RIGHT. La fuente es un identificador de FNT_LOAD o TTF_LOAD (0 = la fuente del sistema).
@@ -2437,7 +2466,10 @@ Dibuja un texto dentro de un grafico nuevo y devuelve su codigo, en vez de poner
 
 **Devuelve:** codigo del grafico
 
-#### `write_in_map(int, int, int, int, int, string, int) -> int`
+#### `write_in_map(int archivo, int grafico, int fuente, int x, int y, string texto, int alineacion) -> int`
+Escribe un texto dentro de un grafico (no en pantalla): archivo y grafico de destino, fuente, posicion, texto y alineacion.
+
+**Devuelve:** 1 si lo escribe, 0 si no (texto vacio o grafico invalido)
 
 #### `text_width(int fuente, string texto) -> int`
 Ancho en pixeles que ocupa un texto con una fuente.
@@ -2463,23 +2495,50 @@ Igual, indicando tambien la profundidad (z).
 
 **Devuelve:** identificador del texto
 
-#### `write_value(int, int, int, int, int, pointer) -> int`
+#### `write_value(int fuente, int x, int y, int alineacion, int tipo, pointer &variable) -> int`
+Escribe en pantalla el valor de una variable y lo mantiene actualizado cada frame: fuente, x, y, alineacion, el codigo de tipo de la variable (el de BennuGD: entero, cadena...) y un puntero a la variable. Para el caso normal es mas comodo WRITE_INT o WRITE_VAR.
 
-#### `write_value(int, int, int, int, int, int, pointer) -> int`
+**Devuelve:** identificador del texto
 
-#### `write_get_rgba(int, pointer, pointer, pointer, pointer) -> int`
+#### `write_value(int fuente, int x, int y, int z, int alineacion, int tipo, pointer &variable) -> int`
+Igual, indicando tambien la profundidad (z).
 
-#### `write_set_rgba(int, byte, byte, byte, byte) -> int`
+**Devuelve:** identificador del texto
 
-#### `map_block_copy(int, int, int, int, int, int, int, int, int, int, int) -> int`
+#### `write_get_rgba(int texto, pointer &r, pointer &g, pointer &b, pointer &a) -> int`
+Lee el color de un texto en pantalla (r, g, b y alfa en las variables por referencia).
 
-#### `map_block_copy(int, int, int, int, int, int, int, int, int, int, int, byte, byte, byte, byte) -> int`
+#### `write_set_rgba(int texto, byte r, byte g, byte b, byte alfa) -> int`
+Cambia el color de un texto en pantalla (r, g, b y alfa de 0 a 255).
 
-#### `map_block_copy(int, int, int, int, int, int, int, int, int, int, int, byte, byte, byte, byte, int) -> int`
+#### `map_block_copy(int archivo_dest, int grafico_dest, int x_dest, int y_dest, int archivo_orig, int grafico_orig, int x, int y, int ancho, int alto, int banderas) -> int`
+Copia un rectangulo (x, y, ancho, alto) de un grafico origen sobre otro grafico destino en (x_dest, y_dest), aplicando las banderas (espejo, etc.).
 
-#### `map_block_copy(int, int, int, int, int, int, int, int, int, int, int, byte, byte, byte, byte, int, int, int, int, int, int, int) -> int`
+**Devuelve:** 0 si algun grafico no existe
 
-#### `map_block_copy(int, int, int, int, int, int, int, int, int, int) -> int`
+```
+map_block_copy(0, destino, 10, 10, 0, hoja, 32, 0, 32, 32, 0);
+```
+
+#### `map_block_copy(int archivo_dest, int grafico_dest, int x_dest, int y_dest, int archivo_orig, int grafico_orig, int x, int y, int ancho, int alto, int banderas, byte r, byte g, byte b, byte alfa) -> int`
+Copia un rectangulo (x, y, ancho, alto) de un grafico origen sobre otro grafico destino en (x_dest, y_dest), aplicando las banderas (espejo, etc.). Con tinte r, g, b y alfa (0 a 255).
+
+**Devuelve:** 0 si algun grafico no existe
+
+#### `map_block_copy(int archivo_dest, int grafico_dest, int x_dest, int y_dest, int archivo_orig, int grafico_orig, int x, int y, int ancho, int alto, int banderas, byte r, byte g, byte b, byte alfa, int modo) -> int`
+Copia un rectangulo (x, y, ancho, alto) de un grafico origen sobre otro grafico destino en (x_dest, y_dest), aplicando las banderas (espejo, etc.). Con tinte y modo de mezcla.
+
+**Devuelve:** 0 si algun grafico no existe
+
+#### `map_block_copy(int archivo_dest, int grafico_dest, int x_dest, int y_dest, int archivo_orig, int grafico_orig, int x, int y, int ancho, int alto, int banderas, byte r, byte g, byte b, byte alfa, int modo, int src_rgb, int dst_rgb, int src_alfa, int dst_alfa, int ec_rgb, int ec_alfa) -> int`
+Copia un rectangulo (x, y, ancho, alto) de un grafico origen sobre otro grafico destino en (x_dest, y_dest), aplicando las banderas (espejo, etc.). Con tinte y mezcla personalizada (src_rgb, dst_rgb, src_alfa, dst_alfa, ec_rgb, ec_alfa).
+
+**Devuelve:** 0 si algun grafico no existe
+
+#### `map_block_copy(int archivo, int grafico_dest, int x_dest, int y_dest, int grafico_orig, int x, int y, int ancho, int alto, int banderas) -> int`
+Igual, pero origen y destino estan en el mismo archivo (el primero): archivo, grafico_dest, x_dest, y_dest, grafico_orig, x, y, ancho, alto, banderas.
+
+**Devuelve:** 0 si algun grafico no existe
 
 #### `map_put(int archivo_destino, int grafico_destino, int archivo_origen, int grafico_origen, int x, int y) -> int`
 Copia un grafico (origen) sobre otro (destino) en la posicion (x, y).
@@ -2490,7 +2549,10 @@ Copia un grafico sobre otro con todas las opciones: angulo (milesimas de grado),
 #### `map_put(int archivo_destino, int grafico_destino, int archivo_origen, int grafico_origen, int x, int y, int angulo, int escala_x, int escala_y, int flags, byte r, byte g, byte b, byte alfa, int mezcla) -> int`
 Igual, con modo de mezcla (BLEND_NORMAL, BLEND_ADD, BLEND_MULTIPLY, BLEND_SUBTRACT...).
 
-#### `map_put(int, int, int, int, int, int, int, int, int, int, byte, byte, byte, byte, int, int, int, int, int, int, int) -> int`
+#### `map_put(int archivo_destino, int grafico_destino, int archivo_origen, int grafico_origen, int x, int y, int angulo, int escala_x, int escala_y, int banderas, byte r, byte g, byte b, byte alfa, int modo, int src_rgb, int dst_rgb, int src_alfa, int dst_alfa, int ec_rgb, int ec_alfa) -> int`
+Como MAP_PUT con color, pero con una mezcla (blend) personalizada: factor origen y destino de color, factor origen y destino de alfa y ecuaciones de color y de alfa (constantes de OpenGL).
+
+**Devuelve:** 0 si algun grafico no existe
 
 #### `map_new(int ancho, int alto) -> int`
 Crea un grafico vacio del tamano indicado en la biblioteca del sistema (archivo 0) y devuelve su codigo (0 si falla).
@@ -2516,7 +2578,8 @@ Rellena un grafico entero de un color.
 #### `map_clear(int archivo, int grafico, int x0, int y0, int x1, int y1) -> int`
 Rellena de un color solo un rectangulo (x0, y0, x1, y1).
 
-#### `map_clear(int, int, int, int, int, int, int) -> int`
+#### `map_clear(int archivo, int grafico, int x0, int y0, int x1, int y1, int color) -> int`
+Rellena de un color solo un rectangulo (x0, y0, x1, y1) de un grafico. Las esquinas se ordenan solas.
 
 #### `map_clone(int archivo, int grafico) -> int`
 Crea una copia de un grafico y devuelve el codigo de la copia.
@@ -2666,9 +2729,15 @@ Igual, para el grafico del proceso que la llama.
 
 **Devuelve:** 1 si existe
 
-#### `box_get_by_pos(int, int, int, pointer, pointer, pointer, pointer, pointer, pointer) -> int`
+#### `box_get_by_pos(int archivo, int grafico, int posicion, pointer &codigo, pointer &forma, pointer &x, pointer &y, pointer &ancho, pointer &alto) -> int`
+Lee los datos de la caja de colision numero n (por orden de posicion) de un grafico: codigo, forma, x, y, ancho y alto, escritos en las variables por referencia (cada una puede ser 0 si no te interesa).
 
-#### `box_get_by_pos(int, pointer, pointer, pointer, pointer, pointer, pointer) -> int`
+**Devuelve:** 1 si existe, 0 si no
+
+#### `box_get_by_pos(int posicion, pointer &codigo, pointer &forma, pointer &x, pointer &y, pointer &ancho, pointer &alto) -> int`
+Igual, para el grafico del proceso actual.
+
+**Devuelve:** 1 si existe, 0 si no
 
 #### `box_remove(int archivo, int grafico, int caja) -> int`
 Quita una caja de colision de un grafico.
@@ -2676,31 +2745,74 @@ Quita una caja de colision de un grafico.
 #### `box_remove(int caja) -> int`
 Quita una caja de colision del grafico del proceso que la llama.
 
-#### `box_get_real_vertex(int, int, int, int, pointer, pointer) -> int`
+#### `box_get_real_vertex(int proceso, int archivo, int grafico, int caja, pointer &vertices, pointer &radio) -> int`
+Calcula las 4 esquinas reales en pantalla de una caja de colision (con el giro, tamano y espejo del proceso): se escriben 8 valores double (x e y de cada esquina, en orden: izquierda-arriba, derecha-arriba, derecha-abajo, izquierda-abajo del grafico sin girar) en el array que se pasa por referencia, y el radio en el ultimo parametro (para cajas circulares). Como la anterior, para otro proceso (el primer parametro).
 
-#### `box_get_real_vertex(int, int, int, pointer, pointer) -> int`
+**Devuelve:** 1 si va bien, 0 si no
 
-#### `box_get_real_vertex(int, pointer, pointer) -> int`
+#### `box_get_real_vertex(int archivo, int grafico, int caja, pointer &vertices, pointer &radio) -> int`
+Calcula las 4 esquinas reales en pantalla de una caja de colision (con el giro, tamano y espejo del proceso): se escriben 8 valores double (x e y de cada esquina, en orden: izquierda-arriba, derecha-arriba, derecha-abajo, izquierda-abajo del grafico sin girar) en el array que se pasa por referencia, y el radio en el ultimo parametro (para cajas circulares). Usa el grafico indicado (archivo y grafico), con la posicion y giro del proceso actual.
+
+**Devuelve:** 1 si va bien, 0 si no
+
+#### `box_get_real_vertex(int caja, pointer &vertices, pointer &radio) -> int`
+Calcula las 4 esquinas reales en pantalla de una caja de colision (con el giro, tamano y espejo del proceso): se escriben 8 valores double (x e y de cada esquina, en orden: izquierda-arriba, derecha-arriba, derecha-abajo, izquierda-abajo del grafico sin girar) en el array que se pasa por referencia, y el radio en el ultimo parametro (para cajas circulares). Usa el grafico del proceso actual; la caja es el codigo dado (-1 = la caja propia del proceso).
+
+**Devuelve:** 1 si va bien, 0 si no
 
 #### `fnt_new() -> int`
+Crea una fuente vacia (juego de caracteres ISO 8859). Despues se rellena letra a letra con GLYPH_SET.
 
-#### `fnt_new(int) -> int`
+**Devuelve:** codigo de la fuente
 
-#### `fnt_new(int, int, int, int, int, int, int, int) -> int`
+#### `fnt_new(int charset) -> int`
+Crea una fuente vacia con el juego de caracteres indicado (0 = ISO 8859, 1 = CP850, 2 = UTF-8).
 
-#### `fnt_new(int, int, int, int, int, int, int, int, string) -> int`
+**Devuelve:** codigo de la fuente
 
-#### `fnt_new(int, int, int, int, int, int, int, int, int, int, int, int) -> int`
+#### `fnt_new(int archivo, int grafico, int charset, int ancho, int alto, int primero, int ultimo, int opciones) -> int`
+Crea una fuente a partir de un grafico con todas las letras en una rejilla de celdas del mismo tamano. Indica el grafico, el juego de caracteres, el ancho y alto de cada celda, el primer y ultimo caracter que contiene y las opciones.
 
-#### `fnt_new(int, int, int, int, int, int, int, int, int, int, int, int, string) -> int`
+**Devuelve:** codigo de la fuente, o -1 si el grafico no existe
 
-#### `fnt_new(int, int, int, int, int, int, int, int, int, int, int, int, int) -> int`
+```
+fuente = fnt_new(0, g_letras, 0, 8, 8, 32, 127, 0);
+```
 
-#### `fnt_new(int, int, int, int, int, int, int, int, string, int, int, int, int, int) -> int`
+#### `fnt_new(int archivo, int grafico, int charset, int ancho, int alto, int primero, int ultimo, int opciones, string orden) -> int`
+Crea una fuente a partir de un grafico con todas las letras en una rejilla de celdas del mismo tamano. Con una cadena que da el orden real de los caracteres de la rejilla.
 
-#### `fnt_new(int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int) -> int`
+**Devuelve:** codigo de la fuente, o -1
 
-#### `fnt_new(int, int, int, int, int, int, int, int, int, int, int, int, string, int, int, int, int, int) -> int`
+#### `fnt_new(int archivo, int grafico, int reg_x, int reg_y, int reg_ancho, int reg_alto, int charset, int ancho, int alto, int primero, int ultimo, int opciones) -> int`
+Crea una fuente a partir de un grafico con todas las letras en una rejilla de celdas del mismo tamano. Solo se lee la region (x, y, ancho, alto) del grafico; un ancho o alto de 0 llega hasta el borde.
+
+**Devuelve:** codigo de la fuente, o -1
+
+#### `fnt_new(int archivo, int grafico, int reg_x, int reg_y, int reg_ancho, int reg_alto, int charset, int ancho, int alto, int primero, int ultimo, int opciones, string orden) -> int`
+Como la anterior, con una cadena que da el orden de los caracteres.
+
+**Devuelve:** codigo de la fuente, o -1
+
+#### `fnt_new(int archivo, int grafico, int charset, int ancho, int alto, int primero, int ultimo, int opciones, int ancho_celda, int alto_celda, int margen_izq, int margen_sup, int espaciado) -> int`
+Como FNT_NEW(IIIIIIII), pudiendo fijar el tamano real de la celda, los margenes (izquierdo y superior) dentro del grafico y el espaciado entre letras.
+
+**Devuelve:** codigo de la fuente, o -1
+
+#### `fnt_new(int archivo, int grafico, int charset, int ancho, int alto, int primero, int ultimo, int opciones, string orden, int ancho_celda, int alto_celda, int margen_izq, int margen_sup, int espaciado) -> int`
+Rejilla con orden de caracteres, tamano de celda, margenes y espaciado.
+
+**Devuelve:** codigo de la fuente, o -1
+
+#### `fnt_new(int archivo, int grafico, int reg_x, int reg_y, int reg_ancho, int reg_alto, int charset, int ancho, int alto, int primero, int ultimo, int opciones, int ancho_celda, int alto_celda, int margen_izq, int margen_sup, int espaciado) -> int`
+Rejilla leida solo dentro de una region del grafico (x, y, ancho, alto; 0 = hasta el borde), con tamano de celda, margenes y espaciado.
+
+**Devuelve:** codigo de la fuente, o -1
+
+#### `fnt_new(int archivo, int grafico, int reg_x, int reg_y, int reg_ancho, int reg_alto, int charset, int ancho, int alto, int primero, int ultimo, int opciones, string orden, int ancho_celda, int alto_celda, int margen_izq, int margen_sup, int espaciado) -> int`
+Igual, con la cadena que da el orden de los caracteres.
+
+**Devuelve:** codigo de la fuente, o -1
 
 #### `fnt_load(string fichero) -> int`
 Carga una fuente de mapa de bits (.fnt) desde un fichero y devuelve su identificador (0 si falla). Los ficheros .fnt de BennuGD pueden venir comprimidos con gzip.
@@ -2721,13 +2833,25 @@ Carga una fuente TrueType (.ttf) y devuelve su identificador. Se usa igual que u
 #### `ttf_set_size(int fuente, int tamano) -> int`
 Tamano de una fuente TrueType, en puntos.
 
-#### `ttf_get_family(int) -> string`
+#### `ttf_get_family(int fuente) -> string`
+Nombre de la familia de una fuente TTF (por ejemplo "DejaVu Sans").
 
-#### `ttf_get_style(int) -> string`
+**Devuelve:** texto
 
-#### `glyph_get(int, int) -> int`
+#### `ttf_get_style(int fuente) -> string`
+Estilo de una fuente TTF (por ejemplo "Bold").
 
-#### `glyph_set(int, int, int, int) -> int`
+**Devuelve:** texto
+
+#### `glyph_get(int fuente, int caracter) -> int`
+Copia el grafico de un caracter de una fuente en un grafico nuevo y devuelve su codigo, para poder modificarlo.
+
+**Devuelve:** codigo del grafico nuevo, o 0 si no existe
+
+#### `glyph_set(int fuente, int caracter, int archivo, int grafico) -> int`
+Sustituye el grafico de un caracter de una fuente por otro grafico. Si el grafico tiene 3 o mas puntos de control, el segundo marca el desplazamiento del caracter.
+
+**Devuelve:** 1 si lo cambia, 0 si no
 
 #### `drawing_color(int color) -> int`
 Color con el que se dibujaran los siguientes DRAW_*.
@@ -2735,24 +2859,38 @@ Color con el que se dibujaran los siguientes DRAW_*.
 #### `drawing_color(int dibujo, int color) -> int`
 Cambia el color de un dibujo ya creado.
 
-#### `drawing_rgba(byte, byte, byte, byte) -> int`
+#### `drawing_rgba(byte r, byte g, byte b, byte alfa) -> int`
+Fija el color de los siguientes DRAW_* con sus componentes r, g, b y alfa, de 0 a 255.
 
-#### `drawing_rgba(int, byte, byte, byte, byte) -> int`
+```
+drawing_rgba(255, 128, 0, 200);
+```
 
-#### `drawing_blendmode(int) -> int`
+#### `drawing_rgba(int dibujo, byte r, byte g, byte b, byte alfa) -> int`
+Cambia el color de un dibujo ya creado (el que devolvio un DRAW_*).
 
-#### `drawing_blendmode(int, int) -> int`
+#### `drawing_blendmode(int modo) -> int`
+Modo de mezcla de los siguientes DRAW_* (normal, aditivo, etc., con las constantes B_*).
 
-#### `drawing_blendmode(int, int, int, int, int, int) -> int`
+#### `drawing_blendmode(int dibujo, int modo) -> int`
+Cambia el modo de mezcla de un dibujo ya creado.
 
-#### `drawing_blendmode(int, int, int, int, int, int, int) -> int`
+#### `drawing_blendmode(int src_rgb, int dst_rgb, int src_alfa, int dst_alfa, int ec_rgb, int ec_alfa) -> int`
+Mezcla personalizada para los siguientes DRAW_*: factor origen y destino de color, factor origen y destino de alfa, y ecuaciones de color y de alfa (constantes de OpenGL).
+
+#### `drawing_blendmode(int dibujo, int src_rgb, int dst_rgb, int src_alfa, int dst_alfa, int ec_rgb, int ec_alfa) -> int`
+Igual que la anterior, aplicada a un dibujo ya creado.
 
 #### `drawing_z() -> int`
+Profundidad (z) que usan los siguientes DRAW_*.
+
+**Devuelve:** z actual
 
 #### `drawing_z(int z) -> int`
 Profundidad (z) de los siguientes dibujos: menor z se dibuja delante.
 
-#### `drawing_z(int, int) -> int`
+#### `drawing_z(int dibujo, int z) -> int`
+Cambia la profundidad de un dibujo ya creado: menor z se dibuja delante.
 
 #### `drawing_map(int archivo, int grafico) -> int`
 Hace que los siguientes DRAW_* dibujen dentro de un grafico en vez de en pantalla. Con (0, 0), que no es un grafico, se vuelve a dibujar en pantalla.
@@ -2763,7 +2901,10 @@ Borra un dibujo creado con un DRAW_* (0 borra todos).
 #### `draw_move(int dibujo, int x, int y) -> int`
 Mueve un dibujo ya creado.
 
-#### `draw_coords(int, pointer, pointer, pointer) -> int`
+#### `draw_coords(int dibujo, pointer &x, pointer &y, pointer &z) -> int`
+Lee las coordenadas de un dibujo creado: x, y y z se escriben en las variables que pases por referencia (cada una puede ser 0 si no la quieres). OJO: en esta version los valores se recortan a 8 bits (0 a 255).
+
+**Devuelve:** 1, o -1 si el dibujo no existe
 
 #### `draw_point(int x, int y) -> int`
 Dibuja un punto con el color de DRAWING_COLOR.
@@ -2870,9 +3011,17 @@ Dibuja un circulo relleno de un color concreto.
 
 **Devuelve:** identificador del dibujo
 
-#### `draw_curve(int, int, int, int, int, int, int, int, int) -> int`
+#### `draw_curve(int x0, int y0, int x1, int y1, int x2, int y2, int x3, int y3, int nivel) -> int`
+Dibuja una curva de Bezier entre dos extremos con dos puntos de control: (x0, y0) inicio, (x1, y1) y (x2, y2) control, (x3, y3) fin, y nivel de detalle (cuantos segmentos usa).
 
-#### `draw_curve(int, int, int, int, int, int, int, int, int, int) -> int`
+**Devuelve:** identificador del dibujo si no hay DRAWING_MAP activo
+
+```
+draw_curve(20, 200, 80, 40, 160, 40, 220, 200, 30);
+```
+
+#### `draw_curve(int x0, int y0, int x1, int y1, int x2, int y2, int x3, int y3, int nivel, int color) -> int`
+Igual, con un color concreto.
 
 #### `draw_arc(int x, int y, int radio, int angulo_inicio, int angulo_fin) -> int`
 Dibuja el borde de un arco de circulo: centro, radio y angulos de inicio y fin en MILESIMAS DE GRADO. Crea un objeto de dibujo que se queda en pantalla hasta DRAW_DELETE (o dibuja directamente en el grafico elegido con DRAWING_MAP).
@@ -3020,85 +3169,203 @@ Grosor de linea de un dibujo ya creado.
 
 **Devuelve:** grosor
 
-#### `path_new(int, int) -> pointer`
+#### `path_new(int archivo, int grafico) -> pointer`
+Crea una cuadricula de busqueda de caminos a partir de un grafico: cada pixel NEGRO (color 0 / transparente) es transitable y cualquier otro color es un obstaculo. Cada pixel es una celda.
 
-#### `path_destroy(pointer) -> int`
+**Devuelve:** manejador de la cuadricula, o 0 si no pudo
 
-#### `path_find(pointer, int, int, int, int, int) -> pointer`
+```
+mapa = path_new(0, g_mapa);
+```
 
-#### `path_find(pointer, int, int, int, int, int, int, int) -> pointer`
+#### `path_destroy(pointer cuadricula) -> int`
+Libera la cuadricula creada con PATH_NEW.
 
-#### `path_free_results(pointer) -> int`
+#### `path_find(pointer cuadricula, int x0, int y0, int x1, int y1, int opciones) -> pointer`
+Busca el camino mas corto de (x0, y0) a (x1, y1) con el algoritmo A*, en 4 direcciones o en 8 si opciones incluye 1 (PF_DIAG). Devuelve una lista de pares x, y que acaba en el par -1, -1.
 
-#### `texture_set_quality(int) -> int`
+**Devuelve:** puntero a la lista de puntos (hay que liberarla con PATH_FREE_RESULTS), o 0 si no hay camino
 
-#### `map_set_palette(int, int, int, int, pointer) -> int`
+```
+ruta = path_find(mapa, 5, 5, 40, 30, 1);
+if (ruta)
+    i = 0;
+    while (ruta[i] != -1) say("paso " + ruta[i] + "," + ruta[i+1]); i += 2; end
+    path_free_results(ruta);
+end
+```
 
-#### `map_get_palette(int, int, int, int, pointer) -> int`
+#### `path_find(pointer cuadricula, int x0, int y0, int x1, int y1, int opciones, int peso, int heuristica) -> pointer`
+Igual, con peso (1 = A* normal; mas alto da prioridad a la heuristica y es mas rapido pero menos exacto) y heuristica: 0 = Manhattan, 1 = euclidea, 2 = octil, 3 = Chebyshev.
+
+**Devuelve:** puntero a la lista de puntos, o 0 si no hay camino
+
+#### `path_free_results(pointer lista) -> int`
+Libera la lista de puntos que devolvio PATH_FIND. Hay que llamarla siempre.
+
+#### `texture_set_quality(int calidad) -> int`
+Calidad de filtrado de las texturas al escalar: Q_NEAREST (0, pixelado, por defecto) o Q_LINEAR (suavizado). Afecta a los graficos creados despues.
+
+```
+texture_set_quality(Q_LINEAR);
+```
+
+#### `map_set_palette(int archivo, int grafico, int primero, int n, pointer &colores) -> int`
+Cambia colores de la paleta de un grafico de 8 bits: desde el color primero, n colores tomados de un array de estructuras con r, g, b, a (4 bytes por color). Solo vale en graficos de 8 bits.
+
+**Devuelve:** 0 si va bien, -1 si no hay superficie, -2 si no es de 8 bits
+
+#### `map_get_palette(int archivo, int grafico, int primero, int n, pointer &colores) -> int`
+Copia en un array n colores de la paleta de un grafico de 8 bits, desde el color primero (4 bytes por color: r, g, b, a).
+
+**Devuelve:** 0 si va bien, -1 si no hay superficie, -2 si no es de 8 bits
 
 #### `shader_get_language() -> int`
+Lenguaje de shaders que soporta el motor grafico (constantes SHADER_LANGUAGE_*: GLSL, GLSL ES, HLSL...). -1 si no hay soporte.
+
+**Devuelve:** codigo del lenguaje
 
 #### `shader_get_min_version() -> int`
+Version minima de shader soportada, o -1 si no hay soporte.
+
+**Devuelve:** version
 
 #### `shader_get_max_version() -> int`
+Version maxima de shader soportada, o -1 si no hay soporte.
 
-#### `shader_create(string, string) -> pointer`
+**Devuelve:** version
 
-#### `shader_free(pointer) -> int`
+#### `shader_create(string vertice, string fragmento) -> pointer`
+Compila un shader a partir del texto del vertex shader y del fragment shader (cadenas con el codigo, no nombres de archivo). Los shaders se escriben en GLSL; solo hay soporte cuando el motor grafico lo permite (con SDL_gpu).
 
-#### `shader_getattributelocation(pointer, string) -> int`
+**Devuelve:** manejador del shader, o 0 si falla la compilacion
 
-#### `shader_get_param_location(pointer, string) -> int`
+#### `shader_free(pointer shader) -> int`
+Libera un shader.
 
-#### `shader_create_params(int) -> pointer`
+#### `shader_getattributelocation(pointer shader, string nombre) -> int`
+Reservada: ahora mismo no esta disponible (la implementacion esta desactivada). Para los uniformes usa SHADER_GET_PARAM_LOCATION.
 
-#### `shader_free_params(pointer) -> int`
+#### `shader_get_param_location(pointer shader, string nombre) -> int`
+Posicion de una variable uniform del shader por su nombre; hace falta para fijarle valor con SHADER_SET_PARAM.
 
-#### `shader_set_param(pointer, int, int, int) -> int`
+**Devuelve:** posicion, o -1 si no existe
 
-#### `shader_set_param(pointer, int, int, float) -> int`
+#### `shader_create_params(int n) -> pointer`
+Crea un conjunto de valores para los uniforms con espacio para n parametros. Se asocia a un grafico o proceso para que el shader los reciba.
 
-#### `shader_set_param(pointer, int, int, int, int, int) -> int`
+**Devuelve:** manejador del conjunto de parametros
 
-#### `shader_set_param(pointer, int, int, int, pointer) -> int`
+#### `shader_free_params(pointer parametros) -> int`
+Libera un conjunto de parametros.
 
-#### `shader_set_param(pointer, int, int, pointer, int, int, int, int) -> int`
+#### `shader_set_param(pointer parametros, int tipo, int posicion, int valor) -> int`
+Fija un uniform entero: el tipo debe ser UNIFORM_INT o UNIFORM_UINT.
 
-#### `shader_get_param(pointer, int, pointer, pointer) -> int`
+**Devuelve:** 0 si va bien, -1 si no
 
-#### `shader_get_param(pointer, int, pointer, pointer, pointer) -> int`
+#### `shader_set_param(pointer parametros, int tipo, int posicion, float valor) -> int`
+Fija un uniform decimal (tipo UNIFORM_FLOAT).
 
-#### `shader_get_param(pointer, int, pointer, pointer, pointer, pointer, pointer, pointer) -> int`
+**Devuelve:** 0 si va bien, -1 si no
 
-#### `media_load(string, pointer) -> pointer`
+#### `shader_set_param(pointer parametros, int tipo, int posicion, int archivo, int grafico, int unidad) -> int`
+Pasa una imagen al shader (tipo SHADER_IMAGE): el grafico (archivo y grafico) y la unidad de textura que usa.
 
-#### `media_load(string, pointer, int) -> pointer`
+**Devuelve:** 0 si va bien, -1 si no
 
-#### `media_unload(pointer) -> int`
+#### `shader_set_param(pointer parametros, int tipo, int posicion, int n, pointer &valores) -> int`
+Fija un uniform de tipo array o vector (UNIFORM_INT_ARRAY, UNIFORM_FLOAT2_ARRAY, UNIFORM_FLOAT3_ARRAY, UNIFORM_FLOAT4_ARRAY, etc.): n valores tomados de la memoria apuntada.
 
-#### `media_play(pointer) -> int`
+**Devuelve:** 0 si va bien, -1 si no
 
-#### `media_pause(pointer) -> int`
+#### `shader_set_param(pointer parametros, int tipo, int posicion, pointer &valores, int n_matrices, int filas, int columnas, int transponer) -> int`
+Fija un uniform de matriz (tipo UNIFORM_MATRIX): puntero a los valores, numero de matrices, filas y columnas, y si hay que transponerlas (1) o no (0).
 
-#### `media_pause(pointer, int) -> int`
+**Devuelve:** 0 si va bien, -1 si no
 
-#### `media_resume(pointer) -> int`
+#### `shader_get_param(pointer parametros, int posicion, pointer &tipo, pointer &valor) -> int`
+Lee un uniform entero o decimal del conjunto de parametros: escribe su tipo y un puntero al valor.
 
-#### `media_stop(pointer) -> int`
+**Devuelve:** 0 si va bien, -1 si no
 
-#### `media_get_time(pointer) -> int`
+#### `shader_get_param(pointer parametros, int posicion, pointer &tipo, pointer &n, pointer &valores) -> int`
+Lee un uniform de tipo vector o array: escribe el tipo, el numero de valores y un puntero a ellos.
 
-#### `media_get_duration(pointer) -> int`
+**Devuelve:** 0 si va bien, -1 si no
 
-#### `media_get_status(pointer) -> int`
+#### `shader_get_param(pointer parametros, int posicion, pointer &tipo, pointer &valores, pointer &n_matrices, pointer &filas, pointer &columnas, pointer &transponer) -> int`
+Lee un uniform de matriz: escribe el tipo, un puntero a los valores, el numero de matrices, las filas, las columnas y si estan transpuestas.
 
-#### `media_get_mute(pointer) -> int`
+**Devuelve:** 0 si va bien, -1 si no
 
-#### `media_set_mute(pointer, int) -> int`
+#### `media_load(string archivo, pointer &grafico) -> pointer`
+Abre un video (Theora) para reproducirlo. La imagen del video se va dibujando en un grafico de la biblioteca del sistema, cuyo codigo se escribe en la variable que pases por referencia (usa & delante). Todavia no suena: llama a MEDIA_PLAY.
 
-#### `media_get_volume(pointer) -> int`
+**Devuelve:** manejador del video, o 0 si no se pudo abrir
 
-#### `media_set_volume(pointer, int) -> int`
+```
+video = media_load("intro.ogv", &g);
+if (video) media_play(video); put(0, g, 320, 240); end
+```
+
+#### `media_load(string archivo, pointer &grafico, int timeout) -> pointer`
+Igual, con un tiempo maximo de espera (timeout) para operaciones de red.
+
+**Devuelve:** manejador del video, o 0
+
+#### `media_unload(pointer video) -> int`
+Cierra el video y libera sus recursos.
+
+#### `media_play(pointer video) -> int`
+Empieza la reproduccion. Si estaba parado o terminado, lo reabre desde el principio.
+
+**Devuelve:** 0 si va bien, -1 si hay error
+
+#### `media_pause(pointer video) -> int`
+Pausa la reproduccion.
+
+#### `media_pause(pointer video, int pausar) -> int`
+Pausa (valor distinto de 0) o reanuda (0) la reproduccion.
+
+#### `media_resume(pointer video) -> int`
+Reanuda un video en pausa.
+
+#### `media_stop(pointer video) -> int`
+Detiene la reproduccion y libera lo que usa para decodificar.
+
+#### `media_get_time(pointer video) -> int`
+Tiempo de reproduccion actual en milisegundos.
+
+**Devuelve:** milisegundos, o -1 si el video no es valido
+
+#### `media_get_duration(pointer video) -> int`
+Duracion total del video en milisegundos. En esta version aun no esta implementada y siempre devuelve -1.
+
+**Devuelve:** -1
+
+#### `media_get_status(pointer video) -> int`
+Estado de la reproduccion: -1 = error, 0 = parado, 1 = reproduciendo, 2 = en pausa, 3 = terminado.
+
+**Devuelve:** codigo de estado
+
+#### `media_get_mute(pointer video) -> int`
+Indica si el audio del video esta silenciado.
+
+**Devuelve:** 1 si esta silenciado, 0 si no
+
+#### `media_set_mute(pointer video, int silenciar) -> int`
+Silencia (1) o activa (0) el audio del video.
+
+#### `media_get_volume(pointer video) -> int`
+Volumen actual del video.
+
+**Devuelve:** volumen de 0 a 128
+
+#### `media_set_volume(pointer video, int volumen) -> int`
+Cambia el volumen del video, de 0 a 128 (fuera de ese rango no hace nada y devuelve -1).
+
+**Devuelve:** el volumen anterior, o -1
 
 ## Modulo iap
 ### general

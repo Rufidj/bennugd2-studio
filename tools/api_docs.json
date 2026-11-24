@@ -170,6 +170,66 @@
   ],
   "ret": "1 si existe"
  },
+ "BOX_GET_BY_POS(IIIPPPPPP)": {
+  "desc": "Lee los datos de la caja de colision numero n (por orden de posicion) de un grafico: codigo, forma, x, y, ancho y alto, escritos en las variables por referencia (cada una puede ser 0 si no te interesa).",
+  "params": [
+   "archivo",
+   "grafico",
+   "posicion",
+   "&codigo",
+   "&forma",
+   "&x",
+   "&y",
+   "&ancho",
+   "&alto"
+  ],
+  "ret": "1 si existe, 0 si no"
+ },
+ "BOX_GET_BY_POS(IPPPPPP)": {
+  "desc": "Igual, para el grafico del proceso actual.",
+  "params": [
+   "posicion",
+   "&codigo",
+   "&forma",
+   "&x",
+   "&y",
+   "&ancho",
+   "&alto"
+  ],
+  "ret": "1 si existe, 0 si no"
+ },
+ "BOX_GET_REAL_VERTEX(IIIIPP)": {
+  "desc": "Calcula las 4 esquinas reales en pantalla de una caja de colision (con el giro, tamano y espejo del proceso): se escriben 8 valores double (x e y de cada esquina, en orden: izquierda-arriba, derecha-arriba, derecha-abajo, izquierda-abajo del grafico sin girar) en el array que se pasa por referencia, y el radio en el ultimo parametro (para cajas circulares). Como la anterior, para otro proceso (el primer parametro).",
+  "params": [
+   "proceso",
+   "archivo",
+   "grafico",
+   "caja",
+   "&vertices",
+   "&radio"
+  ],
+  "ret": "1 si va bien, 0 si no"
+ },
+ "BOX_GET_REAL_VERTEX(IIIPP)": {
+  "desc": "Calcula las 4 esquinas reales en pantalla de una caja de colision (con el giro, tamano y espejo del proceso): se escriben 8 valores double (x e y de cada esquina, en orden: izquierda-arriba, derecha-arriba, derecha-abajo, izquierda-abajo del grafico sin girar) en el array que se pasa por referencia, y el radio en el ultimo parametro (para cajas circulares). Usa el grafico indicado (archivo y grafico), con la posicion y giro del proceso actual.",
+  "params": [
+   "archivo",
+   "grafico",
+   "caja",
+   "&vertices",
+   "&radio"
+  ],
+  "ret": "1 si va bien, 0 si no"
+ },
+ "BOX_GET_REAL_VERTEX(IPP)": {
+  "desc": "Calcula las 4 esquinas reales en pantalla de una caja de colision (con el giro, tamano y espejo del proceso): se escriben 8 valores double (x e y de cada esquina, en orden: izquierda-arriba, derecha-arriba, derecha-abajo, izquierda-abajo del grafico sin girar) en el array que se pasa por referencia, y el radio en el ultimo parametro (para cajas circulares). Usa el grafico del proceso actual; la caja es el codigo dado (-1 = la caja propia del proceso).",
+  "params": [
+   "caja",
+   "&vertices",
+   "&radio"
+  ],
+  "ret": "1 si va bien, 0 si no"
+ },
  "BOX_REMOVE(I)": {
   "desc": "Quita una caja de colision del grafico del proceso que la llama.",
   "params": [
@@ -387,6 +447,10 @@
   ],
   "ret": "nombre"
  },
+ "DISPLAY_GET_ORIENTATION": {
+  "desc": "Orientacion de la pantalla donde esta la ventana: 0 = desconocida, 1 = horizontal, 2 = horizontal invertida, 3 = vertical, 4 = vertical invertida (valores de SDL).",
+  "ret": "codigo de orientacion"
+ },
  "DIST": {
   "desc": "Alias de FGET_DIST: distancia entre dos puntos.",
   "params": [
@@ -406,6 +470,42 @@
    "y1"
   ],
   "ret": "distancia"
+ },
+ "DRAWING_BLENDMODE(I)": {
+  "desc": "Modo de mezcla de los siguientes DRAW_* (normal, aditivo, etc., con las constantes B_*).",
+  "params": [
+   "modo"
+  ]
+ },
+ "DRAWING_BLENDMODE(II)": {
+  "desc": "Cambia el modo de mezcla de un dibujo ya creado.",
+  "params": [
+   "dibujo",
+   "modo"
+  ]
+ },
+ "DRAWING_BLENDMODE(IIIIII)": {
+  "desc": "Mezcla personalizada para los siguientes DRAW_*: factor origen y destino de color, factor origen y destino de alfa, y ecuaciones de color y de alfa (constantes de OpenGL).",
+  "params": [
+   "src_rgb",
+   "dst_rgb",
+   "src_alfa",
+   "dst_alfa",
+   "ec_rgb",
+   "ec_alfa"
+  ]
+ },
+ "DRAWING_BLENDMODE(IIIIIII)": {
+  "desc": "Igual que la anterior, aplicada a un dibujo ya creado.",
+  "params": [
+   "dibujo",
+   "src_rgb",
+   "dst_rgb",
+   "src_alfa",
+   "dst_alfa",
+   "ec_rgb",
+   "ec_alfa"
+  ]
  },
  "DRAWING_COLOR(I)": {
   "desc": "Color con el que se dibujaran los siguientes DRAW_*.",
@@ -427,9 +527,40 @@
    "grafico"
   ]
  },
+ "DRAWING_RGBA(BBBB)": {
+  "desc": "Fija el color de los siguientes DRAW_* con sus componentes r, g, b y alfa, de 0 a 255.",
+  "ejemplo": "drawing_rgba(255, 128, 0, 200);",
+  "params": [
+   "r",
+   "g",
+   "b",
+   "alfa"
+  ]
+ },
+ "DRAWING_RGBA(IBBBB)": {
+  "desc": "Cambia el color de un dibujo ya creado (el que devolvio un DRAW_*).",
+  "params": [
+   "dibujo",
+   "r",
+   "g",
+   "b",
+   "alfa"
+  ]
+ },
+ "DRAWING_Z()": {
+  "desc": "Profundidad (z) que usan los siguientes DRAW_*.",
+  "ret": "z actual"
+ },
  "DRAWING_Z(I)": {
   "desc": "Profundidad (z) de los siguientes dibujos: menor z se dibuja delante.",
   "params": [
+   "z"
+  ]
+ },
+ "DRAWING_Z(II)": {
+  "desc": "Cambia la profundidad de un dibujo ya creado: menor z se dibuja delante.",
+  "params": [
+   "dibujo",
    "z"
   ]
  },
@@ -516,6 +647,47 @@
    "color"
   ],
   "ret": "identificador del dibujo"
+ },
+ "DRAW_COORDS": {
+  "desc": "Lee las coordenadas de un dibujo creado: x, y y z se escriben en las variables que pases por referencia (cada una puede ser 0 si no la quieres). OJO: en esta version los valores se recortan a 8 bits (0 a 255).",
+  "params": [
+   "dibujo",
+   "&x",
+   "&y",
+   "&z"
+  ],
+  "ret": "1, o -1 si el dibujo no existe"
+ },
+ "DRAW_CURVE(IIIIIIIII)": {
+  "desc": "Dibuja una curva de Bezier entre dos extremos con dos puntos de control: (x0, y0) inicio, (x1, y1) y (x2, y2) control, (x3, y3) fin, y nivel de detalle (cuantos segmentos usa).",
+  "ejemplo": "draw_curve(20, 200, 80, 40, 160, 40, 220, 200, 30);",
+  "params": [
+   "x0",
+   "y0",
+   "x1",
+   "y1",
+   "x2",
+   "y2",
+   "x3",
+   "y3",
+   "nivel"
+  ],
+  "ret": "identificador del dibujo si no hay DRAWING_MAP activo"
+ },
+ "DRAW_CURVE(IIIIIIIIII)": {
+  "desc": "Igual, con un color concreto.",
+  "params": [
+   "x0",
+   "y0",
+   "x1",
+   "y1",
+   "x2",
+   "y2",
+   "x3",
+   "y3",
+   "nivel",
+   "color"
+  ]
  },
  "DRAW_DELETE": {
   "desc": "Borra un dibujo creado con un DRAW_* (0 borra todos).",
@@ -980,13 +1152,25 @@
   "ret": "resultado"
  },
  "FADE(IIIII)": {
-  "desc": "Funde la pantalla hacia un color. Los cuatro primeros valores son el color de destino (rojo, verde, azul y su alfa/intensidad) y 'velocidad' es lo rapido que se hace.",
+  "desc": "Funde la pantalla hacia un color: r, g, b y alfa de 0 a 255 (alfa 0 = transparente, 255 = totalmente cubierto) durante los milisegundos indicados. FADE_OFF y FADE_ON son atajos para fundir a negro y volver.",
+  "ejemplo": "fade(0, 0, 0, 255, 1000);   // a negro en 1 s",
   "params": [
    "r",
    "g",
    "b",
    "alfa",
-   "velocidad"
+   "milisegundos"
+  ]
+ },
+ "FADE(IIIIII)": {
+  "desc": "Igual, limitado a una region de la pantalla.",
+  "params": [
+   "r",
+   "g",
+   "b",
+   "alfa",
+   "milisegundos",
+   "region"
   ]
  },
  "FADE_OFF(I)": {
@@ -1142,6 +1326,170 @@
    "fichero",
    "&identificador"
   ]
+ },
+ "FNT_NEW()": {
+  "desc": "Crea una fuente vacia (juego de caracteres ISO 8859). Despues se rellena letra a letra con GLYPH_SET.",
+  "ret": "codigo de la fuente"
+ },
+ "FNT_NEW(I)": {
+  "desc": "Crea una fuente vacia con el juego de caracteres indicado (0 = ISO 8859, 1 = CP850, 2 = UTF-8).",
+  "params": [
+   "charset"
+  ],
+  "ret": "codigo de la fuente"
+ },
+ "FNT_NEW(IIIIIIII)": {
+  "desc": "Crea una fuente a partir de un grafico con todas las letras en una rejilla de celdas del mismo tamano. Indica el grafico, el juego de caracteres, el ancho y alto de cada celda, el primer y ultimo caracter que contiene y las opciones.",
+  "ejemplo": "fuente = fnt_new(0, g_letras, 0, 8, 8, 32, 127, 0);",
+  "params": [
+   "archivo",
+   "grafico",
+   "charset",
+   "ancho",
+   "alto",
+   "primero",
+   "ultimo",
+   "opciones"
+  ],
+  "ret": "codigo de la fuente, o -1 si el grafico no existe"
+ },
+ "FNT_NEW(IIIIIIIIIIII)": {
+  "desc": "Crea una fuente a partir de un grafico con todas las letras en una rejilla de celdas del mismo tamano. Solo se lee la region (x, y, ancho, alto) del grafico; un ancho o alto de 0 llega hasta el borde.",
+  "params": [
+   "archivo",
+   "grafico",
+   "reg_x",
+   "reg_y",
+   "reg_ancho",
+   "reg_alto",
+   "charset",
+   "ancho",
+   "alto",
+   "primero",
+   "ultimo",
+   "opciones"
+  ],
+  "ret": "codigo de la fuente, o -1"
+ },
+ "FNT_NEW(IIIIIIIIIIIII)": {
+  "desc": "Como FNT_NEW(IIIIIIII), pudiendo fijar el tamano real de la celda, los margenes (izquierdo y superior) dentro del grafico y el espaciado entre letras.",
+  "params": [
+   "archivo",
+   "grafico",
+   "charset",
+   "ancho",
+   "alto",
+   "primero",
+   "ultimo",
+   "opciones",
+   "ancho_celda",
+   "alto_celda",
+   "margen_izq",
+   "margen_sup",
+   "espaciado"
+  ],
+  "ret": "codigo de la fuente, o -1"
+ },
+ "FNT_NEW(IIIIIIIIIIIIIIIII)": {
+  "desc": "Rejilla leida solo dentro de una region del grafico (x, y, ancho, alto; 0 = hasta el borde), con tamano de celda, margenes y espaciado.",
+  "params": [
+   "archivo",
+   "grafico",
+   "reg_x",
+   "reg_y",
+   "reg_ancho",
+   "reg_alto",
+   "charset",
+   "ancho",
+   "alto",
+   "primero",
+   "ultimo",
+   "opciones",
+   "ancho_celda",
+   "alto_celda",
+   "margen_izq",
+   "margen_sup",
+   "espaciado"
+  ],
+  "ret": "codigo de la fuente, o -1"
+ },
+ "FNT_NEW(IIIIIIIIIIIIS)": {
+  "desc": "Como la anterior, con una cadena que da el orden de los caracteres.",
+  "params": [
+   "archivo",
+   "grafico",
+   "reg_x",
+   "reg_y",
+   "reg_ancho",
+   "reg_alto",
+   "charset",
+   "ancho",
+   "alto",
+   "primero",
+   "ultimo",
+   "opciones",
+   "orden"
+  ],
+  "ret": "codigo de la fuente, o -1"
+ },
+ "FNT_NEW(IIIIIIIIIIIISIIIII)": {
+  "desc": "Igual, con la cadena que da el orden de los caracteres.",
+  "params": [
+   "archivo",
+   "grafico",
+   "reg_x",
+   "reg_y",
+   "reg_ancho",
+   "reg_alto",
+   "charset",
+   "ancho",
+   "alto",
+   "primero",
+   "ultimo",
+   "opciones",
+   "orden",
+   "ancho_celda",
+   "alto_celda",
+   "margen_izq",
+   "margen_sup",
+   "espaciado"
+  ],
+  "ret": "codigo de la fuente, o -1"
+ },
+ "FNT_NEW(IIIIIIIIS)": {
+  "desc": "Crea una fuente a partir de un grafico con todas las letras en una rejilla de celdas del mismo tamano. Con una cadena que da el orden real de los caracteres de la rejilla.",
+  "params": [
+   "archivo",
+   "grafico",
+   "charset",
+   "ancho",
+   "alto",
+   "primero",
+   "ultimo",
+   "opciones",
+   "orden"
+  ],
+  "ret": "codigo de la fuente, o -1"
+ },
+ "FNT_NEW(IIIIIIIISIIIII)": {
+  "desc": "Rejilla con orden de caracteres, tamano de celda, margenes y espaciado.",
+  "params": [
+   "archivo",
+   "grafico",
+   "charset",
+   "ancho",
+   "alto",
+   "primero",
+   "ultimo",
+   "opciones",
+   "orden",
+   "ancho_celda",
+   "alto_celda",
+   "margen_izq",
+   "margen_sup",
+   "espaciado"
+  ],
+  "ret": "codigo de la fuente, o -1"
  },
  "FNT_UNLOAD": {
   "desc": "Libera una fuente.",
@@ -4681,6 +5029,36 @@
   ],
   "ret": "la ruta"
  },
+ "GET_REAL_POINT(IDDPP)": {
+  "desc": "Convierte un punto (x, y) en coordenadas del grafico del proceso dado a su posicion real en pantalla, con su giro, tamano y espejo.",
+  "params": [
+   "proceso",
+   "x",
+   "y",
+   "&x_real",
+   "&y_real"
+  ],
+  "ret": "1 si va bien, 0 si no"
+ },
+ "GET_REAL_POINT(IIPP)": {
+  "desc": "Igual, para el proceso con ese identificador.",
+  "params": [
+   "proceso",
+   "punto",
+   "&x",
+   "&y"
+  ],
+  "ret": "1 si va bien, 0 si no"
+ },
+ "GET_REAL_POINT(IPP)": {
+  "desc": "Posicion en pantalla del punto de control numero n del grafico de este proceso, teniendo en cuenta su giro, tamano y espejo. Se escribe en dos variables de tipo double (por referencia). Si el punto no esta definido devuelve la posicion del proceso.",
+  "params": [
+   "punto",
+   "&x",
+   "&y"
+  ],
+  "ret": "1 si va bien, 0 si el punto no existe"
+ },
  "GET_STATUS": {
   "desc": "Estado de un proceso a partir de su identificador (en marcha, dormido, congelado o muerto).",
   "params": [
@@ -4707,6 +5085,24 @@
    "ruta_con_comodines"
   ],
   "ret": "nombre del fichero, vacio al terminar"
+ },
+ "GLYPH_GET": {
+  "desc": "Copia el grafico de un caracter de una fuente en un grafico nuevo y devuelve su codigo, para poder modificarlo.",
+  "params": [
+   "fuente",
+   "caracter"
+  ],
+  "ret": "codigo del grafico nuevo, o 0 si no existe"
+ },
+ "GLYPH_SET": {
+  "desc": "Sustituye el grafico de un caracter de una fuente por otro grafico. Si el grafico tiene 3 o mas puntos de control, el segundo marca el desplazamiento del caracter.",
+  "params": [
+   "fuente",
+   "caracter",
+   "archivo",
+   "grafico"
+  ],
+  "ret": "1 si lo cambia, 0 si no"
  },
  "GRAPHIC_INFO": {
   "desc": "Alias de MAP_INFO de tres parametros: propiedad de un grafico (G_WIDTH, G_HEIGHT, G_CENTER_X, G_CENTER_Y...).",
@@ -5216,6 +5612,111 @@
   ],
   "ret": "longitud"
  },
+ "MAP_BLOCK_COPY(IIIIIIIIII)": {
+  "desc": "Igual, pero origen y destino estan en el mismo archivo (el primero): archivo, grafico_dest, x_dest, y_dest, grafico_orig, x, y, ancho, alto, banderas.",
+  "params": [
+   "archivo",
+   "grafico_dest",
+   "x_dest",
+   "y_dest",
+   "grafico_orig",
+   "x",
+   "y",
+   "ancho",
+   "alto",
+   "banderas"
+  ],
+  "ret": "0 si algun grafico no existe"
+ },
+ "MAP_BLOCK_COPY(IIIIIIIIIII)": {
+  "desc": "Copia un rectangulo (x, y, ancho, alto) de un grafico origen sobre otro grafico destino en (x_dest, y_dest), aplicando las banderas (espejo, etc.).",
+  "ejemplo": "map_block_copy(0, destino, 10, 10, 0, hoja, 32, 0, 32, 32, 0);",
+  "params": [
+   "archivo_dest",
+   "grafico_dest",
+   "x_dest",
+   "y_dest",
+   "archivo_orig",
+   "grafico_orig",
+   "x",
+   "y",
+   "ancho",
+   "alto",
+   "banderas"
+  ],
+  "ret": "0 si algun grafico no existe"
+ },
+ "MAP_BLOCK_COPY(IIIIIIIIIIIBBBB)": {
+  "desc": "Copia un rectangulo (x, y, ancho, alto) de un grafico origen sobre otro grafico destino en (x_dest, y_dest), aplicando las banderas (espejo, etc.). Con tinte r, g, b y alfa (0 a 255).",
+  "params": [
+   "archivo_dest",
+   "grafico_dest",
+   "x_dest",
+   "y_dest",
+   "archivo_orig",
+   "grafico_orig",
+   "x",
+   "y",
+   "ancho",
+   "alto",
+   "banderas",
+   "r",
+   "g",
+   "b",
+   "alfa"
+  ],
+  "ret": "0 si algun grafico no existe"
+ },
+ "MAP_BLOCK_COPY(IIIIIIIIIIIBBBBI)": {
+  "desc": "Copia un rectangulo (x, y, ancho, alto) de un grafico origen sobre otro grafico destino en (x_dest, y_dest), aplicando las banderas (espejo, etc.). Con tinte y modo de mezcla.",
+  "params": [
+   "archivo_dest",
+   "grafico_dest",
+   "x_dest",
+   "y_dest",
+   "archivo_orig",
+   "grafico_orig",
+   "x",
+   "y",
+   "ancho",
+   "alto",
+   "banderas",
+   "r",
+   "g",
+   "b",
+   "alfa",
+   "modo"
+  ],
+  "ret": "0 si algun grafico no existe"
+ },
+ "MAP_BLOCK_COPY(IIIIIIIIIIIBBBBIIIIIII)": {
+  "desc": "Copia un rectangulo (x, y, ancho, alto) de un grafico origen sobre otro grafico destino en (x_dest, y_dest), aplicando las banderas (espejo, etc.). Con tinte y mezcla personalizada (src_rgb, dst_rgb, src_alfa, dst_alfa, ec_rgb, ec_alfa).",
+  "params": [
+   "archivo_dest",
+   "grafico_dest",
+   "x_dest",
+   "y_dest",
+   "archivo_orig",
+   "grafico_orig",
+   "x",
+   "y",
+   "ancho",
+   "alto",
+   "banderas",
+   "r",
+   "g",
+   "b",
+   "alfa",
+   "modo",
+   "src_rgb",
+   "dst_rgb",
+   "src_alfa",
+   "dst_alfa",
+   "ec_rgb",
+   "ec_alfa"
+  ],
+  "ret": "0 si algun grafico no existe"
+ },
  "MAP_CLEAR(II)": {
   "desc": "Limpia un grafico (lo deja transparente).",
   "params": [
@@ -5242,6 +5743,18 @@
    "y1"
   ]
  },
+ "MAP_CLEAR(IIIIIII)": {
+  "desc": "Rellena de un color solo un rectangulo (x0, y0, x1, y1) de un grafico. Las esquinas se ordenan solas.",
+  "params": [
+   "archivo",
+   "grafico",
+   "x0",
+   "y0",
+   "x1",
+   "y1",
+   "color"
+  ]
+ },
  "MAP_CLONE": {
   "desc": "Crea una copia de un grafico y devuelve el codigo de la copia.",
   "params": [
@@ -5264,6 +5777,17 @@
    "grafico"
   ],
   "ret": "1 si existe"
+ },
+ "MAP_GET_PALETTE": {
+  "desc": "Copia en un array n colores de la paleta de un grafico de 8 bits, desde el color primero (4 bytes por color: r, g, b, a).",
+  "params": [
+   "archivo",
+   "grafico",
+   "primero",
+   "n",
+   "&colores"
+  ],
+  "ret": "0 si va bien, -1 si no hay superficie, -2 si no es de 8 bits"
  },
  "MAP_GET_PIXEL": {
   "desc": "Color de un pixel de un grafico (-1 si el grafico no existe).",
@@ -5394,6 +5918,33 @@
    "mezcla"
   ]
  },
+ "MAP_PUT(IIIIIIIIIIBBBBIIIIIII)": {
+  "desc": "Como MAP_PUT con color, pero con una mezcla (blend) personalizada: factor origen y destino de color, factor origen y destino de alfa y ecuaciones de color y de alfa (constantes de OpenGL).",
+  "params": [
+   "archivo_destino",
+   "grafico_destino",
+   "archivo_origen",
+   "grafico_origen",
+   "x",
+   "y",
+   "angulo",
+   "escala_x",
+   "escala_y",
+   "banderas",
+   "r",
+   "g",
+   "b",
+   "alfa",
+   "modo",
+   "src_rgb",
+   "dst_rgb",
+   "src_alfa",
+   "dst_alfa",
+   "ec_rgb",
+   "ec_alfa"
+  ],
+  "ret": "0 si algun grafico no existe"
+ },
  "MAP_PUT_PIXEL": {
   "desc": "Pone un pixel de un color en un grafico.",
   "params": [
@@ -5421,6 +5972,17 @@
    "nombre"
   ]
  },
+ "MAP_SET_PALETTE": {
+  "desc": "Cambia colores de la paleta de un grafico de 8 bits: desde el color primero, n colores tomados de un array de estructuras con r, g, b, a (4 bytes por color). Solo vale en graficos de 8 bits.",
+  "params": [
+   "archivo",
+   "grafico",
+   "primero",
+   "n",
+   "&colores"
+  ],
+  "ret": "0 si va bien, -1 si no hay superficie, -2 si no es de 8 bits"
+ },
  "MAP_UNLOAD": {
   "desc": "Libera un grafico de memoria.",
   "params": [
@@ -5435,6 +5997,112 @@
    "b"
   ],
   "ret": "el mayor"
+ },
+ "MEDIA_GET_DURATION": {
+  "desc": "Duracion total del video en milisegundos. En esta version aun no esta implementada y siempre devuelve -1.",
+  "params": [
+   "video"
+  ],
+  "ret": "-1"
+ },
+ "MEDIA_GET_MUTE": {
+  "desc": "Indica si el audio del video esta silenciado.",
+  "params": [
+   "video"
+  ],
+  "ret": "1 si esta silenciado, 0 si no"
+ },
+ "MEDIA_GET_STATUS": {
+  "desc": "Estado de la reproduccion: -1 = error, 0 = parado, 1 = reproduciendo, 2 = en pausa, 3 = terminado.",
+  "params": [
+   "video"
+  ],
+  "ret": "codigo de estado"
+ },
+ "MEDIA_GET_TIME": {
+  "desc": "Tiempo de reproduccion actual en milisegundos.",
+  "params": [
+   "video"
+  ],
+  "ret": "milisegundos, o -1 si el video no es valido"
+ },
+ "MEDIA_GET_VOLUME": {
+  "desc": "Volumen actual del video.",
+  "params": [
+   "video"
+  ],
+  "ret": "volumen de 0 a 128"
+ },
+ "MEDIA_LOAD(SP)": {
+  "desc": "Abre un video (Theora) para reproducirlo. La imagen del video se va dibujando en un grafico de la biblioteca del sistema, cuyo codigo se escribe en la variable que pases por referencia (usa & delante). Todavia no suena: llama a MEDIA_PLAY.",
+  "ejemplo": "video = media_load(\"intro.ogv\", &g);\nif (video) media_play(video); put(0, g, 320, 240); end",
+  "params": [
+   "archivo",
+   "&grafico"
+  ],
+  "ret": "manejador del video, o 0 si no se pudo abrir"
+ },
+ "MEDIA_LOAD(SPI)": {
+  "desc": "Igual, con un tiempo maximo de espera (timeout) para operaciones de red.",
+  "params": [
+   "archivo",
+   "&grafico",
+   "timeout"
+  ],
+  "ret": "manejador del video, o 0"
+ },
+ "MEDIA_PAUSE(P)": {
+  "desc": "Pausa la reproduccion.",
+  "params": [
+   "video"
+  ]
+ },
+ "MEDIA_PAUSE(PI)": {
+  "desc": "Pausa (valor distinto de 0) o reanuda (0) la reproduccion.",
+  "params": [
+   "video",
+   "pausar"
+  ]
+ },
+ "MEDIA_PLAY": {
+  "desc": "Empieza la reproduccion. Si estaba parado o terminado, lo reabre desde el principio.",
+  "params": [
+   "video"
+  ],
+  "ret": "0 si va bien, -1 si hay error"
+ },
+ "MEDIA_RESUME": {
+  "desc": "Reanuda un video en pausa.",
+  "params": [
+   "video"
+  ]
+ },
+ "MEDIA_SET_MUTE": {
+  "desc": "Silencia (1) o activa (0) el audio del video.",
+  "params": [
+   "video",
+   "silenciar"
+  ]
+ },
+ "MEDIA_SET_VOLUME": {
+  "desc": "Cambia el volumen del video, de 0 a 128 (fuera de ese rango no hace nada y devuelve -1).",
+  "params": [
+   "video",
+   "volumen"
+  ],
+  "ret": "el volumen anterior, o -1"
+ },
+ "MEDIA_STOP": {
+  "desc": "Detiene la reproduccion y libera lo que usa para decodificar.",
+  "params": [
+   "video"
+  ]
+ },
+ "MEDIA_UNLOAD": {
+  "desc": "Cierra el video y libera sus recursos.",
+  "params": [
+   "video"
+  ]
  },
  "MEMCMP": {
   "desc": "Compara dos bloques de memoria byte a byte: 0 si son iguales.",
@@ -5887,6 +6555,54 @@
   "desc": "Alias antiguo de JOY_NUMJOYSTICKS.",
   "ret": "cantidad de mandos"
  },
+ "PATH_DESTROY": {
+  "desc": "Libera la cuadricula creada con PATH_NEW.",
+  "params": [
+   "cuadricula"
+  ]
+ },
+ "PATH_FIND(PIIIII)": {
+  "desc": "Busca el camino mas corto de (x0, y0) a (x1, y1) con el algoritmo A*, en 4 direcciones o en 8 si opciones incluye 1 (PF_DIAG). Devuelve una lista de pares x, y que acaba en el par -1, -1.",
+  "ejemplo": "ruta = path_find(mapa, 5, 5, 40, 30, 1);\nif (ruta)\n    i = 0;\n    while (ruta[i] != -1) say(\"paso \" + ruta[i] + \",\" + ruta[i+1]); i += 2; end\n    path_free_results(ruta);\nend",
+  "params": [
+   "cuadricula",
+   "x0",
+   "y0",
+   "x1",
+   "y1",
+   "opciones"
+  ],
+  "ret": "puntero a la lista de puntos (hay que liberarla con PATH_FREE_RESULTS), o 0 si no hay camino"
+ },
+ "PATH_FIND(PIIIIIII)": {
+  "desc": "Igual, con peso (1 = A* normal; mas alto da prioridad a la heuristica y es mas rapido pero menos exacto) y heuristica: 0 = Manhattan, 1 = euclidea, 2 = octil, 3 = Chebyshev.",
+  "params": [
+   "cuadricula",
+   "x0",
+   "y0",
+   "x1",
+   "y1",
+   "opciones",
+   "peso",
+   "heuristica"
+  ],
+  "ret": "puntero a la lista de puntos, o 0 si no hay camino"
+ },
+ "PATH_FREE_RESULTS": {
+  "desc": "Libera la lista de puntos que devolvio PATH_FIND. Hay que llamarla siempre.",
+  "params": [
+   "lista"
+  ]
+ },
+ "PATH_NEW": {
+  "desc": "Crea una cuadricula de busqueda de caminos a partir de un grafico: cada pixel NEGRO (color 0 / transparente) es transitable y cualquier otro color es un obstaculo. Cada pixel es una celda.",
+  "ejemplo": "mapa = path_new(0, g_mapa);",
+  "params": [
+   "archivo",
+   "grafico"
+  ],
+  "ret": "manejador de la cuadricula, o 0 si no pudo"
+ },
  "POINT_GET": {
   "desc": "Lee un punto de control de un grafico en dos variables que se pasan por puntero. El punto 0 sin definir da el centro del grafico. Devuelve 0 si el punto no existe.",
   "params": [
@@ -6090,6 +6806,18 @@
   ],
   "ret": "el color"
  },
+ "RGBA_GET(IIIPPPP)": {
+  "desc": "Descompone un color de un grafico en rojo, verde, azul y alfa (0 a 255), escritos en las variables por referencia.",
+  "params": [
+   "archivo",
+   "grafico",
+   "color",
+   "&r",
+   "&g",
+   "&b",
+   "&a"
+  ]
+ },
  "RGBA_GET(IPPPP)": {
   "desc": "Separa un color en rojo, verde, azul y alfa, en cuatro variables que se pasan por puntero.",
   "params": [
@@ -6098,6 +6826,17 @@
    "&g",
    "&b",
    "&alfa"
+  ]
+ },
+ "RGB_GET(IIIPPP)": {
+  "desc": "Descompone un color de un grafico en rojo, verde y azul (0 a 255), escritos en las variables por referencia.",
+  "params": [
+   "archivo",
+   "grafico",
+   "color",
+   "&r",
+   "&g",
+   "&b"
   ]
  },
  "RGB_GET(IPPP)": {
@@ -6163,6 +6902,56 @@
   "desc": "Captura la pantalla en un grafico nuevo y devuelve su codigo (0 si falla). Sirve para guardar una captura con MAP_SAVE.",
   "ejemplo": "g = screen_get();\nmap_save(0, g, \"captura.png\");",
   "ret": "codigo del grafico"
+ },
+ "SCROLL_MOVE": {
+  "desc": "Actualiza el scroll n siguiendo a su proceso camara (ctype = c_scroll).",
+  "params": [
+   "n"
+  ]
+ },
+ "SCROLL_START(IIIIII)": {
+  "desc": "Igual, usando el mismo archivo para el fondo y el fondo lejano.",
+  "params": [
+   "n",
+   "archivo",
+   "grafico",
+   "grafico_lejano",
+   "region",
+   "banderas"
+  ]
+ },
+ "SCROLL_START(IIIIIII)": {
+  "desc": "Crea el scroll numero n: un fondo de mapa grande que se desplaza con una camara (n debe ser menor que el maximo de scrolls del motor; fuera de rango no hace nada). Indica el archivo y grafico del fondo, el archivo y grafico del fondo lejano (para el efecto parallax), la region donde se dibuja y las banderas (repeticion horizontal y vertical, etc.). Despues se mueve con las variables de scroll[n] (x0, y0...) y SCROLL_MOVE.",
+  "ejemplo": "scroll_start(0, fpg, 1, fpg, 2, 0, 3);",
+  "params": [
+   "n",
+   "archivo",
+   "grafico",
+   "archivo_lejano",
+   "grafico_lejano",
+   "region",
+   "banderas"
+  ]
+ },
+ "SCROLL_START(IIIIIIIII)": {
+  "desc": "Igual que la primera forma, y ademas indica el archivo y el grafico de destino donde se dibuja el scroll (en vez de la pantalla).",
+  "params": [
+   "n",
+   "archivo",
+   "grafico",
+   "archivo_lejano",
+   "grafico_lejano",
+   "region",
+   "banderas",
+   "archivo_destino",
+   "grafico_destino"
+  ]
+ },
+ "SCROLL_STOP": {
+  "desc": "Detiene el scroll numero n y lo quita de la pantalla.",
+  "params": [
+   "n"
+  ]
  },
  "SELECT_JOY": {
   "desc": "Alias antiguo de JOY_SELECT.",
@@ -6234,6 +7023,152 @@
    "valor"
   ],
   "ret": "el signo"
+ },
+ "SHADER_CREATE": {
+  "desc": "Compila un shader a partir del texto del vertex shader y del fragment shader (cadenas con el codigo, no nombres de archivo). Los shaders se escriben en GLSL; solo hay soporte cuando el motor grafico lo permite (con SDL_gpu).",
+  "params": [
+   "vertice",
+   "fragmento"
+  ],
+  "ret": "manejador del shader, o 0 si falla la compilacion"
+ },
+ "SHADER_CREATE_PARAMS": {
+  "desc": "Crea un conjunto de valores para los uniforms con espacio para n parametros. Se asocia a un grafico o proceso para que el shader los reciba.",
+  "params": [
+   "n"
+  ],
+  "ret": "manejador del conjunto de parametros"
+ },
+ "SHADER_FREE": {
+  "desc": "Libera un shader.",
+  "params": [
+   "shader"
+  ]
+ },
+ "SHADER_FREE_PARAMS": {
+  "desc": "Libera un conjunto de parametros.",
+  "params": [
+   "parametros"
+  ]
+ },
+ "SHADER_GETATTRIBUTELOCATION": {
+  "desc": "Reservada: ahora mismo no esta disponible (la implementacion esta desactivada). Para los uniformes usa SHADER_GET_PARAM_LOCATION.",
+  "params": [
+   "shader",
+   "nombre"
+  ]
+ },
+ "SHADER_GET_LANGUAGE": {
+  "desc": "Lenguaje de shaders que soporta el motor grafico (constantes SHADER_LANGUAGE_*: GLSL, GLSL ES, HLSL...). -1 si no hay soporte.",
+  "ret": "codigo del lenguaje"
+ },
+ "SHADER_GET_MAX_VERSION": {
+  "desc": "Version maxima de shader soportada, o -1 si no hay soporte.",
+  "ret": "version"
+ },
+ "SHADER_GET_MIN_VERSION": {
+  "desc": "Version minima de shader soportada, o -1 si no hay soporte.",
+  "ret": "version"
+ },
+ "SHADER_GET_PARAM(PIPP)": {
+  "desc": "Lee un uniform entero o decimal del conjunto de parametros: escribe su tipo y un puntero al valor.",
+  "params": [
+   "parametros",
+   "posicion",
+   "&tipo",
+   "&valor"
+  ],
+  "ret": "0 si va bien, -1 si no"
+ },
+ "SHADER_GET_PARAM(PIPPP)": {
+  "desc": "Lee un uniform de tipo vector o array: escribe el tipo, el numero de valores y un puntero a ellos.",
+  "params": [
+   "parametros",
+   "posicion",
+   "&tipo",
+   "&n",
+   "&valores"
+  ],
+  "ret": "0 si va bien, -1 si no"
+ },
+ "SHADER_GET_PARAM(PIPPPPPP)": {
+  "desc": "Lee un uniform de matriz: escribe el tipo, un puntero a los valores, el numero de matrices, las filas, las columnas y si estan transpuestas.",
+  "params": [
+   "parametros",
+   "posicion",
+   "&tipo",
+   "&valores",
+   "&n_matrices",
+   "&filas",
+   "&columnas",
+   "&transponer"
+  ],
+  "ret": "0 si va bien, -1 si no"
+ },
+ "SHADER_GET_PARAM_LOCATION": {
+  "desc": "Posicion de una variable uniform del shader por su nombre; hace falta para fijarle valor con SHADER_SET_PARAM.",
+  "params": [
+   "shader",
+   "nombre"
+  ],
+  "ret": "posicion, o -1 si no existe"
+ },
+ "SHADER_SET_PARAM(PIIF)": {
+  "desc": "Fija un uniform decimal (tipo UNIFORM_FLOAT).",
+  "params": [
+   "parametros",
+   "tipo",
+   "posicion",
+   "valor"
+  ],
+  "ret": "0 si va bien, -1 si no"
+ },
+ "SHADER_SET_PARAM(PIII)": {
+  "desc": "Fija un uniform entero: el tipo debe ser UNIFORM_INT o UNIFORM_UINT.",
+  "params": [
+   "parametros",
+   "tipo",
+   "posicion",
+   "valor"
+  ],
+  "ret": "0 si va bien, -1 si no"
+ },
+ "SHADER_SET_PARAM(PIIIII)": {
+  "desc": "Pasa una imagen al shader (tipo SHADER_IMAGE): el grafico (archivo y grafico) y la unidad de textura que usa.",
+  "params": [
+   "parametros",
+   "tipo",
+   "posicion",
+   "archivo",
+   "grafico",
+   "unidad"
+  ],
+  "ret": "0 si va bien, -1 si no"
+ },
+ "SHADER_SET_PARAM(PIIIP)": {
+  "desc": "Fija un uniform de tipo array o vector (UNIFORM_INT_ARRAY, UNIFORM_FLOAT2_ARRAY, UNIFORM_FLOAT3_ARRAY, UNIFORM_FLOAT4_ARRAY, etc.): n valores tomados de la memoria apuntada.",
+  "params": [
+   "parametros",
+   "tipo",
+   "posicion",
+   "n",
+   "&valores"
+  ],
+  "ret": "0 si va bien, -1 si no"
+ },
+ "SHADER_SET_PARAM(PIIPIIII)": {
+  "desc": "Fija un uniform de matriz (tipo UNIFORM_MATRIX): puntero a los valores, numero de matrices, filas y columnas, y si hay que transponerlas (1) o no (0).",
+  "params": [
+   "parametros",
+   "tipo",
+   "posicion",
+   "&valores",
+   "n_matrices",
+   "filas",
+   "columnas",
+   "transponer"
+  ],
+  "ret": "0 si va bien, -1 si no"
  },
  "SIGNAL": {
   "desc": "Envia una senal a un proceso (por su identificador o por su tipo con TYPE nombre), o a todos con ALL_PROCESS. Las senales habituales son S_KILL (matarlo), S_SLEEP, S_FREEZE y S_WAKEUP; sumando S_TREE se aplica tambien a sus hijos.",
@@ -6558,6 +7493,13 @@
   ],
   "ret": "la tangente"
  },
+ "TEXTURE_SET_QUALITY": {
+  "desc": "Calidad de filtrado de las texturas al escalar: Q_NEAREST (0, pixelado, por defecto) o Q_LINEAR (suavizado). Afecta a los graficos creados despues.",
+  "ejemplo": "texture_set_quality(Q_LINEAR);",
+  "params": [
+   "calidad"
+  ]
+ },
  "TEXT_HEIGHT": {
   "desc": "Alto en pixeles que ocupa un texto con una fuente.",
   "params": [
@@ -6630,6 +7572,20 @@
    "valor"
   ],
   "ret": "el entero"
+ },
+ "TTF_GET_FAMILY": {
+  "desc": "Nombre de la familia de una fuente TTF (por ejemplo \"DejaVu Sans\").",
+  "params": [
+   "fuente"
+  ],
+  "ret": "texto"
+ },
+ "TTF_GET_STYLE": {
+  "desc": "Estilo de una fuente TTF (por ejemplo \"Bold\").",
+  "params": [
+   "fuente"
+  ],
+  "ret": "texto"
  },
  "TTF_LOAD": {
   "desc": "Carga una fuente TrueType (.ttf) y devuelve su identificador. Se usa igual que una fuente .fnt en WRITE. Ajusta su tamano con TTF_SET_SIZE.",
@@ -6977,6 +7933,9 @@
  "WINDOW_RESTORE": {
   "desc": "Restaura la ventana."
  },
+ "WINDOW_SET_DPI_AWARE": {
+  "desc": "En Windows, avisa de que el programa gestiona pantallas de alta densidad para que el sistema no escale la ventana. En otros sistemas no hace nada."
+ },
  "WINDOW_SET_ICON": {
   "desc": "Pone el icono de la ventana a partir de un grafico.",
   "params": [
@@ -7039,6 +7998,29 @@
    "texto"
   ]
  },
+ "WRITE_GET_RGBA": {
+  "desc": "Lee el color de un texto en pantalla (r, g, b y alfa en las variables por referencia).",
+  "params": [
+   "texto",
+   "&r",
+   "&g",
+   "&b",
+   "&a"
+  ]
+ },
+ "WRITE_IN_MAP(IIIIISI)": {
+  "desc": "Escribe un texto dentro de un grafico (no en pantalla): archivo y grafico de destino, fuente, posicion, texto y alineacion.",
+  "params": [
+   "archivo",
+   "grafico",
+   "fuente",
+   "x",
+   "y",
+   "texto",
+   "alineacion"
+  ],
+  "ret": "1 si lo escribe, 0 si no (texto vacio o grafico invalido)"
+ },
  "WRITE_IN_MAP(ISI)": {
   "desc": "Dibuja un texto dentro de un grafico nuevo y devuelve su codigo, en vez de ponerlo en pantalla.",
   "params": [
@@ -7064,6 +8046,41 @@
    "y",
    "z"
   ]
+ },
+ "WRITE_SET_RGBA": {
+  "desc": "Cambia el color de un texto en pantalla (r, g, b y alfa de 0 a 255).",
+  "params": [
+   "texto",
+   "r",
+   "g",
+   "b",
+   "alfa"
+  ]
+ },
+ "WRITE_VALUE(IIIIIIP)": {
+  "desc": "Igual, indicando tambien la profundidad (z).",
+  "params": [
+   "fuente",
+   "x",
+   "y",
+   "z",
+   "alineacion",
+   "tipo",
+   "&variable"
+  ],
+  "ret": "identificador del texto"
+ },
+ "WRITE_VALUE(IIIIIP)": {
+  "desc": "Escribe en pantalla el valor de una variable y lo mantiene actualizado cada frame: fuente, x, y, alineacion, el codigo de tipo de la variable (el de BennuGD: entero, cadena...) y un puntero a la variable. Para el caso normal es mas comodo WRITE_INT o WRITE_VAR.",
+  "params": [
+   "fuente",
+   "x",
+   "y",
+   "alineacion",
+   "tipo",
+   "&variable"
+  ],
+  "ret": "identificador del texto"
  },
  "WRITE_VAR(IIIIIV++)": {
   "desc": "Igual, indicando tambien la profundidad (z).",

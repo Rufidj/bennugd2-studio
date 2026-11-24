@@ -114,4 +114,30 @@ int h2_guess_grid(const H2Rect *frames, int n, int sheet_w, int sheet_h,
 }
 #endif
 
+
+#ifdef __cplusplus
+#include <map>
+#include <string>
+/* Cache de miniaturas de imagenes (texturas del panel de pintura): se cargan a razon de 3 por fotograma. */
+struct Miniaturas {
+    std::map<std::string, H2Img> cache;
+    int cargas = 0;
+    void frame() {
+        cargas = 0;
+        if (cache.size() > 350) { for (auto& kv : cache) if (kv.second.tex) h2_free_image(&kv.second); cache.clear(); }
+    }
+    // nullptr = aun sin cargar
+    H2Img* get(const std::string& ruta) {
+        auto it = cache.find(ruta);
+        if (it != cache.end()) return it->second.tex ? &it->second : nullptr;
+        if (cargas >= 3) return nullptr;
+        cargas++;
+        H2Img im = {0, 0, 0};
+        h2_load_thumb(ruta.c_str(), 96, &im);
+        auto ins = cache.emplace(ruta, im).first;
+        return ins->second.tex ? &ins->second : nullptr;
+    }
+};
+#endif
+
 #endif

@@ -1034,6 +1034,13 @@ static CompInfo *g_cm_info = NULL;
 
 static int cm_find(int *p, int x) { while (p[x] != x) { p[x] = p[p[x]]; x = p[x]; } return x; }
 
+/* Olvida los componentes calculados: hay que llamarlo antes de liberar el modelo (si no, un modelo nuevo en la
+   misma direccion de memoria reutilizaria los componentes del anterior). */
+void g3d_editor_comp_reset(void) {
+    free(g_cm_tricomp); free(g_cm_off); free(g_cm_info);
+    g_cm_tricomp = NULL; g_cm_off = NULL; g_cm_info = NULL; g_cm_n = 0; g_cm_total = 0; g_cm_model = NULL;
+}
+
 int g3d_editor_comp_build(void *model_ptr) {
     G3DModel *model = (G3DModel *)model_ptr;
     if (!model) return 0;

@@ -1,6 +1,6 @@
 # Referencia de la API
 
-Generada automaticamente desde los modulos del motor (1150 funciones, 1027 documentadas).
+Generada automaticamente desde los modulos del motor (1150 funciones, 1084 documentadas).
 
 ## Modulo 3d
 ### camera
@@ -3647,17 +3647,39 @@ Alias antiguo de JOY_GETAXIS.
 
 ## Modulo misc
 ### general
-#### `crypt_new(int, pointer) -> pointer`
+#### `crypt_new(int metodo, pointer &clave) -> pointer`
+Crea un cifrador con un metodo (CRYPT_NONE, CRYPT_DES o CRYPT_3DES) y una clave: un puntero a 8 bytes para DES o a 24 bytes para 3DES. Se usa con CRYPT_ENCRYPT y CRYPT_DECRYPT y se libera con CRYPT_DEL.
 
-#### `crypt_del(pointer) -> int`
+**Devuelve:** manejador del cifrador, o 0 si la clave no es valida
 
-#### `crypt_encrypt(pointer, pointer, pointer, int) -> int`
+#### `crypt_del(pointer cifrador) -> int`
+Libera un cifrador creado con CRYPT_NEW.
 
-#### `crypt_decrypt(pointer, pointer, pointer, int) -> int`
+#### `crypt_encrypt(pointer cifrador, pointer &origen, pointer &destino, int bloques) -> int`
+Cifra n bloques de 8 bytes de un buffer a otro con un cifrador ya creado. Cifra bloques de 8 bytes (DES o 3DES, modo ECB: sin encadenar bloques). El tamano de los datos debe ser multiplo de 8.
 
-#### `crypt_encrypt(int, pointer, pointer, pointer, int) -> int`
+**Devuelve:** 0 si va bien, -1 si hay error
 
-#### `crypt_decrypt(int, pointer, pointer, pointer, int) -> int`
+```
+c = crypt_new(CRYPT_DES, &clave);
+crypt_encrypt(c, &texto, &cifrado, 4);
+crypt_del(c);
+```
+
+#### `crypt_decrypt(pointer cifrador, pointer &origen, pointer &destino, int bloques) -> int`
+Descifra n bloques de 8 bytes de un buffer a otro con un cifrador ya creado. Cifra bloques de 8 bytes (DES o 3DES, modo ECB: sin encadenar bloques). El tamano de los datos debe ser multiplo de 8.
+
+**Devuelve:** 0 si va bien, -1 si hay error
+
+#### `crypt_encrypt(int metodo, pointer &clave, pointer &origen, pointer &destino, int bloques) -> int`
+Cifra sin crear antes un cifrador: indicas directamente el metodo y la clave. Cifra bloques de 8 bytes (DES o 3DES, modo ECB: sin encadenar bloques). El tamano de los datos debe ser multiplo de 8.
+
+**Devuelve:** 0 si va bien, -1 si hay error
+
+#### `crypt_decrypt(int metodo, pointer &clave, pointer &origen, pointer &destino, int bloques) -> int`
+Descifra sin crear antes un cifrador: indicas directamente el metodo y la clave. Cifra bloques de 8 bytes (DES o 3DES, modo ECB: sin encadenar bloques). El tamano de los datos debe ser multiplo de 8.
+
+**Devuelve:** 0 si va bien, -1 si hay error
 
 #### `cd() -> string`
 Carpeta de trabajo actual.
@@ -3981,15 +4003,37 @@ Indica si un decimal es un numero normal (ni infinito ni NaN).
 
 **Devuelve:** 1 si es finito
 
-#### `intersect(double, double, double, double, double, double, double, double, pointer, pointer) -> int`
+#### `intersect(double x1, double y1, double x2, double y2, double x3, double y3, double x4, double y4, pointer &x, pointer &y) -> int`
+Calcula donde se cortan dos SEGMENTOS: (x1, y1)-(x2, y2) y (x3, y3)-(x4, y4). Si se cortan escribe el punto en las dos variables double por referencia.
 
-#### `intersect_line_circle(double, double, double, double, double, double, double, pointer, pointer, pointer, pointer) -> int`
+**Devuelve:** 1 si se cortan, 0 si no
 
-#### `intersect_circle(double, double, double, double, double, double, pointer, pointer, pointer, pointer) -> int`
+```
+double ix, iy;
+if (intersect(0, 0, 10, 10, 0, 10, 10, 0, &ix, &iy))
+    say("se cruzan en " + ix + "," + iy);
+end
+```
 
-#### `ortho(double, double, double, double, double, double, pointer, pointer) -> double`
+#### `intersect_line_circle(double x1, double y1, double x2, double y2, double cx, double cy, double r, pointer &xa, pointer &ya, pointer &xb, pointer &yb) -> int`
+Calcula donde corta un SEGMENTO (x1, y1)-(x2, y2) a una circunferencia de centro (cx, cy) y radio r. Escribe hasta dos puntos en las variables double por referencia.
 
-#### `project(double, double, double, double, double, double, pointer, pointer, pointer, pointer) -> double`
+**Devuelve:** numero de puntos de corte (0, 1 o 2); solo se escriben los que existen
+
+#### `intersect_circle(double cx1, double cy1, double cx2, double cy2, double r1, double r2, pointer &xa, pointer &ya, pointer &xb, pointer &yb) -> int`
+Calcula donde se cortan dos circunferencias: centro (cx1, cy1) y (cx2, cy2) con radios r1 y r2. Escribe hasta dos puntos en las variables double por referencia.
+
+**Devuelve:** numero de puntos de corte (0, 1 o 2); solo se escriben los que existen
+
+#### `ortho(double x1, double y1, double x2, double y2, double px, double py, pointer &x, pointer &y) -> double`
+Proyeccion ortogonal de un punto sobre un segmento: el punto del segmento (x1, y1)-(x2, y2) mas cercano a (px, py). Lo escribe en dos variables double.
+
+**Devuelve:** distancia (double) del punto al segmento
+
+#### `project(double x1, double y1, double x2, double y2, double px, double py, pointer &xa, pointer &ya, pointer &xb, pointer &yb) -> double`
+Recta paralela a un segmento que pasa por un punto: devuelve el segmento (x1, y1)-(x2, y2) desplazado en perpendicular hasta (px, py). Escribe sus dos extremos en variables double.
+
+**Devuelve:** distancia (double) entre las dos rectas paralelas
 
 #### `fget_angle(double x0, double y0, double x1, double y1) -> int`
 Angulo en milesimas de grado desde el punto (x0, y0) hasta (x1, y1), con la Y de pantalla creciendo hacia abajo: 0 = hacia la derecha, 90000 = hacia arriba.
@@ -4137,11 +4181,20 @@ Alias de MEMCMP.
 #### `mem_set(pointer, int, int) -> int`
 Alias de MEMSET.
 
-#### `mem_setw(pointer, int, int) -> int`
+#### `mem_setw(pointer &destino, int valor, int n) -> int`
+Rellena memoria con valores de 16 bits (word). Escribe el mismo valor n veces seguidas en memoria desde el puntero, con el ancho indicado.
 
-#### `mem_setd(pointer, int, int) -> int`
+**Devuelve:** 1
 
-#### `mem_seti(pointer, int, int) -> int`
+#### `mem_setd(pointer &destino, int valor, int n) -> int`
+Rellena memoria con valores de 32 bits (dword). Escribe el mismo valor n veces seguidas en memoria desde el puntero, con el ancho indicado.
+
+**Devuelve:** 1
+
+#### `mem_seti(pointer &destino, int valor, int n) -> int`
+Rellena memoria con valores de 64 bits (int). Escribe el mismo valor n veces seguidas en memoria desde el puntero, con el ancho indicado.
+
+**Devuelve:** 1
 
 #### `mem_copy(pointer, pointer, int) -> int`
 Alias de MEMCOPY.
@@ -4183,11 +4236,20 @@ Compara dos bloques de memoria byte a byte: 0 si son iguales.
 #### `memset(pointer puntero, int valor, int bytes) -> int`
 Rellena 'bytes' bytes de memoria con el valor de un byte.
 
-#### `memsetw(pointer, int, int) -> int`
+#### `memsetw(pointer &destino, int valor, int n) -> int`
+Igual que MEM_SETW (nombre alternativo).
 
-#### `memsetd(pointer, int, int) -> int`
+**Devuelve:** 1
 
-#### `memseti(pointer, int, int) -> int`
+#### `memsetd(pointer &destino, int valor, int n) -> int`
+Igual que MEM_SETD (nombre alternativo).
+
+**Devuelve:** 1
+
+#### `memseti(pointer &destino, int valor, int n) -> int`
+Igual que MEM_SETI (nombre alternativo).
+
+**Devuelve:** 1
 
 #### `memcopy(pointer destino, pointer origen, int bytes) -> int`
 Copia 'bytes' bytes de memoria de un sitio a otro (no deben solaparse; para eso, MEMMOVE).
@@ -4201,6 +4263,9 @@ Memoria fisica libre, en bytes (solo informativo; puede ser aproximado).
 **Devuelve:** bytes libres
 
 #### `memory_total() -> int`
+Memoria fisica total del sistema, en bytes (el calculo depende de la plataforma).
+
+**Devuelve:** bytes
 
 #### `get_id(int tipo) -> int`
 Recorre los procesos de un tipo (TYPE nombre): cada llamada devuelve el identificador del siguiente y 0 cuando no quedan. Con 0 recorre todos los procesos.
@@ -4230,9 +4295,15 @@ Envia una senal a un proceso (por su identificador o por su tipo con TYPE nombre
 signal(TYPE enemigo, S_KILL);   // quita todos los enemigos
 ```
 
-#### `signal_action(int, int) -> int`
+#### `signal_action(int senal, int accion) -> int`
+Cambia como reacciona ESTE proceso a una senal: la senal (S_KILL, S_WAKEUP, S_SLEEP o S_FREEZE) y la accion (S_IGN = ignorarla, S_DFL = comportamiento normal).
 
-#### `signal_action(int, int, int) -> int`
+```
+signal_action(S_KILL, S_IGN);   // este proceso no muere con signal(0, S_KILL)
+```
+
+#### `signal_action(int proceso, int senal, int accion) -> int`
+Igual para otro proceso, para todos los de un tipo (pasando el tipo de proceso) o para todos (ALL_PROCESS).
 
 #### `let_me_alone() -> int`
 Mata a todos los procesos menos al que la llama.
@@ -4252,12 +4323,26 @@ Indica si un proceso esta vivo, por su identificador o por su tipo (TYPE nombre)
 **Devuelve:** 1 si existe
 
 #### `pause() -> int`
+Pausa TODOS los procesos excepto el que la llama. Reanuda con RESUME. Es lo habitual para un menu de pausa.
+
+**Devuelve:** 0
+
+```
+pause();
+// ... menu de pausa ...
+resume();
+```
 
 #### `resume() -> int`
+Reanuda todos los procesos pausados con PAUSE.
 
-#### `pause(int) -> int`
+**Devuelve:** 0
 
-#### `resume(int) -> int`
+#### `pause(int proceso) -> int`
+No disponible: la version con un proceso concreto esta desactivada en esta version del motor.
+
+#### `resume(int proceso) -> int`
+No disponible: la version con un proceso concreto esta desactivada en esta version del motor.
 
 #### `rand_seed(int semilla) -> int`
 Fija la semilla del generador de numeros al azar: con la misma semilla salen siempre los mismos numeros.
@@ -4271,9 +4356,25 @@ Numero entero al azar entre dos valores, ambos incluidos (el orden da igual).
 dado = rand(1, 6);
 ```
 
-#### `regex(string, string) -> int`
+#### `regex(string patron, string texto) -> int`
+Busca una expresion regular (sintaxis POSIX extendida, sin distinguir mayusculas) en una cadena. Si hay coincidencia devuelve su posicion y rellena REGEX_REG[0] con el texto que coincide y REGEX_REG[1..15] con los grupos entre parentesis.
 
-#### `regex_replace(string, string, string) -> string`
+**Devuelve:** posicion de la coincidencia, o -1 si no hay
+
+```
+if (regex("([0-9]+)-([0-9]+)", "rango 10-20") != -1)
+    say(regex_reg[1] + " a " + regex_reg[2]);
+end
+```
+
+#### `regex_replace(string patron, string reemplazo, string texto) -> string`
+Sustituye en un texto cada coincidencia de una expresion regular por otro texto (en el reemplazo se aceptan \0 a \9 para insertar los grupos). OJO al orden: patron, REEMPLAZO y luego el texto. REGEX_REG queda rellenado con la primera coincidencia.
+
+**Devuelve:** el texto resultante
+
+```
+say(regex_replace("[0-9]+", "#", "a1b22c333"));   // a#b#c#
+```
 
 #### `split(string separador, string texto, pointer &trozos, int max) -> int`
 Parte una cadena por un separador (expresion regular) y guarda los trozos en un array de cadenas. Devuelve cuantos trozos salieron.
@@ -4295,7 +4396,14 @@ say("vidas: " + itoa(vidas));
 #### `say_fast(string texto)`
 Como SAY pero sin esperar a volcar la salida: mas rapida, para mensajes muy frecuentes.
 
-#### `isort(pointer, int, int, int, byte, byte) -> int`
+#### `isort(pointer &array, int tam_elemento, int n, int desplazamiento, byte tam_clave, byte tipo) -> int`
+Ordena un array de estructuras en memoria (quicksort) por una clave: puntero al array, tamano de cada elemento en bytes, numero de elementos, desplazamiento de la clave dentro del elemento, tamano de la clave en bytes y tipo de la clave (0 = entero, 1 = decimal).
+
+**Devuelve:** 1
+
+```
+isort(&jugadores, sizeof(jugadores[0]), 10, 0, 8, 0);
+```
 
 #### `ksort(... array, ? clave, ?, ..., ?, ?) -> int`
 Ordena un array de estructuras usando como clave la variable que se indica.
@@ -4443,27 +4551,56 @@ Valor de una variable de entorno del sistema (cadena vacia si no existe).
 
 **Devuelve:** el valor
 
-#### `exec(int, string, int, pointer) -> int`
+#### `exec(int modo, string programa, int n_args, pointer &argumentos) -> int`
+Ejecuta un programa externo: modo (_P_WAIT espera a que termine y devuelve su codigo de salida; _P_NOWAIT devuelve su identificador de proceso del sistema), nombre del programa, numero de argumentos y un array de cadenas con los argumentos. No esta disponible en Switch, PS3 ni PS5 (devuelve -1).
 
-#### `system_keyboard_open(string, string, int, int) -> int`
+**Devuelve:** codigo de salida o identificador, -1 si falla
+
+#### `system_keyboard_open(string titulo, string texto_inicial, int maximo, int banderas) -> int`
+Abre el teclado en pantalla del sistema: titulo, texto inicial, maximo de caracteres (hasta 2048) y banderas (1 = contrasena; 2 = tipo de teclado alternativo, pensado para numeros). Es un dialogo del sistema: solo existe de verdad en PS5 y Android; en PC devuelve -100 (el programa debe usar su propio teclado).
+
+**Devuelve:** 0 si se abrio, -2 si ya hay uno abierto, -3 si no pudo iniciarse, -100 si no hay teclado del sistema
 
 #### `system_keyboard_status() -> int`
+Estado del teclado del sistema: 0 = cerrado, 1 = abierto (el usuario escribe), 2 = terminado. Llamala cada frame hasta que sea 2. Es un dialogo del sistema: solo existe de verdad en PS5 y Android; en PC devuelve -100 (el programa debe usar su propio teclado).
+
+**Devuelve:** estado
 
 #### `system_keyboard_ok() -> int`
+Una vez terminado, indica si el usuario acepto (1) o cancelo (0).
+
+**Devuelve:** 1 o 0
 
 #### `system_keyboard_text() -> string`
+Texto escrito por el usuario (vacio si cancelo o aun no ha terminado).
+
+**Devuelve:** texto
 
 #### `system_keyboard_close() -> int`
+Cierra el teclado del sistema (lo aborta si seguia abierto).
 
-#### `system_progress_open(string, int) -> int`
+#### `system_progress_open(string titulo, int banderas) -> int`
+Abre una barra de progreso del sistema con un titulo; banderas = 1 anade boton de cancelar. Es una barra del sistema: en PS5 no esta disponible aun en las consolas probadas y en PC solo simula (si existe la variable de entorno MP_FAKE_PROGRESS escribe en la consola); el programa debe dibujar su propio progreso.
 
-#### `system_progress_set(int) -> int`
+**Devuelve:** 0 si se abrio, -2 si ya hay una, -6 si no esta disponible, -100 en PC
 
-#### `system_progress_message(string) -> int`
+#### `system_progress_set(int porcentaje) -> int`
+Fija el porcentaje de la barra de progreso (0 a 100).
+
+**Devuelve:** resultado, o -1 si no hay barra abierta
+
+#### `system_progress_message(string mensaje) -> int`
+Cambia el mensaje que muestra la barra de progreso.
+
+**Devuelve:** resultado, o -1 si no hay barra abierta
 
 #### `system_progress_update() -> int`
+Estado de la barra de progreso (3 = el usuario pulso cancelar).
+
+**Devuelve:** estado
 
 #### `system_progress_close() -> int`
+Cierra la barra de progreso.
 
 #### `get_pref_language() -> string`
 Idioma preferido del usuario segun el sistema.
@@ -4501,26 +4638,59 @@ say(ftime("%H:%M:%S", time()));
 ```
 
 #### `string_new_array() -> pointer`
+Crea un array de cadenas vacio (de tipo STRING *). Se amplia con STRING_RESIZE_ARRAY.
 
-#### `string_new_array(int) -> pointer`
+**Devuelve:** puntero al array
 
-#### `string_resize_array(pointer, int) -> pointer`
+#### `string_new_array(int n) -> pointer`
+Crea un array dinamico de n cadenas (todas vacias).
 
-#### `string_del_array(pointer) -> int`
+**Devuelve:** puntero al array
 
-#### `string_size_array(pointer) -> int`
+#### `string_resize_array(pointer &array, int nuevo_n) -> pointer`
+Cambia el tamano de un array de cadenas. Hay que pasar la DIRECCION de la variable puntero (con &) porque puede moverse; las cadenas sobrantes se liberan.
+
+**Devuelve:** nuevo tamano
+
+#### `string_del_array(pointer &array) -> int`
+Libera un array de cadenas y todas sus cadenas. Se pasa la direccion de la variable puntero (con &), que queda a 0.
+
+**Devuelve:** 1
+
+#### `string_size_array(pointer array) -> int`
+Numero de elementos de un array de cadenas (se pasa el puntero tal cual, sin &).
+
+**Devuelve:** numero de elementos
 
 #### `string_newa() -> pointer`
+Igual que STRING_NEW_ARRAY() (nombre corto).
 
-#### `string_newa(int) -> pointer`
+**Devuelve:** puntero al array
 
-#### `string_resizea(pointer, int) -> pointer`
+#### `string_newa(int n) -> pointer`
+Igual que STRING_NEW_ARRAY(n) (nombre corto).
 
-#### `string_dela(pointer) -> int`
+**Devuelve:** puntero al array
 
-#### `string_sizea(pointer) -> int`
+#### `string_resizea(pointer &array, int nuevo_n) -> pointer`
+Igual que STRING_RESIZE_ARRAY (nombre corto).
+
+**Devuelve:** nuevo tamano
+
+#### `string_dela(pointer &array) -> int`
+Igual que STRING_DEL_ARRAY (nombre corto).
+
+**Devuelve:** 1
+
+#### `string_sizea(pointer array) -> int`
+Igual que STRING_SIZE_ARRAY (nombre corto).
+
+**Devuelve:** numero de elementos
 
 #### `string_dump() -> int`
+Escribe en la consola todas las cadenas que tiene el programa en memoria. Util para detectar fugas.
+
+**Devuelve:** 1
 
 #### `isalpha(byte caracter) -> int`
 Indica si un caracter (su codigo) es una letra.
@@ -4568,20 +4738,49 @@ Pasa un caracter (su codigo) a minuscula.
 **Devuelve:** el codigo en minuscula
 
 #### `list_create() -> pointer`
+Crea una lista vacia. La lista es una lista enlazada de punteros (valores sueltos de 64 bits): los nuevos elementos se anaden AL PRINCIPIO.
 
-#### `list_create(int) -> pointer`
+**Devuelve:** manejador de la lista
 
-#### `list_free(pointer) -> int`
+```
+lista = list_create();
+list_insertitem(lista, &miobjeto);
+list_free(lista);
+```
 
-#### `list_empty(pointer) -> int`
+#### `list_create(int reserva) -> pointer`
+Crea una lista indicando cuantos nodos se guardan como reserva para reutilizarlos (-1 = el valor por defecto). La lista es una lista enlazada de punteros (valores sueltos de 64 bits): los nuevos elementos se anaden AL PRINCIPIO.
 
-#### `list_insertitem(pointer, pointer) -> int`
+**Devuelve:** manejador de la lista
 
-#### `list_removeitem(pointer, pointer) -> int`
+#### `list_free(pointer lista) -> int`
+Libera la lista (no libera lo que apuntan sus elementos).
 
-#### `list_walk(pointer, pointer) -> pointer`
+#### `list_empty(pointer lista) -> int`
+Quita todos los elementos de la lista, pero conserva la lista.
 
-#### `list_size(pointer) -> int`
+#### `list_insertitem(pointer lista, pointer elemento) -> int`
+Anade un elemento (un puntero o un valor) al principio de la lista.
+
+#### `list_removeitem(pointer lista, pointer elemento) -> int`
+Quita de la lista el elemento con ese valor (el primero que coincida).
+
+#### `list_walk(pointer lista, pointer &contexto) -> pointer`
+Recorre la lista elemento a elemento. Pasa una variable de contexto por referencia puesta a 0 al empezar; cada llamada devuelve el siguiente elemento y avanza el contexto, y devuelve 0 al llegar al final.
+
+**Devuelve:** el siguiente elemento, o 0 al acabar
+
+```
+ctx = 0;
+while ((item = list_walk(lista, &ctx)) != 0)
+    say(item);
+end
+```
+
+#### `list_size(pointer lista) -> int`
+Numero de elementos de la lista.
+
+**Devuelve:** numero de elementos
 
 ## Modulo net
 ### general

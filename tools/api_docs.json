@@ -406,6 +406,63 @@
   ],
   "ret": "el coseno"
  },
+ "CRYPT_DECRYPT(IPPPI)": {
+  "desc": "Descifra sin crear antes un cifrador: indicas directamente el metodo y la clave. Cifra bloques de 8 bytes (DES o 3DES, modo ECB: sin encadenar bloques). El tamano de los datos debe ser multiplo de 8.",
+  "params": [
+   "metodo",
+   "&clave",
+   "&origen",
+   "&destino",
+   "bloques"
+  ],
+  "ret": "0 si va bien, -1 si hay error"
+ },
+ "CRYPT_DECRYPT(PPPI)": {
+  "desc": "Descifra n bloques de 8 bytes de un buffer a otro con un cifrador ya creado. Cifra bloques de 8 bytes (DES o 3DES, modo ECB: sin encadenar bloques). El tamano de los datos debe ser multiplo de 8.",
+  "params": [
+   "cifrador",
+   "&origen",
+   "&destino",
+   "bloques"
+  ],
+  "ret": "0 si va bien, -1 si hay error"
+ },
+ "CRYPT_DEL": {
+  "desc": "Libera un cifrador creado con CRYPT_NEW.",
+  "params": [
+   "cifrador"
+  ]
+ },
+ "CRYPT_ENCRYPT(IPPPI)": {
+  "desc": "Cifra sin crear antes un cifrador: indicas directamente el metodo y la clave. Cifra bloques de 8 bytes (DES o 3DES, modo ECB: sin encadenar bloques). El tamano de los datos debe ser multiplo de 8.",
+  "params": [
+   "metodo",
+   "&clave",
+   "&origen",
+   "&destino",
+   "bloques"
+  ],
+  "ret": "0 si va bien, -1 si hay error"
+ },
+ "CRYPT_ENCRYPT(PPPI)": {
+  "desc": "Cifra n bloques de 8 bytes de un buffer a otro con un cifrador ya creado. Cifra bloques de 8 bytes (DES o 3DES, modo ECB: sin encadenar bloques). El tamano de los datos debe ser multiplo de 8.",
+  "ejemplo": "c = crypt_new(CRYPT_DES, &clave);\ncrypt_encrypt(c, &texto, &cifrado, 4);\ncrypt_del(c);",
+  "params": [
+   "cifrador",
+   "&origen",
+   "&destino",
+   "bloques"
+  ],
+  "ret": "0 si va bien, -1 si hay error"
+ },
+ "CRYPT_NEW": {
+  "desc": "Crea un cifrador con un metodo (CRYPT_NONE, CRYPT_DES o CRYPT_3DES) y una clave: un puntero a 8 bytes para DES o a 24 bytes para 3DES. Se usa con CRYPT_ENCRYPT y CRYPT_DECRYPT y se libera con CRYPT_DEL.",
+  "params": [
+   "metodo",
+   "&clave"
+  ],
+  "ret": "manejador del cifrador, o 0 si la clave no es valida"
+ },
  "DECIMAL": {
   "desc": "Parte decimal de un numero conservando el signo: decimal(-2.75) = -0.75.",
   "params": [
@@ -1120,6 +1177,16 @@
    "color"
   ],
   "ret": "identificador del dibujo"
+ },
+ "EXEC": {
+  "desc": "Ejecuta un programa externo: modo (_P_WAIT espera a que termine y devuelve su codigo de salida; _P_NOWAIT devuelve su identificador de proceso del sistema), nombre del programa, numero de argumentos y un array de cadenas con los argumentos. No esta disponible en Switch, PS3 ni PS5 (devuelve -1).",
+  "params": [
+   "modo",
+   "programa",
+   "n_args",
+   "&argumentos"
+  ],
+  "ret": "codigo de salida o identificador, -1 si falla"
  },
  "EXISTS": {
   "desc": "Indica si un proceso esta vivo, por su identificador o por su tipo (TYPE nombre).",
@@ -5164,6 +5231,56 @@
    "sku"
   ]
  },
+ "INTERSECT": {
+  "desc": "Calcula donde se cortan dos SEGMENTOS: (x1, y1)-(x2, y2) y (x3, y3)-(x4, y4). Si se cortan escribe el punto en las dos variables double por referencia.",
+  "ejemplo": "double ix, iy;\nif (intersect(0, 0, 10, 10, 0, 10, 10, 0, &ix, &iy))\n    say(\"se cruzan en \" + ix + \",\" + iy);\nend",
+  "params": [
+   "x1",
+   "y1",
+   "x2",
+   "y2",
+   "x3",
+   "y3",
+   "x4",
+   "y4",
+   "&x",
+   "&y"
+  ],
+  "ret": "1 si se cortan, 0 si no"
+ },
+ "INTERSECT_CIRCLE": {
+  "desc": "Calcula donde se cortan dos circunferencias: centro (cx1, cy1) y (cx2, cy2) con radios r1 y r2. Escribe hasta dos puntos en las variables double por referencia.",
+  "params": [
+   "cx1",
+   "cy1",
+   "cx2",
+   "cy2",
+   "r1",
+   "r2",
+   "&xa",
+   "&ya",
+   "&xb",
+   "&yb"
+  ],
+  "ret": "numero de puntos de corte (0, 1 o 2); solo se escriben los que existen"
+ },
+ "INTERSECT_LINE_CIRCLE": {
+  "desc": "Calcula donde corta un SEGMENTO (x1, y1)-(x2, y2) a una circunferencia de centro (cx, cy) y radio r. Escribe hasta dos puntos en las variables double por referencia.",
+  "params": [
+   "x1",
+   "y1",
+   "x2",
+   "y2",
+   "cx",
+   "cy",
+   "r",
+   "&xa",
+   "&ya",
+   "&xb",
+   "&yb"
+  ],
+  "ret": "numero de puntos de corte (0, 1 o 2); solo se escriben los que existen"
+ },
  "INVLERP": {
   "desc": "Inversa de LERP: en que punto (0 a 1) entre a y b esta un valor.",
   "params": [
@@ -5207,6 +5324,19 @@
    "caracter"
   ],
   "ret": "1 si lo es"
+ },
+ "ISORT": {
+  "desc": "Ordena un array de estructuras en memoria (quicksort) por una clave: puntero al array, tamano de cada elemento en bytes, numero de elementos, desplazamiento de la clave dentro del elemento, tamano de la clave en bytes y tipo de la clave (0 = entero, 1 = decimal).",
+  "ejemplo": "isort(&jugadores, sizeof(jugadores[0]), 10, 0, 8, 0);",
+  "params": [
+   "&array",
+   "tam_elemento",
+   "n",
+   "desplazamiento",
+   "tam_clave",
+   "tipo"
+  ],
+  "ret": "1"
  },
  "ISSPACE": {
   "desc": "Indica si un caracter (su codigo) es un espacio, tabulador o salto de linea.",
@@ -5573,6 +5703,60 @@
  },
  "LET_ME_ALONE": {
   "desc": "Mata a todos los procesos menos al que la llama."
+ },
+ "LIST_CREATE()": {
+  "desc": "Crea una lista vacia. La lista es una lista enlazada de punteros (valores sueltos de 64 bits): los nuevos elementos se anaden AL PRINCIPIO.",
+  "ejemplo": "lista = list_create();\nlist_insertitem(lista, &miobjeto);\nlist_free(lista);",
+  "ret": "manejador de la lista"
+ },
+ "LIST_CREATE(I)": {
+  "desc": "Crea una lista indicando cuantos nodos se guardan como reserva para reutilizarlos (-1 = el valor por defecto). La lista es una lista enlazada de punteros (valores sueltos de 64 bits): los nuevos elementos se anaden AL PRINCIPIO.",
+  "params": [
+   "reserva"
+  ],
+  "ret": "manejador de la lista"
+ },
+ "LIST_EMPTY": {
+  "desc": "Quita todos los elementos de la lista, pero conserva la lista.",
+  "params": [
+   "lista"
+  ]
+ },
+ "LIST_FREE": {
+  "desc": "Libera la lista (no libera lo que apuntan sus elementos).",
+  "params": [
+   "lista"
+  ]
+ },
+ "LIST_INSERTITEM": {
+  "desc": "Anade un elemento (un puntero o un valor) al principio de la lista.",
+  "params": [
+   "lista",
+   "elemento"
+  ]
+ },
+ "LIST_REMOVEITEM": {
+  "desc": "Quita de la lista el elemento con ese valor (el primero que coincida).",
+  "params": [
+   "lista",
+   "elemento"
+  ]
+ },
+ "LIST_SIZE": {
+  "desc": "Numero de elementos de la lista.",
+  "params": [
+   "lista"
+  ],
+  "ret": "numero de elementos"
+ },
+ "LIST_WALK": {
+  "desc": "Recorre la lista elemento a elemento. Pasa una variable de contexto por referencia puesta a 0 al empezar; cada llamada devuelve el siguiente elemento y avanza el contexto, y devuelve 0 al llegar al final.",
+  "ejemplo": "ctx = 0;\nwhile ((item = list_walk(lista, &ctx)) != 0)\n    say(item);\nend",
+  "params": [
+   "lista",
+   "&contexto"
+  ],
+  "ret": "el siguiente elemento, o 0 al acabar"
  },
  "LOAD": {
   "desc": "Lee un fichero escrito con SAVE y lo deja en una variable (o estructura).",
@@ -6133,6 +6317,10 @@
   "desc": "Memoria fisica libre, en bytes (solo informativo; puede ser aproximado).",
   "ret": "bytes libres"
  },
+ "MEMORY_TOTAL": {
+  "desc": "Memoria fisica total del sistema, en bytes (el calculo depende de la plataforma).",
+  "ret": "bytes"
+ },
  "MEMSET": {
   "desc": "Rellena 'bytes' bytes de memoria con el valor de un byte.",
   "params": [
@@ -6140,6 +6328,33 @@
    "valor",
    "bytes"
   ]
+ },
+ "MEMSETD": {
+  "desc": "Igual que MEM_SETD (nombre alternativo).",
+  "params": [
+   "&destino",
+   "valor",
+   "n"
+  ],
+  "ret": "1"
+ },
+ "MEMSETI": {
+  "desc": "Igual que MEM_SETI (nombre alternativo).",
+  "params": [
+   "&destino",
+   "valor",
+   "n"
+  ],
+  "ret": "1"
+ },
+ "MEMSETW": {
+  "desc": "Igual que MEM_SETW (nombre alternativo).",
+  "params": [
+   "&destino",
+   "valor",
+   "n"
+  ],
+  "ret": "1"
  },
  "MEM_ALLOC": {
   "desc": "Alias de ALLOC."
@@ -6168,6 +6383,33 @@
  },
  "MEM_SET": {
   "desc": "Alias de MEMSET."
+ },
+ "MEM_SETD": {
+  "desc": "Rellena memoria con valores de 32 bits (dword). Escribe el mismo valor n veces seguidas en memoria desde el puntero, con el ancho indicado.",
+  "params": [
+   "&destino",
+   "valor",
+   "n"
+  ],
+  "ret": "1"
+ },
+ "MEM_SETI": {
+  "desc": "Rellena memoria con valores de 64 bits (int). Escribe el mismo valor n veces seguidas en memoria desde el puntero, con el ancho indicado.",
+  "params": [
+   "&destino",
+   "valor",
+   "n"
+  ],
+  "ret": "1"
+ },
+ "MEM_SETW": {
+  "desc": "Rellena memoria con valores de 16 bits (word). Escribe el mismo valor n veces seguidas en memoria desde el puntero, con el ancho indicado.",
+  "params": [
+   "&destino",
+   "valor",
+   "n"
+  ],
+  "ret": "1"
  },
  "MEM_TOTAL": {
   "desc": "Alias de MEMORY_TOTAL."
@@ -6555,6 +6797,20 @@
   "desc": "Alias antiguo de JOY_NUMJOYSTICKS.",
   "ret": "cantidad de mandos"
  },
+ "ORTHO": {
+  "desc": "Proyeccion ortogonal de un punto sobre un segmento: el punto del segmento (x1, y1)-(x2, y2) mas cercano a (px, py). Lo escribe en dos variables double.",
+  "params": [
+   "x1",
+   "y1",
+   "x2",
+   "y2",
+   "px",
+   "py",
+   "&x",
+   "&y"
+  ],
+  "ret": "distancia (double) del punto al segmento"
+ },
  "PATH_DESTROY": {
   "desc": "Libera la cuadricula creada con PATH_NEW.",
   "params": [
@@ -6603,6 +6859,17 @@
   ],
   "ret": "manejador de la cuadricula, o 0 si no pudo"
  },
+ "PAUSE": {
+  "desc": "Pausa TODOS los procesos excepto el que la llama. Reanuda con RESUME. Es lo habitual para un menu de pausa.",
+  "ejemplo": "pause();\n// ... menu de pausa ...\nresume();",
+  "ret": "0"
+ },
+ "PAUSE(I)": {
+  "desc": "No disponible: la version con un proceso concreto esta desactivada en esta version del motor.",
+  "params": [
+   "proceso"
+  ]
+ },
  "POINT_GET": {
   "desc": "Lee un punto de control de un grafico en dos variables que se pasan por puntero. El punto 0 sin definir da el centro del grafico. Devuelve 0 si el punto no existe.",
   "params": [
@@ -6640,6 +6907,22 @@
    "exponente"
   ],
   "ret": "el resultado"
+ },
+ "PROJECT": {
+  "desc": "Recta paralela a un segmento que pasa por un punto: devuelve el segmento (x1, y1)-(x2, y2) desplazado en perpendicular hasta (px, py). Escribe sus dos extremos en variables double.",
+  "params": [
+   "x1",
+   "y1",
+   "x2",
+   "y2",
+   "px",
+   "py",
+   "&xa",
+   "&ya",
+   "&xb",
+   "&yb"
+  ],
+  "ret": "distancia (double) entre las dos rectas paralelas"
  },
  "RAD": {
   "desc": "Convierte milesimas de grado a radianes.",
@@ -6689,6 +6972,25 @@
   ],
   "ret": "el puntero (puede cambiar)"
  },
+ "REGEX": {
+  "desc": "Busca una expresion regular (sintaxis POSIX extendida, sin distinguir mayusculas) en una cadena. Si hay coincidencia devuelve su posicion y rellena REGEX_REG[0] con el texto que coincide y REGEX_REG[1..15] con los grupos entre parentesis.",
+  "ejemplo": "if (regex(\"([0-9]+)-([0-9]+)\", \"rango 10-20\") != -1)\n    say(regex_reg[1] + \" a \" + regex_reg[2]);\nend",
+  "params": [
+   "patron",
+   "texto"
+  ],
+  "ret": "posicion de la coincidencia, o -1 si no hay"
+ },
+ "REGEX_REPLACE": {
+  "desc": "Sustituye en un texto cada coincidencia de una expresion regular por otro texto (en el reemplazo se aceptan \\0 a \\9 para insertar los grupos). OJO al orden: patron, REEMPLAZO y luego el texto. REGEX_REG queda rellenado con la primera coincidencia.",
+  "ejemplo": "say(regex_replace(\"[0-9]+\", \"#\", \"a1b22c333\"));   // a#b#c#",
+  "params": [
+   "patron",
+   "reemplazo",
+   "texto"
+  ],
+  "ret": "el texto resultante"
+ },
  "REGION_DEFINE": {
   "desc": "Define una region rectangular de la pantalla (una zona a la que se puede limitar el dibujo de los procesos con su variable region). La region 0 es la pantalla entera.",
   "ejemplo": "region_define(1, 0, 0, 320, 200);   // los procesos con region = 1 solo se ven en ese rectangulo",
@@ -6737,6 +7039,16 @@
    "cantidad"
   ],
   "ret": "canales reservados"
+ },
+ "RESUME": {
+  "desc": "Reanuda todos los procesos pausados con PAUSE.",
+  "ret": "0"
+ },
+ "RESUME(I)": {
+  "desc": "No disponible: la version con un proceso concreto esta desactivada en esta version del motor.",
+  "params": [
+   "proceso"
+  ]
  },
  "REVERSE_STEREO": {
   "desc": "Invierte (1) o no (0) los canales izquierdo y derecho de un canal. Solo funciona mientras el canal esta sonando: si no suena nada en ese canal devuelve -1 y no hace nada.",
@@ -7178,6 +7490,22 @@
    "senal"
   ]
  },
+ "SIGNAL_ACTION(II)": {
+  "desc": "Cambia como reacciona ESTE proceso a una senal: la senal (S_KILL, S_WAKEUP, S_SLEEP o S_FREEZE) y la accion (S_IGN = ignorarla, S_DFL = comportamiento normal).",
+  "ejemplo": "signal_action(S_KILL, S_IGN);   // este proceso no muere con signal(0, S_KILL)",
+  "params": [
+   "senal",
+   "accion"
+  ]
+ },
+ "SIGNAL_ACTION(III)": {
+  "desc": "Igual para otro proceso, para todos los de un tipo (pasando el tipo de proceso) o para todos (ALL_PROCESS).",
+  "params": [
+   "proceso",
+   "senal",
+   "accion"
+  ]
+ },
  "SIN": {
   "desc": "Seno de un angulo. Los angulos de BennuGD van en MILESIMAS DE GRADO (90000 = 90 grados, 360000 = una vuelta). Devuelve un decimal entre -1 y 1.",
   "ejemplo": "y = sin(angle) * 100;   // angle esta en milesimas de grado",
@@ -7447,6 +7775,76 @@
   ],
   "ret": "0 si son iguales"
  },
+ "STRING_DELA": {
+  "desc": "Igual que STRING_DEL_ARRAY (nombre corto).",
+  "params": [
+   "&array"
+  ],
+  "ret": "1"
+ },
+ "STRING_DEL_ARRAY": {
+  "desc": "Libera un array de cadenas y todas sus cadenas. Se pasa la direccion de la variable puntero (con &), que queda a 0.",
+  "params": [
+   "&array"
+  ],
+  "ret": "1"
+ },
+ "STRING_DUMP": {
+  "desc": "Escribe en la consola todas las cadenas que tiene el programa en memoria. Util para detectar fugas.",
+  "ret": "1"
+ },
+ "STRING_NEWA()": {
+  "desc": "Igual que STRING_NEW_ARRAY() (nombre corto).",
+  "ret": "puntero al array"
+ },
+ "STRING_NEWA(I)": {
+  "desc": "Igual que STRING_NEW_ARRAY(n) (nombre corto).",
+  "params": [
+   "n"
+  ],
+  "ret": "puntero al array"
+ },
+ "STRING_NEW_ARRAY()": {
+  "desc": "Crea un array de cadenas vacio (de tipo STRING *). Se amplia con STRING_RESIZE_ARRAY.",
+  "ret": "puntero al array"
+ },
+ "STRING_NEW_ARRAY(I)": {
+  "desc": "Crea un array dinamico de n cadenas (todas vacias).",
+  "params": [
+   "n"
+  ],
+  "ret": "puntero al array"
+ },
+ "STRING_RESIZEA": {
+  "desc": "Igual que STRING_RESIZE_ARRAY (nombre corto).",
+  "params": [
+   "&array",
+   "nuevo_n"
+  ],
+  "ret": "nuevo tamano"
+ },
+ "STRING_RESIZE_ARRAY": {
+  "desc": "Cambia el tamano de un array de cadenas. Hay que pasar la DIRECCION de la variable puntero (con &) porque puede moverse; las cadenas sobrantes se liberan.",
+  "params": [
+   "&array",
+   "nuevo_n"
+  ],
+  "ret": "nuevo tamano"
+ },
+ "STRING_SIZEA": {
+  "desc": "Igual que STRING_SIZE_ARRAY (nombre corto).",
+  "params": [
+   "array"
+  ],
+  "ret": "numero de elementos"
+ },
+ "STRING_SIZE_ARRAY": {
+  "desc": "Numero de elementos de un array de cadenas (se pasa el puntero tal cual, sin &).",
+  "params": [
+   "array"
+  ],
+  "ret": "numero de elementos"
+ },
  "STRLEN": {
   "desc": "Longitud de una cadena en caracteres.",
   "params": [
@@ -7485,6 +7883,60 @@
    "longitud"
   ],
   "ret": "el trozo"
+ },
+ "SYSTEM_KEYBOARD_CLOSE": {
+  "desc": "Cierra el teclado del sistema (lo aborta si seguia abierto)."
+ },
+ "SYSTEM_KEYBOARD_OK": {
+  "desc": "Una vez terminado, indica si el usuario acepto (1) o cancelo (0).",
+  "ret": "1 o 0"
+ },
+ "SYSTEM_KEYBOARD_OPEN": {
+  "desc": "Abre el teclado en pantalla del sistema: titulo, texto inicial, maximo de caracteres (hasta 2048) y banderas (1 = contrasena; 2 = tipo de teclado alternativo, pensado para numeros). Es un dialogo del sistema: solo existe de verdad en PS5 y Android; en PC devuelve -100 (el programa debe usar su propio teclado).",
+  "params": [
+   "titulo",
+   "texto_inicial",
+   "maximo",
+   "banderas"
+  ],
+  "ret": "0 si se abrio, -2 si ya hay uno abierto, -3 si no pudo iniciarse, -100 si no hay teclado del sistema"
+ },
+ "SYSTEM_KEYBOARD_STATUS": {
+  "desc": "Estado del teclado del sistema: 0 = cerrado, 1 = abierto (el usuario escribe), 2 = terminado. Llamala cada frame hasta que sea 2. Es un dialogo del sistema: solo existe de verdad en PS5 y Android; en PC devuelve -100 (el programa debe usar su propio teclado).",
+  "ret": "estado"
+ },
+ "SYSTEM_KEYBOARD_TEXT": {
+  "desc": "Texto escrito por el usuario (vacio si cancelo o aun no ha terminado).",
+  "ret": "texto"
+ },
+ "SYSTEM_PROGRESS_CLOSE": {
+  "desc": "Cierra la barra de progreso."
+ },
+ "SYSTEM_PROGRESS_MESSAGE": {
+  "desc": "Cambia el mensaje que muestra la barra de progreso.",
+  "params": [
+   "mensaje"
+  ],
+  "ret": "resultado, o -1 si no hay barra abierta"
+ },
+ "SYSTEM_PROGRESS_OPEN": {
+  "desc": "Abre una barra de progreso del sistema con un titulo; banderas = 1 anade boton de cancelar. Es una barra del sistema: en PS5 no esta disponible aun en las consolas probadas y en PC solo simula (si existe la variable de entorno MP_FAKE_PROGRESS escribe en la consola); el programa debe dibujar su propio progreso.",
+  "params": [
+   "titulo",
+   "banderas"
+  ],
+  "ret": "0 si se abrio, -2 si ya hay una, -6 si no esta disponible, -100 en PC"
+ },
+ "SYSTEM_PROGRESS_SET": {
+  "desc": "Fija el porcentaje de la barra de progreso (0 a 100).",
+  "params": [
+   "porcentaje"
+  ],
+  "ret": "resultado, o -1 si no hay barra abierta"
+ },
+ "SYSTEM_PROGRESS_UPDATE": {
+  "desc": "Estado de la barra de progreso (3 = el usuario pulso cancelar).",
+  "ret": "estado"
  },
  "TAN": {
   "desc": "Tangente de un angulo. Los angulos de BennuGD van en MILESIMAS DE GRADO (90000 = 90 grados, 360000 = una vuelta).",

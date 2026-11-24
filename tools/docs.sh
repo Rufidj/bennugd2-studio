@@ -14,6 +14,8 @@ python3 gen_docs_graficos2.py
 python3 gen_docs_misc2.py
 python3 gen_docs_otros.py
 python3 gen_docs_video.py
+python3 gen_docs_3d_resto.py
+python3 gen_docs_3d_ajustes.py
 python3 gen_docs_jolt.py      # corrige/amplia lo anterior: va el ultimo
 python3 gen_api.py
 python3 verificar_ejemplos.py

@@ -1,6 +1,6 @@
 # Referencia de la API
 
-Generada automaticamente desde los modulos del motor (1150 funciones, 685 documentadas).
+Generada automaticamente desde los modulos del motor (1150 funciones, 764 documentadas).
 
 ## Modulo 3d
 ### camera
@@ -118,13 +118,36 @@ Destruye todos los personajes.
 #### `g3d_cloth_pin_move(int, int, int, float, float, float) -> int`
 
 ### collide
-#### `g3d_collide_move(float, float, float, float, float, float, float) -> int`
+#### `g3d_collide_move(float x, float y, float z, float radio, float alto, float dx, float dz) -> int`
+Mueve a un personaje (cilindro de radio y altura dados, con los pies en y) desde (x, z) sumando (dx, dz), deslizandolo contra las entidades solidas: se resuelve primero X y luego Z, asi resbala por las paredes en vez de quedarse parado. El resultado no se devuelve: se lee con g3d_collide_x() y g3d_collide_z(). Ignora lo que esta por encima de la cabeza o por debajo de los pies (maximo 0.2 bajo la cima). Solo cuentan las entidades marcadas como solidas con g3d_entity_set_collider; se tratan como cajas alineadas con los ejes (AABB) en coordenadas del mundo.
+
+**Devuelve:** siempre 1
+
+```
+g3d_collide_move(px, py, pz, 0.4, 1.8, vx, vz);
+px = g3d_collide_x();
+pz = g3d_collide_z();
+```
 
 #### `g3d_collide_x() -> float`
+Coordenada X resultante de la ultima llamada a g3d_collide_move.
+
+**Devuelve:** X final
 
 #### `g3d_collide_z() -> float`
+Coordenada Z resultante de la ultima llamada a g3d_collide_move.
 
-#### `g3d_collide_floor(float, float, float, float) -> float`
+**Devuelve:** Z final
+
+#### `g3d_collide_floor(float x, float z, float radio, float pies_y) -> float`
+Altura del suelo bajo un punto: la cima mas alta de las entidades solidas que hay bajo (x, z) y que no estan mas de 1 unidad por encima de los pies (permite subir escalones). Solo cuentan las entidades marcadas como solidas con g3d_entity_set_collider; se tratan como cajas alineadas con los ejes (AABB) en coordenadas del mundo.
+
+**Devuelve:** altura del suelo, o un valor muy negativo (-1e9) si no hay ninguna entidad debajo; en ese caso usa la altura del terreno
+
+```
+suelo = g3d_collide_floor(px, pz, 0.4, py);
+if (suelo > -1000000) py = suelo; end
+```
 
 ### collider
 #### `g3d_collider_add_box(float min_x, float min_y, float min_z, float max_x, float max_y, float max_z) -> int`
@@ -160,6 +183,9 @@ Igual que G3D_COLLIDER_ADD_MODEL pero con la malla girada alrededor de Y. OJO: e
 
 ### draw
 #### `g3d_draw_calls() -> int`
+Numero de llamadas de dibujo del ultimo frame. Si es alto, agrupa objetos o usa instancias.
+
+**Devuelve:** numero de llamadas
 
 ### entity
 #### `g3d_entity_spawn(int escena, int modelo, float x, float y, float z) -> int`
@@ -214,7 +240,13 @@ Marca (1) una entidad, p. ej. un muro, para que G3D_XRAY_UPDATE la desvanezca cu
 Modo de mezcla con las constantes de BennuGD (BLEND_NORMAL, BLEND_ADD, BLEND_MULTIPLY, BLEND_SUBTRACT). Se aplica a todo el arbol del modelo. OJO: si la entidad pertenece a un proceso C_3D, el proceso la pisa en cada frame con sus variables (blendmode); usala solo en entidades sin proceso.
 
 ### fbx
-#### `g3d_fbx_set_recenter(int) -> int`
+#### `g3d_fbx_set_recenter(int activo) -> int`
+Activa (1) o desactiva (0) el recentrado de los modelos FBX al cargarlos. Afecta solo a las cargas posteriores. En personajes animados se recentraba con la pose inicial (tumbada) y los desplazaba de su capsula: usa 0.
+
+```
+g3d_fbx_set_recenter(0);
+pj = g3d_load_fbx("Assets/heroe.fbx");
+```
 
 ### fire
 #### `g3d_fire_add(float, float, float, float) -> int`
@@ -250,21 +282,43 @@ Modo de mezcla con las constantes de BennuGD (BLEND_NORMAL, BLEND_ADD, BLEND_MUL
 #### `g3d_fluid_set_texture(int) -> int`
 
 ### general
-#### `g3d_raycast(float, float, float, float, float, float, float) -> float`
+#### `g3d_raycast(float ox, float oy, float oz, float dx, float dy, float dz, float maxd) -> float`
+Lanza un rayo desde un origen en una direccion (no hace falta que este normalizada) y busca la primera entidad solida que corta, hasta maxd unidades. Si acierta devuelve la distancia y guarda el punto y la entidad: se leen con g3d_ray_hit_x/y/z() y g3d_ray_entity(). Si no acierta devuelve -1. Solo cuentan las entidades marcadas como solidas con g3d_entity_set_collider; se tratan como cajas alineadas con los ejes (AABB) en coordenadas del mundo.
+
+**Devuelve:** distancia al impacto, o -1 si no toca nada
+
+```
+if (g3d_raycast(px, py + 1, pz, 0, 0, 1, 50.0) >= 0)
+    say("entidad " + g3d_ray_entity());
+end
+```
 
 #### `g3d_triangles() -> int`
+Numero de triangulos dibujados en el ultimo frame.
+
+**Devuelve:** numero de triangulos
 
 #### `g3d_culled() -> int`
+Numero de entidades descartadas por no verse en el ultimo frame.
+
+**Devuelve:** numero de entidades
 
 #### `g3d_raycast(float, float, float, float, float, float, pointer, pointer, pointer) -> int`
 
 ### gltf
-#### `g3d_gltf_set_recenter(int) -> int`
+#### `g3d_gltf_set_recenter(int activo) -> int`
+Activa (1) o desactiva (0) el recentrado de los modelos glTF al cargarlos. Afecta solo a las cargas posteriores.
 
-#### `g3d_gltf_set_chunking(float) -> int`
+#### `g3d_gltf_set_chunking(float celda) -> int`
+Divide los modelos glTF muy grandes (mapas) en celdas espaciales para poder ocultar las que no se ven. -1 = automatico, 0 = desactivado, mayor que 0 = tamano de celda en unidades. Afecta a las cargas posteriores.
 
 ### ibl
 #### `g3d_ibl_refresh() -> int`
+Obliga a recapturar el cielo para el IBL. Llamala cuando el cielo o el sol cambian (ciclo dia/noche); no hace falta cada frame, basta cada pocos segundos.
+
+```
+g3d_ibl_refresh();
+```
 
 ### instances
 #### `g3d_instances_create(int, int) -> int`
@@ -338,19 +392,58 @@ Activa (1) o desactiva (0) las sombras de una luz.
 Resolucion del mapa de sombras. Afecta tambien a la del renderer (equivale a G3D_SET_SHADOW_RESOLUTION).
 
 ### load
-#### `g3d_load_gltf(string) -> int`
+#### `g3d_load_gltf(string ruta) -> int`
+Carga un modelo .gltf o .glb y devuelve su manejador. Por defecto lo recentra en el origen; con g3d_gltf_set_recenter(0) (antes de cargar) conserva las coordenadas originales, necesario para niveles donde cada pieza ya esta en su sitio.
 
-#### `g3d_load_tr(string) -> int`
+**Devuelve:** manejador del modelo, o -1 si falla
+
+```
+m = g3d_load_gltf("Assets/casa.glb");
+if (m == -1) say("no se pudo cargar"); end
+```
+
+#### `g3d_load_tr(string ruta) -> int`
+Carga directamente un nivel original de Tomb Raider (.PHD, .TR2, .TR4, .TRC) sin conversion previa.
+
+**Devuelve:** manejador del modelo, o -1 si falla
+
+```
+nivel = g3d_load_tr("DATA/LEVEL1.PHD");
+```
 
 #### `g3d_load_gltf_fractured(string) -> int`
 
-#### `g3d_load_obj(string) -> int`
+#### `g3d_load_obj(string ruta) -> int`
+Carga un modelo Wavefront .obj.
 
-#### `g3d_load_fbx(string) -> int`
+**Devuelve:** manejador del modelo, o -1 si falla
 
-#### `g3d_load_md3(string) -> int`
+```
+m = g3d_load_obj("Assets/roca.obj");
+```
 
-#### `g3d_load_texture(string) -> int`
+#### `g3d_load_fbx(string ruta) -> int`
+Carga un modelo .fbx, con esqueleto y animaciones si las tiene. Por defecto lo recentra con g3d_fbx_set_recenter; en personajes animados conviene desactivarlo (valor 0) para que no se desplace respecto a su capsula de colision.
+
+**Devuelve:** manejador del modelo, o -1 si falla
+
+```
+m = g3d_load_fbx("Assets/lara.fbx");
+```
+
+#### `g3d_load_md3(string ruta) -> int`
+Reservada: el formato MD3 no esta soportado y siempre devuelve -1.
+
+**Devuelve:** -1
+
+#### `g3d_load_texture(string ruta) -> int`
+Carga una imagen (PNG, JPG...) como textura de la GPU, para usarla en materiales o como cielo.
+
+**Devuelve:** manejador de la textura, o -1 si falla
+
+```
+tex = g3d_load_texture("Assets/ladrillo.png");
+```
 
 ### lvl
 #### `g3d_lvl_load(string) -> int`
@@ -369,18 +462,38 @@ Resolucion del mapa de sombras. Afecta tambien a la del renderer (equivale a G3D
 
 ### material
 #### `g3d_material_create() -> int`
+Crea un material PBR (metalico 0, rugosidad 0.5). Se asigna a una entidad con g3d_entity_set_material.
 
-#### `g3d_material_set_color(int, float, float, float, float) -> int`
+**Devuelve:** id del material
 
-#### `g3d_material_set_metallic(int, float) -> int`
+```
+mat = g3d_material_create();
+g3d_material_set_color(mat, 1.0, 0.2, 0.2, 1.0);
+g3d_entity_set_material(ent, mat);
+```
 
-#### `g3d_material_set_roughness(int, float) -> int`
+#### `g3d_material_set_color(int material, float r, float g, float b, float alpha) -> int`
+Color base del material: r, g, b y alpha, entre 0 y 1.
 
-#### `g3d_material_set_texture(int, int, int) -> int`
+#### `g3d_material_set_metallic(int material, float valor) -> int`
+Metalicidad del material, de 0 (no metal) a 1 (metal). Se limita a ese rango.
 
-#### `g3d_material_set_map(int, int, int) -> int`
+#### `g3d_material_set_roughness(int material, float valor) -> int`
+Rugosidad del material, de 0 (espejo) a 1 (mate). Se limita a ese rango.
 
-#### `g3d_material_set_outline(int, int) -> int`
+#### `g3d_material_set_texture(int material, int ranura, int textura) -> int`
+Asigna una textura (de g3d_load_texture) a una ranura del material: 0 = color (albedo), 1 = normales, 2 = metalico, 3 = rugosidad.
+
+```
+g3d_material_set_texture(mat, 0, g3d_load_texture("Assets/muro.png"));
+g3d_material_set_texture(mat, 1, g3d_load_texture("Assets/muro_n.png"));
+```
+
+#### `g3d_material_set_map(int material, int tipo, int textura) -> int`
+Asigna un mapa de detalle a un material: 1 = normales, 2 = metalico, 3 = rugosidad. Equivale a g3d_material_set_texture con esas ranuras (el color, ranura 0, solo va por g3d_material_set_texture).
+
+#### `g3d_material_set_outline(int material, int activo) -> int`
+Activa (1) o desactiva (0) el contorno tipo dibujo animado en los objetos con este material.
 
 ### mirror
 #### `g3d_mirror_create(float, float, float, float, float, float, float, float) -> int`
@@ -508,13 +621,30 @@ Activa (1) o desactiva (0) el skinning por GPU del modelo.
 #### `g3d_model_submesh_map(int, int, int) -> int`
 
 ### mouse
-#### `g3d_mouse_capture(int) -> int`
+#### `g3d_mouse_capture(int activo) -> int`
+Activa (1) o desactiva (0) el raton relativo: oculta y bloquea el cursor y da movimientos limpios sin tope en el borde. Es lo que se usa para girar la camara en primera persona. Reinicia los incrementos.
+
+```
+g3d_mouse_capture(1);
+```
 
 #### `g3d_mouse_update() -> int`
+Lee el movimiento del raton desde la ultima llamada. Llamala una vez por frame y luego usa g3d_mouse_dx() y g3d_mouse_dy().
+
+```
+g3d_mouse_update();
+mirar_x += g3d_mouse_dx() * 100;
+```
 
 #### `g3d_mouse_dx() -> int`
+Movimiento horizontal del raton en pixeles (positivo a la derecha) en la ultima g3d_mouse_update.
+
+**Devuelve:** incremento en X
 
 #### `g3d_mouse_dy() -> int`
+Movimiento vertical del raton en pixeles (positivo hacia abajo) en la ultima g3d_mouse_update.
+
+**Devuelve:** incremento en Y
 
 ### paint
 #### `g3d_paint_create(int, int) -> int`
@@ -544,15 +674,42 @@ Activa (1) o desactiva (0) el skinning por GPU del modelo.
 #### `g3d_physics_set_gravity(float) -> int`
 
 ### pick
-#### `g3d_pick_terrain(int, float, float, float, float, int) -> int`
+#### `g3d_pick_terrain(int camara, float sx, float sy, float w, float h, int terreno) -> int`
+Punto del terreno bajo un punto de la pantalla. Avanza el rayo y afina el impacto por biseccion. Con terreno = 0 usa un suelo plano a altura 0.
 
-#### `g3d_pick_entity(int, float, float, float, float) -> int`
+**Devuelve:** 1 si toca el terreno (punto en g3d_pick_x/y/z), 0 si no
+
+```
+if (g3d_pick_terrain(cam, mouse.x, mouse.y, 960, 540, 0))
+    objetivo_x = g3d_pick_x();
+    objetivo_z = g3d_pick_z();
+end
+```
+
+#### `g3d_pick_entity(int camara, float sx, float sy, float w, float h) -> int`
+Entidad solida que hay bajo un punto de la pantalla (sx, sy en pixeles, con w y h el tamano de la pantalla). Lanza un rayo desde la camara de hasta 5000 unidades. El punto de impacto se lee con g3d_pick_x/y/z().
+
+**Devuelve:** id de la entidad, o -1 si no hay ninguna
+
+```
+e = g3d_pick_entity(cam, mouse.x, mouse.y, 960, 540);
+if (e != -1) say("has pulsado la entidad " + e); end
+```
 
 #### `g3d_pick_x() -> float`
+X del ultimo punto encontrado por g3d_pick_entity o g3d_pick_terrain.
+
+**Devuelve:** X del punto
 
 #### `g3d_pick_y() -> float`
+Y del ultimo punto encontrado por g3d_pick_entity o g3d_pick_terrain.
+
+**Devuelve:** Y del punto
 
 #### `g3d_pick_z() -> float`
+Z del ultimo punto encontrado por g3d_pick_entity o g3d_pick_terrain.
+
+**Devuelve:** Z del punto
 
 ### prefab
 #### `g3d_prefab_create(string) -> int`
@@ -571,34 +728,85 @@ Activa (1) o desactiva (0) el skinning por GPU del modelo.
 
 ### primitive
 #### `g3d_primitive_cube() -> int`
+Cubo de 1 x 1 x 1 centrado en el origen. Devuelve un modelo listo para g3d_entity_spawn y ya subido a la GPU.
 
-#### `g3d_primitive_column(int) -> int`
+**Devuelve:** manejador del modelo, o -1
+
+```
+caja = g3d_primitive_cube();
+e = g3d_entity_spawn(escena, caja, 0, 0.5, 0);
+```
+
+#### `g3d_primitive_column(int bloques) -> int`
+Columna de 1 x N x 1 centrada en el origen, con la textura repetida una vez por bloque de alto (blocks menor que 1 se toma como 1). Devuelve un modelo listo para g3d_entity_spawn y ya subido a la GPU.
+
+**Devuelve:** manejador del modelo, o -1
 
 #### `g3d_primitive_wedge() -> int`
+Cuna (rampa) de 1 x 1 x 1 centrada en el origen: sube hacia +X (altura -0.5 en x=-0.5 y +0.5 en x=+0.5). Devuelve un modelo listo para g3d_entity_spawn y ya subido a la GPU.
 
-#### `g3d_primitive_sphere(int) -> int`
+**Devuelve:** manejador del modelo, o -1
+
+#### `g3d_primitive_sphere(int segmentos) -> int`
+Esfera de radio 0.5. segmentos es la resolucion (minimo 3; 16 a 32 se ve redonda). Devuelve un modelo listo para g3d_entity_spawn y ya subido a la GPU.
+
+**Devuelve:** manejador del modelo, o -1
 
 #### `g3d_primitive_plane() -> int`
+Plano horizontal de 1 x 1 centrado en el origen, con la cara visible hacia arriba. Se agranda con size_x / size_z del proceso. Devuelve un modelo listo para g3d_entity_spawn y ya subido a la GPU.
 
-#### `g3d_primitive_terrain(int, float, float, float, int) -> int`
+**Devuelve:** manejador del modelo, o -1
 
-#### `g3d_primitive_cliffs(int, float, float, float, int, float, float) -> int`
+#### `g3d_primitive_terrain(int rejilla, float tamano, float alto, float tiling, int semilla) -> int`
+Terreno procedural con ruido fractal: malla de (rejilla+1) x (rejilla+1) vertices centrada en el origen, en el plano XZ. Con alto da la altura maxima, tiling cuantas veces se repite la textura y semilla cambia el relieve. Devuelve un modelo listo para g3d_entity_spawn y ya subido a la GPU.
 
-#### `g3d_primitive_mountain(int, float, float, float, int, float) -> int`
+**Devuelve:** manejador del terreno, o -1
+
+```
+t = g3d_primitive_terrain(128, 200.0, 12.0, 20.0, 7);
+```
+
+#### `g3d_primitive_cliffs(int rejilla, float tamano, float alto, float tiling, int semilla, float pendiente, float fondo_agua) -> int`
+Terreno de acantilados: como g3d_primitive_terrain pero con el ruido aplastado en cuencas y mesetas. pendiente (1 suave, 4 a 6 dramatico) marca lo abrupto de los acantilados; fondo_agua (0 a 1) hunde las cuencas por debajo de 0 para que el agua las llene. Devuelve un modelo listo para g3d_entity_spawn y ya subido a la GPU.
+
+**Devuelve:** manejador del terreno, o -1
+
+#### `g3d_primitive_mountain(int rejilla, float tamano, float pico, float tiling, int semilla, float canal) -> int`
+Una montana: un pico radial con ruido de detalle, con base hundida bajo 0 para que el agua forme un lago alrededor. canal (0 a 1) talla una garganta en la cara -Z (para una cascada o rio). Devuelve un modelo listo para g3d_entity_spawn y ya subido a la GPU.
+
+**Devuelve:** manejador del terreno, o -1
 
 ### ray
 #### `g3d_ray_hit_x() -> float`
+X del punto de impacto del ultimo g3d_raycast que acerto.
+
+**Devuelve:** X del impacto
 
 #### `g3d_ray_hit_y() -> float`
+Y del punto de impacto del ultimo g3d_raycast que acerto.
+
+**Devuelve:** Y del impacto
 
 #### `g3d_ray_hit_z() -> float`
+Z del punto de impacto del ultimo g3d_raycast que acerto.
+
+**Devuelve:** Z del impacto
 
 #### `g3d_ray_entity() -> int`
+Entidad alcanzada por el ultimo g3d_raycast.
+
+**Devuelve:** id de la entidad, o -1 si fallo
 
 ### render
 #### `g3d_render_width() -> int`
+Anchura real, en pixeles, a la que se dibuja la escena (distinta de la ventana si hay FSR).
+
+**Devuelve:** pixeles
 
 #### `g3d_render_height() -> int`
+Altura real, en pixeles, a la que se dibuja la escena (distinta de la ventana si hay FSR).
+
+**Devuelve:** pixeles
 
 ### rigidbody
 #### `g3d_rigidbody_create(float x, float y, float z, float hx, float hy, float hz, float masa) -> int`
@@ -1014,62 +1222,176 @@ Altura maxima de escalon que puede subir el jugador, definida en el mapa.
 **Devuelve:** altura de escalon
 
 ### set
-#### `g3d_set_sun(float) -> int`
+#### `g3d_set_sun(float t) -> int`
+Ciclo dia/noche en un solo numero: t da una vuelta completa cada 1.0 (0 = amanecer, 0.25 = mediodia, 0.5 = atardecer, 0.75 = medianoche). Mueve la luz direccional principal de la escena (direccion, color calido cerca del horizonte, intensidad de 0 de noche a 1.6 al mediodia) y ajusta la luz ambiente. Necesita que la escena tenga una luz direccional. Para que los reflejos sigan al sol llama despues a g3d_ibl_refresh.
 
-#### `g3d_set_clear_color(float, float, float, float) -> int`
+```
+hora += 0.0005;
+g3d_set_sun(hora);
+g3d_ibl_refresh();
+```
 
-#### `g3d_set_ambient_light(float, float, float, float) -> int`
+#### `g3d_set_clear_color(float r, float g, float b, float alpha) -> int`
+Color de fondo que se pinta antes de dibujar la escena (r, g, b, alpha entre 0 y 1). Solo se ve donde no hay cielo ni objetos; con un cielo activo apenas importa.
 
-#### `g3d_set_fog(int, float, float, float, float, float) -> int`
+#### `g3d_set_ambient_light(float r, float g, float b, float intensidad) -> int`
+Luz ambiente: la que llega a todas partes por igual, incluso a las sombras. Color r, g, b entre 0 y 1 e intensidad.
 
-#### `g3d_set_wireframe_mode(int) -> int`
+```
+g3d_set_ambient_light(0.4, 0.42, 0.46, 1.0);
+```
 
-#### `g3d_set_shadows(int) -> int`
+#### `g3d_set_fog(int activo, float r, float g, float b, float inicio, float fin) -> int`
+Niebla lineal. Los objetos a distancia menor que inicio no se tocan y a distancia fin quedan totalmente del color de la niebla. Pon el mismo color que el horizonte del cielo para que se fundan. activo: 1 o 0.
 
-#### `g3d_set_shadow_resolution(int) -> int`
+```
+g3d_set_fog(1, 0.75, 0.85, 0.95, 40.0, 220.0);
+```
 
-#### `g3d_set_hdr(int) -> int`
+#### `g3d_set_wireframe_mode(int activo) -> int`
+Dibuja solo las aristas de los triangulos (1) o normal (0). Sirve para depurar mallas.
 
-#### `g3d_set_ibl(int, float) -> int`
+#### `g3d_set_shadows(int activo) -> int`
+Activa (1) o desactiva (0) las sombras proyectadas de la luz direccional. Desactivarlas ahorra mucho rendimiento.
 
-#### `g3d_set_occlusion(int) -> int`
+```
+g3d_set_shadows(1);
+```
 
-#### `g3d_set_smaa(int) -> int`
+#### `g3d_set_shadow_resolution(int resolucion) -> int`
+Tamano del mapa de sombras en pixeles por lado. Se limita entre 512 y 8192. Mayor tamano = sombras mas nitidas pero mas lentas y con mas memoria; 2048 o 4096 es un buen equilibrio.
 
-#### `g3d_set_fsr(int, float, float) -> int`
+```
+g3d_set_shadow_resolution(4096);
+```
 
-#### `g3d_set_fsr_height(int, int, float) -> int`
+#### `g3d_set_hdr(int activo) -> int`
+Activa (1) o desactiva (0) la tuberia HDR de postproceso (exposicion, bloom, SSAO y tonemap dependen de ella). Viene activada.
 
-#### `g3d_set_exposure(float) -> int`
+#### `g3d_set_ibl(int activo, float intensidad) -> int`
+Iluminacion basada en imagen: el cielo se captura y se usa como luz ambiente y reflejos reales sobre materiales metalicos y brillantes. activo: 1 o 0; intensidad escala el efecto (1.0 = la luz del propio cielo). Si cambias el cielo en tiempo de ejecucion usa g3d_ibl_refresh.
 
-#### `g3d_set_bloom(int, float, float) -> int`
+```
+g3d_set_ibl(1, 1.0);
+```
 
-#### `g3d_set_tonemap(int) -> int`
+#### `g3d_set_occlusion(int activo) -> int`
+Activa (1) o desactiva (0) el descarte por oclusion: no se dibuja lo que queda totalmente oculto tras otra geometria. Ayuda en interiores y ciudades.
 
-#### `g3d_set_ssao(int, float, float) -> int`
+#### `g3d_set_smaa(int activo) -> int`
+Activa (1) o desactiva (0) el antialiasing SMAA de 1 pasada (suaviza los bordes dentados). Es tambien requisito del escalador FSR.
 
-#### `g3d_set_underwater(int, float, float, float, float) -> int`
+```
+g3d_set_smaa(1);
+```
 
-#### `g3d_set_lod(float) -> int`
+#### `g3d_set_fsr(int activo, float escala, float nitidez) -> int`
+Escalado FSR 1: dibuja la escena a una fraccion del tamano de la pantalla y la amplia con nitidez. escala 1.0 = nativo, 0.667 = 'calidad' (1080p desde 720p), 0.5 = 'rendimiento'. nitidez regula el afilado. Con activo = 0 vuelve al tamano nativo. Conviene tener SMAA activado.
 
-#### `g3d_set_culling(int) -> int`
+```
+g3d_set_smaa(1);
+g3d_set_fsr(1, 0.667, 0.2);
+```
 
-#### `g3d_set_backface_cull(int) -> int`
+#### `g3d_set_fsr_height(int activo, int alto, float nitidez) -> int`
+Como g3d_set_fsr pero indicando la altura interna de render en pixeles (por ejemplo 720), en vez de una fraccion; asi sigue valiendo si cambias el tamano de la ventana. Nunca renderiza por encima de la pantalla.
 
-#### `g3d_set_spawn_parent(int) -> int`
+```
+g3d_set_smaa(1);
+g3d_set_fsr_height(1, 720, 0.2);
+```
 
-#### `g3d_set_terrain_collider(int) -> int`
+#### `g3d_set_exposure(float exposicion) -> int`
+Exposicion del HDR: multiplica el brillo final (1.0 por defecto; los negativos se toman como 0). Sube para escenas oscuras, baja para quemadas.
+
+```
+g3d_set_exposure(0.8);
+```
+
+#### `g3d_set_bloom(int activo, float cantidad, float umbral) -> int`
+Resplandor de las zonas muy brillantes. activo 1/0; cantidad es cuanto se suma (0.5 por defecto); umbral es el brillo a partir del cual brilla (0.8 por defecto). Con valores negativos conserva el valor anterior.
+
+```
+g3d_set_bloom(1, 0.5, 0.8);
+```
+
+#### `g3d_set_tonemap(int modo) -> int`
+Curva de color del HDR: 0 = simple (recorta a 1.0), 1 = ACES (cinematografico, conserva el detalle de las luces fuertes).
+
+```
+g3d_set_tonemap(1);
+```
+
+#### `g3d_set_ssao(int activo, float radio, float fuerza) -> int`
+Oclusion ambiental en espacio de pantalla: oscurece las esquinas y rincones. activo 1/0; radio (0.5 por defecto) y fuerza (1.2 por defecto) solo cambian si das un valor mayor que 0.
+
+```
+g3d_set_ssao(1, 0.5, 1.2);
+```
+
+#### `g3d_set_underwater(int activo, float r, float g, float b, float fuerza) -> int`
+Filtro de bajo el agua en toda la pantalla: tinte r, g, b y fuerza (si es 0 o menos se usa 1). Activalo cuando la camara este por debajo de la superficie del agua.
+
+```
+g3d_set_underwater(cam_y < nivel_agua, 0.1, 0.35, 0.5, 1.0);
+```
+
+#### `g3d_set_lod(float distancia) -> int`
+Distancia a partir de la cual los objetos instanciados (g3d_instances_*) pasan a su version simplificada generada automaticamente. 0 = sin LOD.
+
+#### `g3d_set_culling(int activo) -> int`
+Activa (1) o desactiva (0) el descarte de objetos fuera del campo de vision de la camara. Viene activado.
+
+#### `g3d_set_backface_cull(int activo) -> int`
+Activa (1) o desactiva (0) el descarte de las caras traseras de los triangulos. Desactivarlo se ve util en hojas o telas de una sola cara.
+
+#### `g3d_set_spawn_parent(int entidad) -> int`
+Padre de creacion: lo que crees a continuacion (entidades, sprites...) queda colgado de esta entidad y se mueve con ella. Pasa -1 para volver a crear sin padre.
+
+```
+g3d_set_spawn_parent(coche);
+rueda = g3d_entity_spawn(escena, m_rueda, 1, 0, 1.5);
+g3d_set_spawn_parent(-1);
+```
+
+#### `g3d_set_terrain_collider(int terreno) -> int`
+Registra una malla de terreno (de g3d_primitive_terrain, ya modelada con g3d_terrain_load) como suelo de colision, para que cuerpos rigidos y personajes se apoyen en el relieve. Sin esto solo tenian colision los terrenos cargados con una escena de disco.
+
+**Devuelve:** 1 si lo registro, 0 si no es un terreno valido
+
+```
+t = g3d_primitive_terrain(128, 200.0, 12.0, 20.0, 7);
+g3d_set_terrain_collider(t);
+```
 
 ### sky
-#### `g3d_sky_set_gradient(float, float, float, float, float, float) -> int`
+#### `g3d_sky_set_gradient(float cenit_r, float cenit_g, float cenit_b, float horizonte_r, float horizonte_g, float horizonte_b) -> int`
+Pone un cielo degradado: color del cenit (arriba) y del horizonte, cada uno con r, g, b entre 0 y 1, y lo activa. Sin cielo la pantalla sale NEGRA. El cielo tambien es la luz ambiente (reflejos), asi que cambiarlo recalcula la iluminacion.
 
-#### `g3d_sky_set_clouds(float, float) -> int`
+```
+g3d_sky_set_gradient(0.25, 0.45, 0.85,  0.75, 0.85, 0.95);
+g3d_sky_enable(1);
+```
 
-#### `g3d_sky_set_low_clouds(float, float, float, float) -> int`
+#### `g3d_sky_set_clouds(float cantidad, float velocidad) -> int`
+Nubes altas del cielo: cantidad entre 0 (despejado) y 1 (cubierto) y velocidad (si es 0 o menos se usa 1).
 
-#### `g3d_sky_set_texture(int) -> int`
+```
+g3d_sky_set_clouds(0.4, 1.0);
+```
 
-#### `g3d_sky_enable(int) -> int`
+#### `g3d_sky_set_low_clouds(float cobertura, float base, float grosor, float velocidad) -> int`
+Nubes bajas volumetricas: cobertura entre 0 y 1 (0 = sin nubes), altura de la base en unidades del mundo, grosor (minimo 1) y velocidad (si es 0 o menos se usa 1). Tambien proyectan sombra sobre la escena.
+
+#### `g3d_sky_set_texture(int textura) -> int`
+Usa una textura (de g3d_load_texture) como cielo en lugar del degradado. 0 quita la textura.
+
+#### `g3d_sky_enable(int activo) -> int`
+Activa (1) o desactiva (0) el dibujado del cielo.
+
+```
+g3d_sky_enable(1);
+```
 
 ### sprite
 #### `g3d_sprite_create(int escena, float x, float y, float z) -> int`
@@ -1150,7 +1472,10 @@ Recorte en pixeles dentro del grafico, para hojas de sprites irregulares (el edi
 #### `g3d_terrain_load(int, string) -> int`
 
 ### tr
-#### `g3d_tr_probe(string) -> int`
+#### `g3d_tr_probe(string ruta) -> int`
+Indica de que juego de Tomb Raider es un archivo (1 a 5) sin cargarlo.
+
+**Devuelve:** 1..5, o 0 si no es un nivel de Tomb Raider
 
 ### vehicle
 #### `g3d_vehicle_create(float x, float y, float z, float rumbo) -> int`
@@ -1227,7 +1552,10 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 #### `g3d_voxterrain_walkz() -> float`
 
 ### wall
-#### `g3d_wall_ray(float, float, float, float, float, float, float) -> float`
+#### `g3d_wall_ray(float ox, float oy, float oz, float dx, float dy, float dz, float maxd) -> float`
+Rayo contra TODA la geometria colisionable (la de g3d_collider_add_model y similares), no solo contra cajas. Util para camaras que no deben atravesar paredes. Solo funciona con Jolt (PC); en las plataformas sin Jolt devuelve siempre el ultimo parametro (maxd), es decir, 'no choca'.
+
+**Devuelve:** distancia al primer impacto, o maxd si no hay ninguno
 
 ### water
 #### `g3d_water_set_ssr(int, float) -> int`
@@ -1287,7 +1615,15 @@ Velocidad hacia delante, con signo (negativa = marcha atras).
 #### `g3d_watersim_set_evaporation(float) -> int`
 
 ### world
-#### `g3d_world_rebase(float, float, float) -> int`
+#### `g3d_world_rebase(float dx, float dy, float dz) -> int`
+Origen flotante: desplaza TODO el mundo (-dx, -dy, -dz) para mantener las coordenadas pequenas lejos del origen, donde los decimales pierden precision. Llamala cuando la camara se aleje mucho y ajusta tu propia camara y tus variables con el mismo desplazamiento.
+
+```
+if (abs(cam_x) > 5000)
+    g3d_world_rebase(cam_x, 0, 0);
+    cam_x = 0;
+end
+```
 
 ### worldgen
 #### `g3d_worldgen_set(int, float, float, float) -> int`
